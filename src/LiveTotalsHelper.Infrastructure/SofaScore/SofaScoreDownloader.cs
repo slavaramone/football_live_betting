@@ -1,14 +1,18 @@
+using LiveTotalsHelper.Infrastructure.Persistence.SofaScore;
+
 namespace LiveTotalsHelper.Infrastructure.SofaScore;
 
 public sealed class SofaScoreDownloader
 {
     private readonly SofaScoreClient _client;
     private readonly SofaScoreJsonFileStore _fileStore;
+    private readonly SofaScoreDbImporter? _dbImporter;
 
-    public SofaScoreDownloader(SofaScoreClient client, SofaScoreJsonFileStore fileStore)
+    public SofaScoreDownloader(SofaScoreClient client, SofaScoreJsonFileStore fileStore, SofaScoreDbImporter? dbImporter = null)
     {
         _client = client;
         _fileStore = fileStore;
+        _dbImporter = dbImporter;
     }
 
     public async Task<SofaScoreDownloadResult> DownloadAsync(
@@ -44,7 +48,11 @@ public sealed class SofaScoreDownloader
                 continue;
             }
 
-            Count(await _fileStore.WriteJsonAsync(Path.Combine(roundFolder, "calendar.json"), calendarJson, options.Overwrite, cancellationToken), result);
+            string calendarPath = Path.Combine(roundFolder, "calendar.json");
+            Count(await _fileStore.WriteJsonAsync(calendarPath, calendarJson, options.Overwrite, cancellationToken), result);
+
+            if (_dbImporter is not null)
+                await _dbImporter.ImportCalendarAsync(calendarJson, options.TournamentId, options.SeasonId, round, calendarPath, cancellationToken);
 
             IReadOnlyList<SofaScoreEventSummary> events = SofaScoreEventSummary.FromCalendarJson(calendarJson);
             result.RoundsDownloaded++;
@@ -143,6 +151,16 @@ public sealed class SofaScoreDownloader
         {
             string json = await download(cancellationToken);
             Count(await _fileStore.WriteJsonAsync(targetPath, json, options.Overwrite, cancellationToken), result);
+
+            if (_dbImporter is not null)
+            {
+                long eventId = TryExtractEventIdFromPath(targetPath);
+                if (eventId > 0 && endpointName.Equals("incidents", StringComparison.OrdinalIgnoreCase))
+                    await _dbImporter.ImportIncidentsAsync(eventId, json, targetPath, cancellationToken);
+                else if (eventId > 0 && endpointName.Equals("statistics", StringComparison.OrdinalIgnoreCase))
+                    await _dbImporter.ImportStatisticsAsync(eventId, json, targetPath, cancellationToken);
+            }
+
             await log.WriteLineAsync($"    saved {endpointName}: {targetPath}");
         }
         catch (Exception ex)
@@ -160,6 +178,12 @@ public sealed class SofaScoreDownloader
                 await log.WriteLineAsync($"    WARN {endpointName}: {ex.Message}");
             }
         }
+    }
+
+    private static long TryExtractEventIdFromPath(string path)
+    {
+        string? folder = Path.GetFileName(Path.GetDirectoryName(path));
+        return long.TryParse(folder, out long eventId) ? eventId : 0;
     }
 
     private static bool IsNotStartedOrFutureFixture(SofaScoreEventSummary eventSummary)

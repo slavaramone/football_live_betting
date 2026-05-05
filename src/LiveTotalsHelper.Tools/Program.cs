@@ -1,5 +1,8 @@
+using LiveTotalsHelper.Infrastructure.Persistence;
+using LiveTotalsHelper.Infrastructure.Persistence.SofaScore;
 using LiveTotalsHelper.Infrastructure.SofaScore;
 using LiveTotalsHelper.Tools;
+using Microsoft.Extensions.Configuration;
 
 try
 {
@@ -76,8 +79,15 @@ static async Task<int> RunDownloadSofaScore(string[] args)
         throw new ArgumentException("Provide either --round or --from-round and --to-round.");
     }
 
+    IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+
+    await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
+
     await using var client = await SofaScoreClient.CreateAsync(options, Console.Out, CancellationToken.None);
-    var downloader = new SofaScoreDownloader(client, new SofaScoreJsonFileStore());
+    var downloader = new SofaScoreDownloader(client, new SofaScoreJsonFileStore(), new SofaScoreDbImporter(dbContext));
 
     SofaScoreDownloadResult result = await downloader.DownloadAsync(options, Console.Out, CancellationToken.None);
 

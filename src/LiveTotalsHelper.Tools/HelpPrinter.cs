@@ -7,7 +7,7 @@ public static class HelpPrinter
         Console.WriteLine("LiveTotalsHelper.Tools");
         Console.WriteLine();
         Console.WriteLine("Commands:");
-        Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON.");
+        Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON, then import model data into PostgreSQL.");
         Console.WriteLine();
         PrintDownloadSofaScore();
     }
@@ -48,6 +48,10 @@ public static class HelpPrinter
         Console.WriteLine("  --headless           true/false. Default: true");
         Console.WriteLine("  --show-browser       Debug shortcut. Runs Chromium visible.");
         Console.WriteLine("  --warmup-delay-ms    Delay after opening sofascore.com before API calls. Default: 1000");
+        Console.WriteLine();
+        Console.WriteLine("Database:");
+        Console.WriteLine("  Connection string: src/LiveTotalsHelper.Tools/appsettings.json");
+        Console.WriteLine("  Pending migrations are applied automatically when the command starts.");
         Console.WriteLine();
         Console.WriteLine("Before first run, install Playwright browser binaries:");
         Console.WriteLine("  dotnet build src/LiveTotalsHelper.Tools/LiveTotalsHelper.Tools.csproj");
