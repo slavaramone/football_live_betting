@@ -3,3 +3,13 @@
 ################################################################################
 
 /.vs
+/src/LiveTotalsHelper.App/obj
+/src/LiveTotalsHelper.App/bin/Debug/net8.0
+/src/LiveTotalsHelper.Core/bin/Debug/net8.0
+/src/LiveTotalsHelper.Core/obj
+/src/LiveTotalsHelper.Infrastructure/bin/Debug/net8.0
+/src/LiveTotalsHelper.Infrastructure/obj
+/src/LiveTotalsHelper.Modeling/bin/Debug/net8.0
+/src/LiveTotalsHelper.Modeling/obj
+/src/LiveTotalsHelper.Tools/bin/Debug/net8.0
+/src/LiveTotalsHelper.Tools/obj
