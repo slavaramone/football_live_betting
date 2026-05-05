@@ -1,0 +1,240 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:LiveTotalsHelper.App.ViewModels"
+        xmlns:models="using:LiveTotalsHelper.Core.Models"
+        x:Class="LiveTotalsHelper.App.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Live O/U Betting Helper"
+        Width="1120"
+        Height="740"
+        MinWidth="980"
+        MinHeight="640"
+        Background="{StaticResource AppBgBrush}">
+
+  <Window.Styles>
+    <Style Selector="TextBlock.section-title">
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="0,0,0,8" />
+    </Style>
+    <Style Selector="Border.panel">
+      <Setter Property="Background" Value="{StaticResource PanelBgBrush}" />
+      <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="14" />
+      <Setter Property="Margin" Value="0,0,0,12" />
+    </Style>
+    <Style Selector="TextBlock.label">
+      <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TextBox.input">
+      <Setter Property="Width" Value="78" />
+      <Setter Property="Margin" Value="0,4,12,0" />
+    </Style>
+    <Style Selector="TextBlock.positive">
+      <Setter Property="Foreground" Value="{StaticResource AccentGreenBrush}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+  </Window.Styles>
+
+  <Grid RowDefinitions="Auto,*" ColumnDefinitions="300,*" Margin="16">
+
+    <Border Grid.Row="0" Grid.ColumnSpan="2" Classes="panel" Padding="14,10" Margin="0,0,0,14">
+      <DockPanel>
+        <TextBlock Text="{Binding AppTitle}" FontSize="22" FontWeight="Bold" DockPanel.Dock="Left" />
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right" Spacing="8">
+          <Ellipse Width="9" Height="9" Fill="{StaticResource AccentGreenBrush}" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding ConnectionStatus}" VerticalAlignment="Center" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Border Grid.Row="1" Grid.Column="0" Classes="panel" Margin="0,0,14,0">
+      <Grid RowDefinitions="Auto,Auto,*">
+        <StackPanel Grid.Row="0" Spacing="6">
+          <TextBlock Text="League" Classes="label" />
+          <ComboBox ItemsSource="{Binding Leagues}" SelectedItem="{Binding LeagueFilter}" Width="250" />
+        </StackPanel>
+
+        <TextBlock Grid.Row="1" Text="Matches" Classes="section-title" Margin="0,18,0,8" />
+
+        <ListBox Grid.Row="2" ItemsSource="{Binding Matches}" SelectedItem="{Binding SelectedMatch}" Background="Transparent" BorderThickness="0">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="models:MatchSnapshot">
+              <Border BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="0,0,0,1" Padding="8">
+                <Grid ColumnDefinitions="42,*,44,76" RowDefinitions="Auto,Auto">
+                  <TextBlock Grid.RowSpan="2" Text="{Binding MinuteText}" Foreground="{StaticResource AccentGreenBrush}" FontWeight="Bold" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="1" Text="{Binding HomeTeam}" FontWeight="SemiBold" />
+                  <TextBlock Grid.Column="2" Text="{Binding Score}" HorizontalAlignment="Center" FontWeight="Bold" />
+                  <TextBlock Grid.Column="3" Text="{Binding EdgeText}" Classes="positive" HorizontalAlignment="Right" />
+                  <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding AwayTeam}" Foreground="{StaticResource MutedTextBrush}" />
+                  <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding BestSignal}" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Right" />
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Grid>
+    </Border>
+
+    <ScrollViewer Grid.Row="1" Grid.Column="1">
+      <StackPanel>
+
+        <Border Classes="panel">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel>
+              <TextBlock Text="Selected Match" Classes="section-title" />
+              <TextBlock Text="{Binding SelectedMatchTitle}" FontSize="20" FontWeight="Bold" />
+            </StackPanel>
+            <Button Grid.Column="1" Content="Recalculate" Click="Recalculate_Click" Padding="16,8" />
+          </Grid>
+        </Border>
+
+        <Border Classes="panel">
+          <StackPanel>
+            <TextBlock Text="Match State" Classes="section-title" />
+            <WrapPanel>
+              <StackPanel>
+                <TextBlock Text="Minute" Classes="label" />
+                <TextBox Classes="input" Text="{Binding SelectedMatch.Minute}" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Home goals" Classes="label" />
+                <TextBox Classes="input" Text="{Binding SelectedMatch.HomeGoals}" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Away goals" Classes="label" />
+                <TextBox Classes="input" Text="{Binding SelectedMatch.AwayGoals}" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Home reds" Classes="label" />
+                <TextBox Classes="input" Text="{Binding SelectedMatch.HomeRedCards}" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Away reds" Classes="label" />
+                <TextBox Classes="input" Text="{Binding SelectedMatch.AwayRedCards}" />
+              </StackPanel>
+            </WrapPanel>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="panel">
+          <StackPanel>
+            <TextBlock Text="Required Odds Inputs" Classes="section-title" />
+
+            <TextBlock Text="Pre-match 1X2" Classes="label" />
+            <WrapPanel Margin="0,0,0,10">
+              <StackPanel>
+                <TextBlock Text="Home" Classes="label" />
+                <TextBox Classes="input" Text="{Binding Odds.PreHomeOdds}" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Draw" Classes="label" />
+                <TextBox Classes="input" Text="{Binding Odds.PreDrawOdds}" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Away" Classes="label" />
+                <TextBox Classes="input" Text="{Binding Odds.PreAwayOdds}" />
+              </StackPanel>
+            </WrapPanel>
+
+            <TextBlock Text="Pre-match total" Classes="label" />
+            <WrapPanel Margin="0,0,0,10">
+              <StackPanel>
+                <TextBlock Text="Line" Classes="label" />
+                <TextBox Classes="input" Text="{Binding Odds.PreTotalLine}" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Over" Classes="label" />
+                <TextBox Classes="input" Text="{Binding Odds.PreOverOdds}" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Under" Classes="label" />
+                <TextBox Classes="input" Text="{Binding Odds.PreUnderOdds}" />
+              </StackPanel>
+            </WrapPanel>
+
+            <TextBlock Text="Live over odds for first targets" Classes="label" />
+            <WrapPanel>
+              <StackPanel>
+                <TextBlock Text="Over 1.5" Classes="label" />
+                <TextBox Classes="input" Text="{Binding Odds.LiveOverOdds15}" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Over 2.0" Classes="label" />
+                <TextBox Classes="input" Text="{Binding Odds.LiveOverOdds20}" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Over 2.5" Classes="label" />
+                <TextBox Classes="input" Text="{Binding Odds.LiveOverOdds25}" />
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Over 3.0" Classes="label" />
+                <TextBox Classes="input" Text="{Binding Odds.LiveOverOdds30}" />
+              </StackPanel>
+            </WrapPanel>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="panel">
+          <StackPanel>
+            <TextBlock Text="Model Summary" Classes="section-title" />
+            <Grid ColumnDefinitions="*,*,*,*,*" RowDefinitions="Auto,Auto">
+              <TextBlock Grid.Column="0" Text="Pre xG" Classes="label" />
+              <TextBlock Grid.Column="1" Text="League rem." Classes="label" />
+              <TextBlock Grid.Column="2" Text="Opp. rem." Classes="label" />
+              <TextBlock Grid.Column="3" Text="Mixed rem." Classes="label" />
+              <TextBlock Grid.Column="4" Text="Remaining xG" Classes="label" />
+
+              <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Summary.PreMatchTotalXgText}" FontSize="22" FontWeight="Bold" />
+              <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Summary.LeagueRemainingText}" FontSize="22" FontWeight="Bold" />
+              <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding Summary.OpponentRemainingText}" FontSize="22" FontWeight="Bold" />
+              <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding Summary.MixedRemainingText}" FontSize="22" FontWeight="Bold" Foreground="{StaticResource AccentGreenBrush}" />
+              <TextBlock Grid.Row="1" Grid.Column="4" Text="{Binding Summary.RemainingXgText}" FontSize="22" FontWeight="Bold" Foreground="{StaticResource AccentGreenBrush}" />
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="panel">
+          <StackPanel>
+            <TextBlock Text="Betting Decision" Classes="section-title" />
+            <Grid ColumnDefinitions="*,*,*,*,*,*" Margin="0,0,0,6">
+              <TextBlock Text="Line" Classes="label" />
+              <TextBlock Grid.Column="1" Text="Book" Classes="label" />
+              <TextBlock Grid.Column="2" Text="Model %" Classes="label" />
+              <TextBlock Grid.Column="3" Text="Fair" Classes="label" />
+              <TextBlock Grid.Column="4" Text="Edge" Classes="label" />
+              <TextBlock Grid.Column="5" Text="Decision" Classes="label" />
+            </Grid>
+            <ItemsControl ItemsSource="{Binding Decisions}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="models:BetDecision">
+                  <Border BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="0,1,0,0" Padding="0,8">
+                    <Grid ColumnDefinitions="*,*,*,*,*,*">
+                      <TextBlock Text="{Binding LineText}" FontWeight="SemiBold" />
+                      <TextBlock Grid.Column="1" Text="{Binding BookOverOddsText}" />
+                      <TextBlock Grid.Column="2" Text="{Binding ModelOverProbabilityText}" />
+                      <TextBlock Grid.Column="3" Text="{Binding FairOverOddsText}" />
+                      <TextBlock Grid.Column="4" Text="{Binding EdgeText}" Classes="positive" />
+                      <TextBlock Grid.Column="5" Text="{Binding Decision}" FontWeight="Bold" />
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="panel">
+          <StackPanel>
+            <TextBlock Text="Notes" Classes="section-title" />
+            <TextBox Text="{Binding Notes}" AcceptsReturn="True" Height="70" />
+          </StackPanel>
+        </Border>
+
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</Window>

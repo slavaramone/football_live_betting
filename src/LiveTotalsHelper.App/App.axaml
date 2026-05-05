@@ -1,0 +1,24 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="LiveTotalsHelper.App.App"
+             RequestedThemeVariant="Dark">
+  <Application.Styles>
+    <FluentTheme />
+  </Application.Styles>
+
+  <Application.Resources>
+    <Color x:Key="AppBgColor">#111827</Color>
+    <Color x:Key="PanelBgColor">#1F2937</Color>
+    <Color x:Key="PanelBorderColor">#374151</Color>
+    <Color x:Key="AccentGreenColor">#22C55E</Color>
+    <Color x:Key="AccentRedColor">#EF4444</Color>
+    <Color x:Key="MutedTextColor">#9CA3AF</Color>
+
+    <SolidColorBrush x:Key="AppBgBrush" Color="{StaticResource AppBgColor}" />
+    <SolidColorBrush x:Key="PanelBgBrush" Color="{StaticResource PanelBgColor}" />
+    <SolidColorBrush x:Key="PanelBorderBrush" Color="{StaticResource PanelBorderColor}" />
+    <SolidColorBrush x:Key="AccentGreenBrush" Color="{StaticResource AccentGreenColor}" />
+    <SolidColorBrush x:Key="AccentRedBrush" Color="{StaticResource AccentRedColor}" />
+    <SolidColorBrush x:Key="MutedTextBrush" Color="{StaticResource MutedTextColor}" />
+  </Application.Resources>
+</Application>
