@@ -6,6 +6,7 @@ public sealed class SofaScoreDownloadOptions
     public int TournamentId { get; init; }
     public int SeasonId { get; init; }
     public List<int> Rounds { get; } = [];
+    public string CalendarMode { get; init; } = "round";
     public string OutputRoot { get; init; } = "data/sofascore";
     public int DelayMs { get; init; } = 450;
     public bool Overwrite { get; init; }

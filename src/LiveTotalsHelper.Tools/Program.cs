@@ -50,7 +50,8 @@ static async Task<int> RunDownloadSofaScore(string[] args)
         DownloadIncidents = parsed.Bool("incidents", true),
         DownloadStatistics = parsed.Bool("statistics", true),
         Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
-        WarmupDelayMs = parsed.Int("warmup-delay-ms", 1000)
+        WarmupDelayMs = parsed.Int("warmup-delay-ms", 1000),
+        CalendarMode = parsed.String("calendar-mode", "round")
     };
 
     if (parsed.Has("round"))

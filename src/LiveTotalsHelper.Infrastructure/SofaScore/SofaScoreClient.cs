@@ -42,27 +42,20 @@ public sealed class SofaScoreClient : IAsyncDisposable
                 Headless = options.Headless
             });
 
+            // Keep this intentionally close to the working SofaScoreGrabber.cs pattern.
+            // Adding custom request headers here can trigger 403 on SofaScore, while a plain
+            // Chromium context with a normal user-agent works more reliably.
             context = await browser.NewContextAsync(new BrowserNewContextOptions
             {
-                UserAgent = options.UserAgent,
-                ExtraHTTPHeaders = new Dictionary<string, string>
-                {
-                    ["accept"] = "application/json,text/plain,*/*",
-                    ["accept-language"] = "en-US,en;q=0.9",
-                    ["referer"] = "https://www.sofascore.com/"
-                }
+                UserAgent = options.UserAgent
             });
 
             page = await context.NewPageAsync();
 
-            // Important: visit the main site first so the browser context receives the cookies/session
-            // SofaScore expects. API requests made after this use the same browser context.
+            // Important: go to the main site first. This allows SofaScore to initialise the
+            // browser session/cookies before we call API endpoints from the same browser page.
             await log.WriteLineAsync($"Opening warmup page: {options.WarmupUrl}");
-            await page.GotoAsync(options.WarmupUrl, new PageGotoOptions
-            {
-                WaitUntil = WaitUntilState.DOMContentLoaded,
-                Timeout = 60_000
-            });
+            await page.GotoAsync(options.WarmupUrl);
 
             if (options.WarmupDelayMs > 0)
                 await Task.Delay(options.WarmupDelayMs, cancellationToken);
@@ -83,9 +76,10 @@ public sealed class SofaScoreClient : IAsyncDisposable
         }
     }
 
-    public Task<string> GetCalendarAsync(int tournamentId, int seasonId, int round, CancellationToken cancellationToken)
+    public Task<string> GetCalendarAsync(SofaScoreDownloadOptions options, int round, CancellationToken cancellationToken)
     {
-        string url = $"{BaseUrl}/api/v1/unique-tournament/{tournamentId}/season/{seasonId}/events/round/{round}";
+        string mode = string.IsNullOrWhiteSpace(options.CalendarMode) ? "round" : options.CalendarMode.Trim().ToLowerInvariant();
+        string url = $"{BaseUrl}/api/v1/unique-tournament/{options.TournamentId}/season/{options.SeasonId}/events/{mode}/{round}";
         return GetStringWithRetryAsync(url, cancellationToken);
     }
 
@@ -112,16 +106,16 @@ public sealed class SofaScoreClient : IAsyncDisposable
 
             try
             {
-                // Keep this call intentionally simple. Some Microsoft.Playwright versions
-                // expose different generated option type names for GetAsync options,
-                // which caused compile errors. The browser context already has the
-                // required SofaScore cookies/user-agent/headers from the warmup page.
                 IAPIResponse response = await _page.APIRequest.GetAsync(url);
-
                 string content = await response.TextAsync();
 
                 if (response.Ok)
                     return content;
+
+                // Some SofaScore pages are stricter for APIRequest than for real in-page fetch.
+                // Fall back to fetch() executed inside the warmed-up SofaScore page context.
+                if (response.Status == 403)
+                    return await FetchFromPageContextAsync(url);
 
                 throw new HttpRequestException($"GET {url} failed with {response.Status} {response.StatusText}. Body: {Truncate(content, 500)}");
             }
@@ -133,6 +127,27 @@ public sealed class SofaScoreClient : IAsyncDisposable
         }
 
         throw lastException ?? new HttpRequestException($"GET {url} failed.");
+    }
+
+    private async Task<string> FetchFromPageContextAsync(string url)
+    {
+        const string script = @"
+            async (url) => {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'accept': 'application/json, text/plain, */*'
+                    }
+                });
+                const text = await response.text();
+                if (!response.ok) {
+                    throw new Error(`GET ${url} failed with ${response.status} ${response.statusText}. Body: ${text.substring(0, 500)}`);
+                }
+                return text;
+            }";
+
+        return await _page.EvaluateAsync<string>(script, url);
     }
 
     private static string Truncate(string value, int maxLength)

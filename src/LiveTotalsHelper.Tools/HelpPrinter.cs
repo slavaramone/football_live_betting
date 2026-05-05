@@ -37,6 +37,7 @@ public static class HelpPrinter
         Console.WriteLine("  --round              Single round to download.");
         Console.WriteLine("  --from-round         First round when downloading a range.");
         Console.WriteLine("  --to-round           Last round when downloading a range.");
+        Console.WriteLine("  --calendar-mode      SofaScore calendar path segment: round or last. Default: round");
         Console.WriteLine("  --output             Output root. Default: data/sofascore");
         Console.WriteLine("  --delay-ms           Delay between event endpoint calls. Default: 450");
         Console.WriteLine("  --overwrite          true/false. Default: false");

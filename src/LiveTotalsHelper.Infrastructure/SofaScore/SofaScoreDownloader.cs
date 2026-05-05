@@ -34,7 +34,7 @@ public sealed class SofaScoreDownloader
             string calendarJson;
             try
             {
-                calendarJson = await _client.GetCalendarAsync(options.TournamentId, options.SeasonId, round, cancellationToken);
+                calendarJson = await _client.GetCalendarAsync(options, round, cancellationToken);
             }
             catch (Exception ex)
             {
