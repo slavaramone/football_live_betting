@@ -86,25 +86,35 @@ public sealed class SofaScoreDownloader
                 string eventFolder = Path.Combine(eventsFolder, eventSummary.EventId.ToString());
                 Count(await _fileStore.WriteObjectAsync(Path.Combine(eventFolder, "event-meta.json"), eventSummary, options.Overwrite, cancellationToken), result);
 
-                if (options.DownloadIncidents)
-                    await DownloadEventEndpoint(
-                        endpointName: "incidents",
-                        targetPath: Path.Combine(eventFolder, "incidents.json"),
-                        download: ct => _client.GetIncidentsAsync(eventSummary.EventId, ct),
-                        options,
-                        result,
-                        log,
-                        cancellationToken);
+                bool skipEventDetails = options.SkipDetailsForNotStartedEvents && IsNotStartedOrFutureFixture(eventSummary);
+                if (skipEventDetails)
+                {
+                    string warning = $"event {eventSummary.EventId} {eventSummary.HomeTeam} vs {eventSummary.AwayTeam}: status '{eventSummary.StatusType}' - calendar/event-meta saved, incidents/statistics skipped";
+                    result.Warnings.Add(warning);
+                    await log.WriteLineAsync($"    SKIP details: {warning}");
+                }
+                else
+                {
+                    if (options.DownloadIncidents)
+                        await DownloadEventEndpoint(
+                            endpointName: "incidents",
+                            targetPath: Path.Combine(eventFolder, "incidents.json"),
+                            download: ct => _client.GetIncidentsAsync(eventSummary.EventId, ct),
+                            options,
+                            result,
+                            log,
+                            cancellationToken);
 
-                if (options.DownloadStatistics)
-                    await DownloadEventEndpoint(
-                        endpointName: "statistics",
-                        targetPath: Path.Combine(eventFolder, "statistics.json"),
-                        download: ct => _client.GetStatisticsAsync(eventSummary.EventId, ct),
-                        options,
-                        result,
-                        log,
-                        cancellationToken);
+                    if (options.DownloadStatistics)
+                        await DownloadEventEndpoint(
+                            endpointName: "statistics",
+                            targetPath: Path.Combine(eventFolder, "statistics.json"),
+                            download: ct => _client.GetStatisticsAsync(eventSummary.EventId, ct),
+                            options,
+                            result,
+                            log,
+                            cancellationToken);
+                }
 
                 if (options.DelayMs > 0)
                     await Task.Delay(options.DelayMs, cancellationToken);
@@ -137,10 +147,31 @@ public sealed class SofaScoreDownloader
         }
         catch (Exception ex)
         {
-            string failure = $"{targetPath}: {ex.Message}";
-            result.Failures.Add(failure);
-            await log.WriteLineAsync($"    ERROR {endpointName}: {ex.Message}");
+            string message = $"{targetPath}: {ex.Message}";
+
+            if (options.StrictEventDetails)
+            {
+                result.Failures.Add(message);
+                await log.WriteLineAsync($"    ERROR {endpointName}: {ex.Message}");
+            }
+            else
+            {
+                result.Warnings.Add(message);
+                await log.WriteLineAsync($"    WARN {endpointName}: {ex.Message}");
+            }
         }
+    }
+
+    private static bool IsNotStartedOrFutureFixture(SofaScoreEventSummary eventSummary)
+    {
+        string status = (eventSummary.StatusType ?? string.Empty).Trim().ToLowerInvariant();
+
+        if (status is "notstarted" or "not_started" or "scheduled" or "postponed" or "canceled" or "cancelled")
+            return true;
+
+        // Finished and in-progress games can have incidents/statistics. Unknown statuses are
+        // attempted and, if missing, are downgraded to warnings unless strict mode is enabled.
+        return false;
     }
 
     private static void Count(FileWriteResult fileResult, SofaScoreDownloadResult result)

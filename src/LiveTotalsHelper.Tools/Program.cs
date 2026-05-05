@@ -51,7 +51,9 @@ static async Task<int> RunDownloadSofaScore(string[] args)
         DownloadStatistics = parsed.Bool("statistics", true),
         Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
         WarmupDelayMs = parsed.Int("warmup-delay-ms", 1000),
-        CalendarMode = parsed.String("calendar-mode", "round")
+        CalendarMode = parsed.String("calendar-mode", "round"),
+        SkipDetailsForNotStartedEvents = parsed.Bool("skip-details-for-not-started", true),
+        StrictEventDetails = parsed.Bool("strict-event-details", false)
     };
 
     if (parsed.Has("round"))
@@ -85,7 +87,16 @@ static async Task<int> RunDownloadSofaScore(string[] args)
     Console.WriteLine($"Events discovered: {result.EventsDiscovered}");
     Console.WriteLine($"Files written: {result.FilesWritten}");
     Console.WriteLine($"Files skipped: {result.FilesSkipped}");
+    Console.WriteLine($"Warnings: {result.Warnings.Count}");
     Console.WriteLine($"Failures: {result.Failures.Count}");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
+    }
 
     if (result.Failures.Count > 0)
     {

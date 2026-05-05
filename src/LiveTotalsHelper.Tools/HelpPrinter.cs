@@ -43,6 +43,8 @@ public static class HelpPrinter
         Console.WriteLine("  --overwrite          true/false. Default: false");
         Console.WriteLine("  --incidents          true/false. Default: true");
         Console.WriteLine("  --statistics         true/false. Default: true");
+        Console.WriteLine("  --skip-details-for-not-started true/false. Default: true");
+        Console.WriteLine("  --strict-event-details true/false. Default: false. If true, incidents/statistics errors fail the run.");
         Console.WriteLine("  --headless           true/false. Default: true");
         Console.WriteLine("  --show-browser       Debug shortcut. Runs Chromium visible.");
         Console.WriteLine("  --warmup-delay-ms    Delay after opening sofascore.com before API calls. Default: 1000");

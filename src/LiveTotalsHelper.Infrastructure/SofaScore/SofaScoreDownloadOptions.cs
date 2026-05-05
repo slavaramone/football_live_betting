@@ -13,6 +13,12 @@ public sealed class SofaScoreDownloadOptions
     public bool DownloadIncidents { get; init; } = true;
     public bool DownloadStatistics { get; init; } = true;
 
+    // Future fixtures usually have calendar metadata only. SofaScore often returns
+    // 404/403 for incidents/statistics before a match has started or before stats exist.
+    // Keep calendar/event-meta downloads successful and treat missing per-event details as warnings.
+    public bool SkipDetailsForNotStartedEvents { get; init; } = true;
+    public bool StrictEventDetails { get; init; }
+
     // SofaScore often returns HTTP 403 for plain HttpClient requests.
     // We keep a real browser context alive and perform API requests through Playwright.
     public bool Headless { get; init; } = true;
@@ -28,5 +34,6 @@ public sealed class SofaScoreDownloadResult
     public int EventsDiscovered { get; set; }
     public int FilesWritten { get; set; }
     public int FilesSkipped { get; set; }
+    public List<string> Warnings { get; } = [];
     public List<string> Failures { get; } = [];
 }
