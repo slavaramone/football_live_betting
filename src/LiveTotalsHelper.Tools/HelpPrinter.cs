@@ -7,9 +7,12 @@ public static class HelpPrinter
         Console.WriteLine("LiveTotalsHelper.Tools");
         Console.WriteLine();
         Console.WriteLine("Commands:");
-        Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON, then import model data into PostgreSQL.");
+        Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON only.");
+        Console.WriteLine("  import-sofascore     Import saved SofaScore JSON into PostgreSQL and apply pending migrations.");
         Console.WriteLine();
         PrintDownloadSofaScore();
+        Console.WriteLine();
+        PrintImportSofaScore();
     }
 
     public static int UnknownCommand(string command)
@@ -22,15 +25,15 @@ public static class HelpPrinter
 
     public static void PrintDownloadSofaScore()
     {
-        Console.WriteLine("Usage:");
+        Console.WriteLine("Download usage:");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- download-sofascore \\");
-        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 57783 --round 25");
+        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --round 2");
         Console.WriteLine();
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- download-sofascore \\");
-        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 57783 --from-round 1 --to-round 30 \\");
+        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --from-round 1 --to-round 30 \\");
         Console.WriteLine("    --output data/sofascore --delay-ms 600 --overwrite false");
         Console.WriteLine();
-        Console.WriteLine("Arguments:");
+        Console.WriteLine("Download arguments:");
         Console.WriteLine("  --league             League name used in folder structure, for example \"NPL NSW\".");
         Console.WriteLine("  --tournament-id      SofaScore unique tournament id.");
         Console.WriteLine("  --season-id          SofaScore season id.");
@@ -48,12 +51,31 @@ public static class HelpPrinter
         Console.WriteLine("  --headless           true/false. Default: true");
         Console.WriteLine("  --show-browser       Debug shortcut. Runs Chromium visible.");
         Console.WriteLine("  --warmup-delay-ms    Delay after opening sofascore.com before API calls. Default: 1000");
+    }
+
+    public static void PrintImportSofaScore()
+    {
+        Console.WriteLine("Import usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-sofascore \\");
+        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --round 2 --input data/sofascore");
+        Console.WriteLine();
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-sofascore \\");
+        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --from-round 1 --to-round 30 --input data/sofascore");
+        Console.WriteLine();
+        Console.WriteLine("Import arguments:");
+        Console.WriteLine("  --league             League name used in folder structure.");
+        Console.WriteLine("  --tournament-id      SofaScore unique tournament id fallback. Optional, default: 0.");
+        Console.WriteLine("  --season-id          SofaScore season id.");
+        Console.WriteLine("  --round              Single round to import.");
+        Console.WriteLine("  --from-round         First round when importing a range.");
+        Console.WriteLine("  --to-round           Last round when importing a range.");
+        Console.WriteLine("  --input              Input root where JSON was downloaded. Default: data/sofascore");
         Console.WriteLine();
         Console.WriteLine("Database:");
         Console.WriteLine("  Connection string: src/LiveTotalsHelper.Tools/appsettings.json");
-        Console.WriteLine("  Pending migrations are applied automatically when the command starts.");
+        Console.WriteLine("  Pending migrations are applied automatically only when import-sofascore starts.");
         Console.WriteLine();
-        Console.WriteLine("Before first run, install Playwright browser binaries:");
+        Console.WriteLine("Before first run, install Playwright browser binaries for download-sofascore:");
         Console.WriteLine("  dotnet build src/LiveTotalsHelper.Tools/LiveTotalsHelper.Tools.csproj");
         Console.WriteLine("  powershell -ExecutionPolicy Bypass -File src/LiveTotalsHelper.Tools/bin/Debug/net8.0/playwright.ps1 install chromium");
     }

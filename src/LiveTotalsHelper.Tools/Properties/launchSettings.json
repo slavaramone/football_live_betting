@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "LiveTotalsHelper.Tools": {
+      "commandName": "Project",
+      "commandLineArgs": "import-sofascore --league \"NPL NSW Men\" --tournament-id 1274 --season-id 88562 --input C:\\Temp\\football_data"
+    }
+  }
+}

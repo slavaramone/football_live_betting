@@ -18,6 +18,7 @@ try
     return command switch
     {
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
+        "import-sofascore" => await RunImportSofaScore(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -27,7 +28,7 @@ catch (ArgumentException ex)
     Console.Error.WriteLine($"Argument error: {ex.Message}");
     Console.ResetColor();
     Console.Error.WriteLine();
-    HelpPrinter.PrintDownloadSofaScore();
+    HelpPrinter.Print();
     return 2;
 }
 catch (Exception ex)
@@ -59,10 +60,192 @@ static async Task<int> RunDownloadSofaScore(string[] args)
         StrictEventDetails = parsed.Bool("strict-event-details", false)
     };
 
+    AddRounds(options.Rounds, parsed);
+
+    await using var client = await SofaScoreClient.CreateAsync(options, Console.Out, CancellationToken.None);
+    var downloader = new SofaScoreDownloader(client, new SofaScoreJsonFileStore());
+
+    SofaScoreDownloadResult result = await downloader.DownloadAsync(options, Console.Out, CancellationToken.None);
+    PrintDownloadResult(result);
+
+    return result.Failures.Count == 0 ? 0 : 1;
+}
+
+static async Task<int> RunImportSofaScore(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    string league = parsed.RequiredString("league");
+    int tournamentId = parsed.Int("tournament-id", 0);
+    int seasonId = parsed.RequiredInt("season-id");
+    string inputRoot = parsed.String("input", parsed.String("output", "data/sofascore"));
+
+    var rounds = new List<int>();
+    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
+        AddRounds(rounds, parsed);
+
+    IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+
+    await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
+    var importer = new SofaScoreDbImporter(dbContext);
+
+    SofaScoreImportResult result = await ImportSofaScoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, Console.Out, CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Import done.");
+    Console.WriteLine($"Rounds imported: {result.RoundsImported}");
+    Console.WriteLine($"Calendars imported: {result.CalendarsImported}");
+    Console.WriteLine($"Incidents files imported: {result.IncidentsImported}");
+    Console.WriteLine($"Statistics files imported: {result.StatisticsImported}");
+    Console.WriteLine($"Warnings: {result.Warnings.Count}");
+    Console.WriteLine($"Failures: {result.Failures.Count}");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
+    }
+
+    if (result.Failures.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Failures:");
+        foreach (string failure in result.Failures)
+            Console.WriteLine($"- {failure}");
+    }
+
+    return result.Failures.Count == 0 ? 0 : 1;
+}
+
+static async Task<SofaScoreImportResult> ImportSofaScoreFolderAsync(
+    SofaScoreDbImporter importer,
+    string inputRoot,
+    string league,
+    int tournamentId,
+    int seasonId,
+    IReadOnlyCollection<int> requestedRounds,
+    TextWriter log,
+    CancellationToken cancellationToken)
+{
+    var result = new SofaScoreImportResult();
+    string leagueSlug = FileNameSanitizer.Slugify(league);
+    string seasonFolder = Path.Combine(inputRoot, leagueSlug, $"season-{seasonId}");
+
+    if (!Directory.Exists(seasonFolder))
+        throw new ArgumentException($"SofaScore season folder was not found: {seasonFolder}");
+
+    List<(int Round, string Folder)> roundFolders = [];
+    if (requestedRounds.Count > 0)
+    {
+        foreach (int round in requestedRounds.Distinct().OrderBy(x => x))
+        {
+            string folder = FindRoundFolder(seasonFolder, round);
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                result.Warnings.Add($"round {round}: folder not found under {seasonFolder}");
+                continue;
+            }
+
+            roundFolders.Add((round, folder));
+        }
+    }
+    else
+    {
+        foreach (string folder in Directory.GetDirectories(seasonFolder, "round-*"))
+        {
+            if (TryParseRoundFromFolder(folder, out int round))
+                roundFolders.Add((round, folder));
+        }
+
+        roundFolders = roundFolders.OrderBy(x => x.Round).ToList();
+    }
+
+    foreach ((int round, string roundFolder) in roundFolders)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await log.WriteLineAsync($"Round {round}: importing saved JSON...");
+
+        string calendarPath = Path.Combine(roundFolder, "calendar.json");
+        if (!File.Exists(calendarPath))
+        {
+            result.Warnings.Add($"round {round}: calendar.json not found: {calendarPath}");
+            continue;
+        }
+
+        try
+        {
+            string calendarJson = await File.ReadAllTextAsync(calendarPath, cancellationToken);
+            await importer.ImportCalendarAsync(calendarJson, tournamentId, seasonId, round, calendarPath, cancellationToken);
+            result.CalendarsImported++;
+            result.RoundsImported++;
+        }
+        catch (Exception ex)
+        {
+            result.Failures.Add($"round {round}: calendar import failed: {ex.Message}");
+            continue;
+        }
+
+        string eventsFolder = Path.Combine(roundFolder, "events");
+        if (!Directory.Exists(eventsFolder))
+        {
+            result.Warnings.Add($"round {round}: events folder not found: {eventsFolder}");
+            continue;
+        }
+
+        foreach (string eventFolder in Directory.GetDirectories(eventsFolder).OrderBy(x => x))
+        {
+            string eventFolderName = Path.GetFileName(eventFolder);
+            if (!long.TryParse(eventFolderName, out long eventId))
+            {
+                result.Warnings.Add($"round {round}: skipped non-event folder: {eventFolder}");
+                continue;
+            }
+
+            string incidentsPath = Path.Combine(eventFolder, "incidents.json");
+            if (File.Exists(incidentsPath))
+            {
+                try
+                {
+                    string json = await File.ReadAllTextAsync(incidentsPath, cancellationToken);
+                    await importer.ImportIncidentsAsync(eventId, json, incidentsPath, cancellationToken);
+                    result.IncidentsImported++;
+                }
+                catch (Exception ex)
+                {
+                    result.Warnings.Add($"event {eventId}: incidents import failed: {ex.Message}");
+                }
+            }
+
+            string statisticsPath = Path.Combine(eventFolder, "statistics.json");
+            if (File.Exists(statisticsPath))
+            {
+                try
+                {
+                    string json = await File.ReadAllTextAsync(statisticsPath, cancellationToken);
+                    await importer.ImportStatisticsAsync(eventId, json, statisticsPath, cancellationToken);
+                    result.StatisticsImported++;
+                }
+                catch (Exception ex)
+                {
+                    result.Warnings.Add($"event {eventId}: statistics import failed: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+static void AddRounds(ICollection<int> target, ParsedArgs parsed)
+{
     if (parsed.Has("round"))
     {
-        int round = parsed.RequiredInt("round");
-        options.Rounds.Add(round);
+        target.Add(parsed.RequiredInt("round"));
     }
     else if (parsed.Has("from-round") || parsed.Has("to-round"))
     {
@@ -72,27 +255,41 @@ static async Task<int> RunDownloadSofaScore(string[] args)
             throw new ArgumentException("to-round must be greater than or equal to from-round.");
 
         for (int round = from; round <= to; round++)
-            options.Rounds.Add(round);
+            target.Add(round);
     }
     else
     {
         throw new ArgumentException("Provide either --round or --from-round and --to-round.");
     }
+}
 
-    IConfiguration configuration = new ConfigurationBuilder()
-        .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-        .Build();
+static string FindRoundFolder(string seasonFolder, int round)
+{
+    string padded = Path.Combine(seasonFolder, $"round-{round:00}");
+    if (Directory.Exists(padded))
+        return padded;
 
-    await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
+    string plain = Path.Combine(seasonFolder, $"round-{round}");
+    if (Directory.Exists(plain))
+        return plain;
 
-    await using var client = await SofaScoreClient.CreateAsync(options, Console.Out, CancellationToken.None);
-    var downloader = new SofaScoreDownloader(client, new SofaScoreJsonFileStore(), new SofaScoreDbImporter(dbContext));
+    return string.Empty;
+}
 
-    SofaScoreDownloadResult result = await downloader.DownloadAsync(options, Console.Out, CancellationToken.None);
+static bool TryParseRoundFromFolder(string folder, out int round)
+{
+    string name = Path.GetFileName(folder);
+    if (name.StartsWith("round-", StringComparison.OrdinalIgnoreCase))
+        return int.TryParse(name["round-".Length..], out round);
 
+    round = 0;
+    return false;
+}
+
+static void PrintDownloadResult(SofaScoreDownloadResult result)
+{
     Console.WriteLine();
-    Console.WriteLine("Done.");
+    Console.WriteLine("Download done.");
     Console.WriteLine($"Rounds: {result.RoundsDownloaded}");
     Console.WriteLine($"Events discovered: {result.EventsDiscovered}");
     Console.WriteLine($"Files written: {result.FilesWritten}");
@@ -115,6 +312,14 @@ static async Task<int> RunDownloadSofaScore(string[] args)
         foreach (string failure in result.Failures)
             Console.WriteLine($"- {failure}");
     }
+}
 
-    return result.Failures.Count == 0 ? 0 : 1;
+internal sealed class SofaScoreImportResult
+{
+    public int RoundsImported { get; set; }
+    public int CalendarsImported { get; set; }
+    public int IncidentsImported { get; set; }
+    public int StatisticsImported { get; set; }
+    public List<string> Warnings { get; } = [];
+    public List<string> Failures { get; } = [];
 }

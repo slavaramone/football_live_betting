@@ -12,7 +12,18 @@ Connection string is stored in `src/LiveTotalsHelper.Tools/appsettings.json`:
 }
 ```
 
-Pending migrations are applied automatically at the start of the utility app.
+Pending migrations are applied automatically only by the dedicated import command:
+
+```bash
+dotnet run --project src/LiveTotalsHelper.Tools -- import-sofascore \
+  --league "NPL NSW" \
+  --tournament-id 1274 \
+  --season-id 88562 \
+  --round 2 \
+  --input data/sofascore
+```
+
+`download-sofascore` only writes raw JSON files and does not touch PostgreSQL.
 
 Current schema is intentionally flat and contains only three tables:
 
@@ -26,4 +37,4 @@ For local development, create the database first:
 CREATE DATABASE livetotalshelper;
 ```
 
-Then run the tool. It will apply the initial migration automatically.
+Then run `import-sofascore`. It will apply the initial migration automatically.
