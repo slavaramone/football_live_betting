@@ -224,17 +224,32 @@ static async Task<int> RunPriceLiveTotal(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
 
+    LeagueProfile? profile = null;
+    string profileNameForOutput = string.Empty;
+    string profilesFile = parsed.String("profiles-file", "league-profiles.json");
+    if (parsed.Has("profile"))
+    {
+        string requestedProfile = parsed.RequiredString("profile");
+        LeagueProfileStore profileStore = await LeagueProfileStore.LoadAsync(profilesFile, CancellationToken.None);
+        profile = profileStore.FindRequired(requestedProfile);
+        profileNameForOutput = string.IsNullOrWhiteSpace(profile.Name) ? profile.Key : profile.Name;
+    }
+
+    string modelPath = parsed.Has("model")
+        ? parsed.RequiredString("model")
+        : profile?.ModelPath ?? throw new ArgumentException("Missing required argument --model, or provide --profile with a modelPath in league-profiles.json.");
+
     var options = new LiveTotalPriceOptions
     {
-        ModelPath = parsed.RequiredString("model"),
+        ModelPath = modelPath,
         StartingLine = parsed.RequiredDouble("starting-line"),
         StartingOverOdds = parsed.RequiredDouble("starting-over"),
         StartingUnderOdds = parsed.RequiredDouble("starting-under"),
         Minute = parsed.RequiredInt("minute"),
         HomeGoals = parsed.RequiredInt("home-goals"),
         AwayGoals = parsed.RequiredInt("away-goals"),
-        EmpiricalWeight = parsed.Double("empirical-weight", 0.80),
-        EdgeThreshold = parsed.Double("edge-threshold", 0.10),
+        EmpiricalWeight = parsed.Double("empirical-weight", profile?.DefaultEmpiricalWeight ?? 0.80),
+        EdgeThreshold = parsed.Double("edge-threshold", profile?.EdgeThreshold ?? 0.10),
         HomeRedCards = parsed.Int("home-red-cards", parsed.Int("home-reds", 0)),
         AwayRedCards = parsed.Int("away-red-cards", parsed.Int("away-reds", 0)),
         LastGoalMinute = parsed.Int("last-goal-minute", -1),
@@ -243,18 +258,55 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         VolumeFactorSource = parsed.Has("volume-factor") ? "manual --volume-factor" : "none/default 1.0"
     };
 
-    bool useCurrentSeasonVolume = parsed.Bool("use-current-season-volume", false);
+    bool explicitTargetLines = parsed.Has("target-lines");
+    if (!explicitTargetLines && profile?.TargetLines is { Count: > 0 })
+    {
+        options.TargetLines.Clear();
+        foreach (double line in profile.TargetLines)
+            options.TargetLines.Add(line);
+    }
+
+    bool useCurrentSeasonVolume = !parsed.Has("volume-factor") && parsed.Bool("use-current-season-volume", profile?.UseCurrentSeasonVolume ?? false);
     SeasonVolumeFactorResult? seasonVolume = null;
     if (useCurrentSeasonVolume)
     {
+        string league = parsed.String("league", profile?.League ?? string.Empty);
+        int currentSeasonId = parsed.Has("current-season-id")
+            ? parsed.RequiredInt("current-season-id")
+            : profile?.CurrentSeasonId ?? 0;
+        int beforeRound = parsed.Has("before-round")
+            ? parsed.RequiredInt("before-round")
+            : profile?.DefaultBeforeRound ?? 0;
+        int priorStrength = parsed.Int("prior-strength-matches", profile?.PriorStrengthMatches ?? 100);
+
+        if (string.IsNullOrWhiteSpace(league))
+            throw new ArgumentException("Current-season volume requires --league or a profile with league set.");
+        if (currentSeasonId <= 0)
+            throw new ArgumentException("Current-season volume requires --current-season-id or a profile with currentSeasonId set.");
+        if (beforeRound <= 0)
+            throw new ArgumentException("Current-season volume requires --before-round. It should be the next/current round, so only earlier completed rounds are used.");
+
         var volumeOptions = new SeasonVolumeFactorOptions
         {
-            League = parsed.String("league", string.Empty),
-            CurrentSeasonId = parsed.RequiredInt("current-season-id"),
-            BeforeRound = parsed.RequiredInt("before-round"),
-            PriorStrengthMatches = parsed.Int("prior-strength-matches", 100)
+            League = league,
+            CurrentSeasonId = currentSeasonId,
+            BeforeRound = beforeRound,
+            PriorStrengthMatches = priorStrength
         };
-        AddRequiredIntList(volumeOptions.BaseSeasonIds, parsed, "base-season-ids");
+
+        if (parsed.Has("base-season-ids"))
+        {
+            AddRequiredIntList(volumeOptions.BaseSeasonIds, parsed, "base-season-ids");
+        }
+        else if (profile?.BaseSeasonIds is { Count: > 0 })
+        {
+            foreach (int seasonId in profile.BaseSeasonIds)
+                volumeOptions.BaseSeasonIds.Add(seasonId);
+        }
+        else
+        {
+            throw new ArgumentException("Current-season volume requires --base-season-ids or a profile with baseSeasonIds set.");
+        }
 
         IConfiguration configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
@@ -268,7 +320,6 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         options.VolumeFactorSource = seasonVolume.Source;
     }
 
-    bool explicitTargetLines = parsed.Has("target-lines");
     AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
     AddLiveOverOdds(options.LiveOverOddsByLine, parsed);
     AddLiveUnderOdds(options.LiveUnderOddsByLine, parsed);
@@ -280,8 +331,16 @@ static async Task<int> RunPriceLiveTotal(string[] args)
 
     Console.WriteLine();
     Console.WriteLine("Live total pricing done.");
+    if (!string.IsNullOrWhiteSpace(profileNameForOutput))
+    {
+        Console.WriteLine($"Profile: {profileNameForOutput} ({profile!.Key})");
+        if (!string.IsNullOrWhiteSpace(profile.RiskLevel))
+            Console.WriteLine($"Profile risk: {profile.RiskLevel}");
+        if (!string.IsNullOrWhiteSpace(profile.Notes))
+            Console.WriteLine($"Profile notes: {profile.Notes}");
+    }
     Console.WriteLine($"Model: {result.ModelPath}");
-    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? "unknown" : result.League)}");
+    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? (profile?.League ?? "unknown") : result.League)}");
     Console.WriteLine($"Minute/score: {result.Minute}'  {result.HomeGoals}-{result.AwayGoals} ({result.ScoreState})");
     Console.WriteLine($"Timing group: {result.SelectedTimingGroup}");
     if (!string.IsNullOrWhiteSpace(result.TimingFallback))
@@ -290,6 +349,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     Console.WriteLine($"Starting fair over probability: {result.StartingFairOverProbability:P2}");
     Console.WriteLine($"Starting total xG: {result.StartingTotalXg:0.###}");
     Console.WriteLine($"Blend: Empirical {result.EmpiricalWeight:P0}, Weibull {result.WeibullWeight:P0}");
+    Console.WriteLine($"Edge threshold: {options.EdgeThreshold:P0}");
     Console.WriteLine($"Remaining share: Weibull {result.WeibullRemainingShare:P1}, Empirical {result.EmpiricalRemainingShare:P1}, Used {result.TimingRemainingShare:P1}");
     Console.WriteLine($"Remaining xG before volume: {result.RemainingXgBeforeVolume:0.###}");
     Console.WriteLine($"Volume factor: {result.VolumeFactor:0.###} ({result.VolumeFactorSource})");
@@ -319,18 +379,27 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         string bookOver = line.BookOverOdds.HasValue ? line.BookOverOdds.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";
         string overEdge = line.OverEdge.HasValue ? line.OverEdge.Value.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture) : "-";
         string overEv = line.OverExpectedValue.HasValue ? line.OverExpectedValue.Value.ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture) : "-";
-        string fairOver = double.IsInfinity(line.FairOdds) ? "inf" : line.FairOdds.ToString("0.###", CultureInfo.InvariantCulture);
+        string fairOver = FormatFairOdds(line.FairOdds);
 
         string bookUnder = line.BookUnderOdds.HasValue ? line.BookUnderOdds.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";
         string underEdge = line.UnderEdge.HasValue ? line.UnderEdge.Value.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture) : "-";
         string underEv = line.UnderExpectedValue.HasValue ? line.UnderExpectedValue.Value.ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture) : "-";
-        string fairUnder = double.IsInfinity(line.FairUnderOdds) ? "inf" : line.FairUnderOdds.ToString("0.###", CultureInfo.InvariantCulture);
+        string fairUnder = FormatFairOdds(line.FairUnderOdds);
 
         Console.WriteLine($"{line.Line,4:0.##}  {line.WinProbability,6:P1}  {line.PushProbability,6:P1}  {line.UnderWinProbability,6:P1}  {fairOver,5}  {bookOver,5}  {overEdge,7}  {overEv,7}  {fairUnder,6}  {bookUnder,5}  {underEdge,7}  {underEv,7}  {line.Decision}");
     }
 
     return 0;
 }
+
+
+static string FormatFairOdds(double odds)
+{
+    if (double.IsNaN(odds) || double.IsInfinity(odds) || odds > 9999)
+        return "-";
+    return odds.ToString("0.###", CultureInfo.InvariantCulture);
+}
+
 
 static async Task<int> RunBacktestTimingModel(string[] args)
 {

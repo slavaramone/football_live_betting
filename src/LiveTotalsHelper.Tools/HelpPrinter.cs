@@ -204,12 +204,12 @@ public static class HelpPrinter
     {
         Console.WriteLine("Price live total usage:");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- price-live-total \\");
-        Console.WriteLine("    --model data/models/weibull/npl-nsw-score-state.json \\");
+        Console.WriteLine("    --profile npl-nsw \\");
         Console.WriteLine("    --starting-line 2.5 --starting-over 1.85 --starting-under 1.95 \\");
-        Console.WriteLine("    --minute 60 --home-goals 1 --away-goals 0 \\");
-        Console.WriteLine("    --live-over-1.5 1.25 --live-under-1.5 3.80 --live-over-2.5 2.30 --live-under-2.5 1.65 --live-over-3.5 4.20 --live-under-3.5 1.98");
+        Console.WriteLine("    --minute 60 --home-goals 1 --away-goals 0 --before-round 10 \\");
+        Console.WriteLine("    --live-over-odds \"2.5=2.30,3.5=4.20\" --live-under-odds \"2.5=1.65,3.5=1.98\"");
         Console.WriteLine();
-        Console.WriteLine("With automatic current-season volume factor:");
+        Console.WriteLine("Without profile:");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- price-live-total \\");
         Console.WriteLine("    --model data/models/weibull/npl-nsw-score-state.json \\");
         Console.WriteLine("    --starting-line 2.5 --starting-over 1.85 --starting-under 1.95 \\");
@@ -221,32 +221,35 @@ public static class HelpPrinter
         Console.WriteLine("    --live-under-odds \"1.5=3.80,2.0=2.05,2.5=1.65,3.0=1.40,3.5=1.98\"");
         Console.WriteLine();
         Console.WriteLine("Price live total arguments:");
-        Console.WriteLine("  --model              Required fitted timing model JSON from fit-weibull, preferably grouped by ScoreStateBefore.");
+        Console.WriteLine("  --profile            Optional league profile key/name from league-profiles.json, e.g. npl-nsw or wa-state-league-1.");
+        Console.WriteLine("  --profiles-file      Optional profiles JSON path. Default: league-profiles.json copied beside the tool executable.");
+        Console.WriteLine("  --model              Fitted timing model JSON. Required unless provided by profile.");
         Console.WriteLine("  --starting-line      Required starting/pre-match total line.");
         Console.WriteLine("  --starting-over      Required starting/pre-match over odds.");
         Console.WriteLine("  --starting-under     Required starting/pre-match under odds.");
         Console.WriteLine("  --minute             Required current match minute.");
         Console.WriteLine("  --home-goals         Required current home goals.");
         Console.WriteLine("  --away-goals         Required current away goals.");
-        Console.WriteLine("  --empirical-weight   Empirical share in empirical/Weibull blend. Default: 0.80.");
-        Console.WriteLine("  --target-lines       Optional comma-separated target lines. Default: 1.5,2.0,2.5,3.0. Any line is supported: 3.5,4.0,4.25, etc.");
+        Console.WriteLine("  --empirical-weight   Optional override. Default comes from profile, otherwise 0.80.");
+        Console.WriteLine("  --target-lines       Optional comma-separated target lines. Default comes from profile, otherwise 1.5,2.0,2.5,3.0.");
         Console.WriteLine("  --live-over-X        Optional bookmaker live Over X odds. Examples: --live-over-3.5 4.20, --live-over-4.0 6.50.");
         Console.WriteLine("  --live-under-X       Optional bookmaker live Under X odds. Examples: --live-under-3.5 1.98, --live-under-4.0 1.35.");
         Console.WriteLine("                       Two-digit compact aliases also work: --live-over-35 / --live-under-35 for 3.5. Use decimal form for quarter lines like --live-over-4.25.");
         Console.WriteLine("  --live-over-odds     Optional generic format: \"1.5=1.40,2.0=1.85,2.5=2.45,3.5=4.20\".");
         Console.WriteLine("  --live-under-odds    Optional generic format: \"1.5=3.60,2.0=2.10,2.5=1.65,3.5=1.90\".");
-        Console.WriteLine("  --edge-threshold     Required edge for BET OVER / BET UNDER decision. Default: 0.10 = 10%.");
-        Console.WriteLine("  --volume-factor      Optional manual multiplier for remaining xG. Default: 1.0.");
-        Console.WriteLine("  --use-current-season-volume true/false. If true, calculate volume factor from PostgreSQL.");
-        Console.WriteLine("  --league             Required for automatic volume factor league filtering.");
-        Console.WriteLine("  --base-season-ids    Required for automatic volume factor, e.g. 48254,57783,71036.");
-        Console.WriteLine("  --current-season-id  Required for automatic volume factor, e.g. 88562.");
-        Console.WriteLine("  --before-round       Required for automatic volume factor. Uses current-season matches with RoundNumber < this.");
-        Console.WriteLine("  --prior-strength-matches Prior strength for automatic volume shrinkage. Default: 100.");
+        Console.WriteLine("  --edge-threshold     Optional override. Default comes from profile, otherwise 0.10 = 10%.");
+        Console.WriteLine("  --volume-factor      Optional manual multiplier for remaining xG. Overrides automatic current-season volume.");
+        Console.WriteLine("  --use-current-season-volume true/false. Default comes from profile, otherwise false.");
+        Console.WriteLine("  --league             Required for automatic volume if not provided by profile.");
+        Console.WriteLine("  --base-season-ids    Required for automatic volume if not provided by profile.");
+        Console.WriteLine("  --current-season-id  Required for automatic volume if not provided by profile.");
+        Console.WriteLine("  --before-round       Required for automatic volume. Uses current-season matches with RoundNumber < this.");
+        Console.WriteLine("  --prior-strength-matches Optional override. Default comes from profile, otherwise 100.");
         Console.WriteLine("  --home-red-cards     Optional current home red cards. Red cards produce warning only.");
         Console.WriteLine("  --away-red-cards     Optional current away red cards. Red cards produce warning only.");
         Console.WriteLine("  --last-goal-minute   Optional latest goal minute. If within recent-goal-minutes, decision is WAIT.");
         Console.WriteLine("  --recent-goal-minutes Optional cooldown threshold. Default: 2.");
     }
+
 
 }
