@@ -22,6 +22,7 @@ try
         "import-sofascore" => await RunImportSofaScore(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "build-weibull-dataset" => await RunBuildWeibullDataset(commandArgs),
+        "fit-weibull" => await RunFitWeibull(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -125,6 +126,63 @@ static async Task<int> RunBuildWeibullDataset(string[] args)
 
         if (result.Warnings.Count > options.MaxExamples + 1)
             Console.WriteLine($"... {result.Warnings.Count - options.MaxExamples - 1} more");
+    }
+
+    return 0;
+}
+
+
+static async Task<int> RunFitWeibull(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    var options = new WeibullFitOptions
+    {
+        InputPath = parsed.RequiredString("input"),
+        OutputPath = parsed.String("output", string.Empty),
+        League = parsed.String("league", string.Empty),
+        MaxMinute = parsed.Int("max-minute", 90),
+        MinuteColumn = parsed.String("minute-column", "GoalMinuteForModel"),
+        MaxIterations = parsed.Int("max-iterations", 100),
+        Tolerance = parsed.Double("tolerance", 1e-9)
+    };
+
+    var fitter = new WeibullModelFitter(options);
+    WeibullFitResult result = await fitter.FitAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Weibull fit done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"Output: {result.OutputPath}");
+    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? "unknown" : result.League)}");
+    Console.WriteLine($"Seasons included: {(result.SeasonIds.Count == 0 ? "unknown" : string.Join(", ", result.SeasonIds))}");
+    Console.WriteLine($"Goals used: {result.GoalCount}");
+    Console.WriteLine($"Matches represented: {result.MatchCount}");
+    Console.WriteLine($"Mean goal minute: {result.MeanGoalMinute:0.00}");
+    Console.WriteLine($"Median goal minute: {result.MedianGoalMinute:0.00}");
+    Console.WriteLine($"Shape k: {result.ShapeK:0.######}");
+    Console.WriteLine($"Scale lambda: {result.ScaleLambda:0.######}");
+    Console.WriteLine($"Log-likelihood: {result.LogLikelihood:0.###}");
+    Console.WriteLine($"CDF at max minute ({result.MaxMinute}): {result.CdfAtMaxMinute:P2}");
+
+    Console.WriteLine();
+    Console.WriteLine("Minute checkpoints, normalized to max minute:");
+    Console.WriteLine("Minute   CDF       Remaining");
+    foreach (WeibullMinuteCheckpoint checkpoint in result.Checkpoints)
+        Console.WriteLine($"{checkpoint.Minute,6}   {checkpoint.NormalizedCdf,7:P1}   {checkpoint.RemainingShare,9:P1}");
+
+    Console.WriteLine();
+    Console.WriteLine("Bucket comparison:");
+    Console.WriteLine("Bucket     Actual    Weibull");
+    foreach (WeibullBucketComparison bucket in result.Buckets)
+        Console.WriteLine($"{bucket.Bucket,8}   {bucket.ActualPct,7:P1}   {bucket.WeibullExpectedPct,7:P1}   ({bucket.ActualGoals} goals)");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
     }
 
     return 0;

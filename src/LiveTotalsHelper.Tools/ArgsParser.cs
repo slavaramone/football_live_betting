@@ -47,6 +47,17 @@ public sealed class ParsedArgs
             : throw new ArgumentException($"Argument --{key} must be an integer.");
     }
 
+    public double Double(string name, double defaultValue)
+    {
+        string key = Normalize(name);
+        if (!_values.TryGetValue(key, out string? value) || string.IsNullOrWhiteSpace(value))
+            return defaultValue;
+
+        return double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double parsed)
+            ? parsed
+            : throw new ArgumentException($"Argument --{key} must be a number.");
+    }
+
     public bool Bool(string name, bool defaultValue)
     {
         string key = Normalize(name);

@@ -11,6 +11,7 @@ public static class HelpPrinter
         Console.WriteLine("  import-sofascore     Import saved SofaScore JSON into PostgreSQL and apply pending migrations.");
         Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
         Console.WriteLine("  build-weibull-dataset Export reliable goal-minute rows to CSV for Weibull fitting.");
+        Console.WriteLine("  fit-weibull           Fit a league-wide Weibull timing model from a goal-minute CSV.");
         Console.WriteLine();
         PrintDownloadSofaScore();
         Console.WriteLine();
@@ -19,6 +20,8 @@ public static class HelpPrinter
         PrintValidateDb();
         Console.WriteLine();
         PrintBuildWeibullDataset();
+        Console.WriteLine();
+        PrintFitWeibull();
     }
 
     public static int UnknownCommand(string command)
@@ -108,6 +111,27 @@ public static class HelpPrinter
         Console.WriteLine("  --max-examples       Maximum warning examples printed. Default: 20");
         Console.WriteLine();
         Console.WriteLine("Output is one row per reliable goal event, designed for league-wide and opponent-wide Weibull fitting.");
+    }
+
+
+    public static void PrintFitWeibull()
+    {
+        Console.WriteLine("Fit Weibull usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-weibull \\");
+        Console.WriteLine("    --input data/weibull/npl-nsw-multi-season-goals.csv \\");
+        Console.WriteLine("    --league \"NPL NSW\" \\");
+        Console.WriteLine("    --output data/models/weibull/npl-nsw.json");
+        Console.WriteLine();
+        Console.WriteLine("Fit Weibull arguments:");
+        Console.WriteLine("  --input              Required input CSV produced by build-weibull-dataset.");
+        Console.WriteLine("  --output             Output JSON model path. Default: data/models/weibull/{league}-{season selection}.json");
+        Console.WriteLine("  --league             Optional league name stored in output model metadata.");
+        Console.WriteLine("  --max-minute         Normalize CDF/remaining share to this match minute. Default: 90");
+        Console.WriteLine("  --minute-column      CSV column to fit. Default: GoalMinuteForModel");
+        Console.WriteLine("  --max-iterations     Maximum MLE iterations. Default: 100");
+        Console.WriteLine("  --tolerance          MLE convergence tolerance. Default: 1e-9");
+        Console.WriteLine();
+        Console.WriteLine("Output JSON stores shapeK, scaleLambda, normalized checkpoints and empirical bucket comparison.");
     }
 
     public static void PrintValidateDb()
