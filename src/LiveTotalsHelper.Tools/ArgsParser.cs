@@ -47,6 +47,15 @@ public sealed class ParsedArgs
             : throw new ArgumentException($"Argument --{key} must be an integer.");
     }
 
+
+    public double RequiredDouble(string name)
+    {
+        string value = RequiredString(name);
+        return double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double parsed)
+            ? parsed
+            : throw new ArgumentException($"Argument --{Normalize(name)} must be a number.");
+    }
+
     public double Double(string name, double defaultValue)
     {
         string key = Normalize(name);

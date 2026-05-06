@@ -25,6 +25,7 @@ try
         "build-weibull-dataset" => await RunBuildWeibullDataset(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
         "backtest-timing-model" => await RunBacktestTimingModel(commandArgs),
+        "price-live-total" => await RunPriceLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -216,6 +217,73 @@ static async Task<int> RunFitWeibull(string[] args)
     return 0;
 }
 
+
+
+
+static async Task<int> RunPriceLiveTotal(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    var options = new LiveTotalPriceOptions
+    {
+        ModelPath = parsed.RequiredString("model"),
+        StartingLine = parsed.RequiredDouble("starting-line"),
+        StartingOverOdds = parsed.RequiredDouble("starting-over"),
+        StartingUnderOdds = parsed.RequiredDouble("starting-under"),
+        Minute = parsed.RequiredInt("minute"),
+        HomeGoals = parsed.RequiredInt("home-goals"),
+        AwayGoals = parsed.RequiredInt("away-goals"),
+        EmpiricalWeight = parsed.Double("empirical-weight", 0.80),
+        EdgeThreshold = parsed.Double("edge-threshold", 0.10),
+        HomeRedCards = parsed.Int("home-red-cards", parsed.Int("home-reds", 0)),
+        AwayRedCards = parsed.Int("away-red-cards", parsed.Int("away-reds", 0)),
+        LastGoalMinute = parsed.Int("last-goal-minute", -1),
+        RecentGoalMinutes = parsed.Int("recent-goal-minutes", 2)
+    };
+
+    AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
+    AddLiveOverOdds(options.LiveOverOddsByLine, parsed);
+
+    var pricer = new LiveTotalPricer(options);
+    LiveTotalPriceResult result = await pricer.PriceAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Live total pricing done.");
+    Console.WriteLine($"Model: {result.ModelPath}");
+    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? "unknown" : result.League)}");
+    Console.WriteLine($"Minute/score: {result.Minute}'  {result.HomeGoals}-{result.AwayGoals} ({result.ScoreState})");
+    Console.WriteLine($"Timing group: {result.SelectedTimingGroup}");
+    if (!string.IsNullOrWhiteSpace(result.TimingFallback))
+        Console.WriteLine($"Timing fallback: {result.TimingFallback}");
+    Console.WriteLine($"Starting O/U: line {result.StartingLine:0.##}, over {result.StartingOverOdds:0.###}, under {result.StartingUnderOdds:0.###}");
+    Console.WriteLine($"Starting fair over probability: {result.StartingFairOverProbability:P2}");
+    Console.WriteLine($"Starting total xG: {result.StartingTotalXg:0.###}");
+    Console.WriteLine($"Blend: Empirical {result.EmpiricalWeight:P0}, Weibull {result.WeibullWeight:P0}");
+    Console.WriteLine($"Remaining share: Weibull {result.WeibullRemainingShare:P1}, Empirical {result.EmpiricalRemainingShare:P1}, Used {result.TimingRemainingShare:P1}");
+    Console.WriteLine($"Expected remaining goals: {result.RemainingXg:0.###}");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("Over pricing:");
+    Console.WriteLine("Line   Win%    Push%   FairOdds  BookOdds   Edge     EV       Decision");
+    foreach (LiveTotalLinePrice line in result.Lines)
+    {
+        string book = line.BookOverOdds.HasValue ? line.BookOverOdds.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";
+        string edge = line.Edge.HasValue ? line.Edge.Value.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture) : "-";
+        string ev = line.ExpectedValue.HasValue ? line.ExpectedValue.Value.ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture) : "-";
+        string fair = double.IsInfinity(line.FairOdds) ? "inf" : line.FairOdds.ToString("0.###", CultureInfo.InvariantCulture);
+        Console.WriteLine($"{line.Line,4:0.##}  {line.WinProbability,6:P1}  {line.PushProbability,6:P1}  {fair,8}  {book,8}  {edge,7}  {ev,7}  {line.Decision}");
+    }
+
+    return 0;
+}
 
 static async Task<int> RunBacktestTimingModel(string[] args)
 {
@@ -563,6 +631,48 @@ static string FormatImportException(Exception exception)
     return string.Join(Environment.NewLine, lines);
 }
 
+
+
+static void AddLiveOverOdds(IDictionary<double, double> target, ParsedArgs parsed)
+{
+    AddLiveOverOddsForLine(target, parsed, 1.5, "live-over-1.5", "live-over-15", "over-1.5", "over-15");
+    AddLiveOverOddsForLine(target, parsed, 2.0, "live-over-2.0", "live-over-20", "over-2.0", "over-20");
+    AddLiveOverOddsForLine(target, parsed, 2.5, "live-over-2.5", "live-over-25", "over-2.5", "over-25");
+    AddLiveOverOddsForLine(target, parsed, 3.0, "live-over-3.0", "live-over-30", "over-3.0", "over-30");
+
+    // Generic syntax: --live-over-odds "1.5=1.40,2.0=1.85,2.5=2.45"
+    if (!parsed.Has("live-over-odds"))
+        return;
+
+    string raw = parsed.RequiredString("live-over-odds");
+    foreach (string token in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        string[] parts = token.Split('=', StringSplitOptions.TrimEntries);
+        if (parts.Length != 2 ||
+            !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double line) ||
+            !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double odds))
+        {
+            throw new ArgumentException("Argument --live-over-odds must use comma-separated line=odds pairs, for example 1.5=1.40,2.0=1.85.");
+        }
+
+        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
+    }
+}
+
+static void AddLiveOverOddsForLine(IDictionary<double, double> target, ParsedArgs parsed, double line, params string[] names)
+{
+    foreach (string name in names)
+    {
+        if (!parsed.Has(name))
+            continue;
+
+        double odds = parsed.Double(name, 0.0);
+        if (odds <= 1.0)
+            throw new ArgumentException($"Argument --{name} must be greater than 1.0.");
+
+        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
+    }
+}
 
 static void AddRequiredIntList(ICollection<int> target, ParsedArgs parsed, string argumentName)
 {

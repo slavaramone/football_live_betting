@@ -13,6 +13,7 @@ public static class HelpPrinter
         Console.WriteLine("  build-weibull-dataset Export reliable goal-minute rows to CSV for Weibull fitting.");
         Console.WriteLine("  fit-weibull           Fit a league-wide Weibull timing model from a goal-minute CSV.");
         Console.WriteLine("  backtest-timing-model Backtest score-state timing model using explicit training and test seasons.");
+        Console.WriteLine("  price-live-total     Price live Over totals from starting odds, score state and fitted timing model.");
         Console.WriteLine();
         PrintDownloadSofaScore();
         Console.WriteLine();
@@ -25,6 +26,8 @@ public static class HelpPrinter
         PrintFitWeibull();
         Console.WriteLine();
         PrintBacktestTimingModel();
+        Console.WriteLine();
+        PrintPriceLiveTotal();
     }
 
     public static int UnknownCommand(string command)
@@ -194,6 +197,38 @@ public static class HelpPrinter
         Console.WriteLine("  --output                 Optional CSV path for per-snapshot predictions.");
         Console.WriteLine();
         Console.WriteLine("This is not a betting/odds backtest. It tests whether score-state timing estimates trained on selected seasons predict actual remaining goals in held-out seasons.");
+    }
+
+
+    public static void PrintPriceLiveTotal()
+    {
+        Console.WriteLine("Price live total usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- price-live-total \\");
+        Console.WriteLine("    --model data/models/weibull/npl-nsw-score-state.json \\");
+        Console.WriteLine("    --starting-line 2.5 --starting-over 1.85 --starting-under 1.95 \\");
+        Console.WriteLine("    --minute 60 --home-goals 1 --away-goals 0 \\");
+        Console.WriteLine("    --live-over-1.5 1.25 --live-over-2.0 1.80 --live-over-2.5 2.30 --live-over-3.0 3.60");
+        Console.WriteLine();
+        Console.WriteLine("Price live total arguments:");
+        Console.WriteLine("  --model              Required fitted timing model JSON from fit-weibull, preferably grouped by ScoreStateBefore.");
+        Console.WriteLine("  --starting-line      Required starting/pre-match total line.");
+        Console.WriteLine("  --starting-over      Required starting/pre-match over odds.");
+        Console.WriteLine("  --starting-under     Required starting/pre-match under odds.");
+        Console.WriteLine("  --minute             Required current match minute.");
+        Console.WriteLine("  --home-goals         Required current home goals.");
+        Console.WriteLine("  --away-goals         Required current away goals.");
+        Console.WriteLine("  --empirical-weight   Empirical share in empirical/Weibull blend. Default: 0.80.");
+        Console.WriteLine("  --target-lines       Optional comma-separated target lines. Default: 1.5,2.0,2.5,3.0.");
+        Console.WriteLine("  --live-over-1.5      Optional bookmaker live Over 1.5 odds. Also accepts --live-over-15.");
+        Console.WriteLine("  --live-over-2.0      Optional bookmaker live Over 2.0 odds. Also accepts --live-over-20.");
+        Console.WriteLine("  --live-over-2.5      Optional bookmaker live Over 2.5 odds. Also accepts --live-over-25.");
+        Console.WriteLine("  --live-over-3.0      Optional bookmaker live Over 3.0 odds. Also accepts --live-over-30.");
+        Console.WriteLine("  --live-over-odds     Optional generic format: \"1.5=1.40,2.0=1.85,2.5=2.45\".");
+        Console.WriteLine("  --edge-threshold     Required edge for BET OVER decision. Default: 0.10 = 10%.");
+        Console.WriteLine("  --home-red-cards     Optional current home red cards. Red cards produce warning only.");
+        Console.WriteLine("  --away-red-cards     Optional current away red cards. Red cards produce warning only.");
+        Console.WriteLine("  --last-goal-minute   Optional latest goal minute. If within recent-goal-minutes, decision is WAIT.");
+        Console.WriteLine("  --recent-goal-minutes Optional cooldown threshold. Default: 2.");
     }
 
 }
