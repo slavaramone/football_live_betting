@@ -9,10 +9,13 @@ public static class HelpPrinter
         Console.WriteLine("Commands:");
         Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON only.");
         Console.WriteLine("  import-sofascore     Import saved SofaScore JSON into PostgreSQL and apply pending migrations.");
+        Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
         Console.WriteLine();
         PrintDownloadSofaScore();
         Console.WriteLine();
         PrintImportSofaScore();
+        Console.WriteLine();
+        PrintValidateDb();
     }
 
     public static int UnknownCommand(string command)
@@ -80,4 +83,25 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet build src/LiveTotalsHelper.Tools/LiveTotalsHelper.Tools.csproj");
         Console.WriteLine("  powershell -ExecutionPolicy Bypass -File src/LiveTotalsHelper.Tools/bin/Debug/net8.0/playwright.ps1 install chromium");
     }
+
+    public static void PrintValidateDb()
+    {
+        Console.WriteLine("Validate DB usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db");
+        Console.WriteLine();
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db \\");
+        Console.WriteLine("    --league \"NPL NSW\" --season-id 88562 --from-round 1 --to-round 30");
+        Console.WriteLine();
+        Console.WriteLine("Validate DB arguments:");
+        Console.WriteLine("  --league             Optional league name filter.");
+        Console.WriteLine("  --season-id          Optional SofaScore season id filter.");
+        Console.WriteLine("  --round              Optional single round filter.");
+        Console.WriteLine("  --from-round         Optional first round filter.");
+        Console.WriteLine("  --to-round           Optional last round filter.");
+        Console.WriteLine("  --fail-on-warnings   true/false. Return exit code 1 when warnings exist. Default: false");
+        Console.WriteLine("  --max-examples       Maximum examples printed per check. Default: 20");
+        Console.WriteLine();
+        Console.WriteLine("Validation checks include score vs goal events, goal timing ranges, score progression, future fixtures with details, missing model stats, duplicated incidents and red-card stat consistency.");
+    }
+
 }

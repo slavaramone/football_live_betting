@@ -3,6 +3,7 @@ using LiveTotalsHelper.Infrastructure.Persistence.SofaScore;
 using LiveTotalsHelper.Infrastructure.SofaScore;
 using LiveTotalsHelper.Tools;
 using Microsoft.Extensions.Configuration;
+using Microsoft.EntityFrameworkCore;
 
 try
 {
@@ -19,6 +20,7 @@ try
     {
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
         "import-sofascore" => await RunImportSofaScore(commandArgs),
+        "validate-db" => await RunValidateDb(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -69,6 +71,72 @@ static async Task<int> RunDownloadSofaScore(string[] args)
     PrintDownloadResult(result);
 
     return result.Failures.Count == 0 ? 0 : 1;
+}
+
+
+static async Task<int> RunValidateDb(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    var options = new DbValidationOptions
+    {
+        League = parsed.String("league", string.Empty),
+        SeasonId = parsed.Int("season-id", 0),
+        FailOnWarnings = parsed.Bool("fail-on-warnings", false),
+        MaxExamplesPerCheck = parsed.Int("max-examples", 20)
+    };
+
+    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
+        AddRounds(options.Rounds, parsed);
+
+    IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+
+    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
+    var runner = new DbValidationRunner(dbContext, options);
+    DbValidationResult result = await runner.RunAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Database validation done.");
+    Console.WriteLine($"Matches checked: {result.MatchesChecked}");
+    Console.WriteLine($"Events checked: {result.EventsChecked}");
+    Console.WriteLine($"Team stats checked: {result.TeamStatsChecked}");
+    Console.WriteLine($"Errors: {result.ErrorCount}");
+    Console.WriteLine($"Warnings: {result.WarningCount}");
+    Console.WriteLine($"Info: {result.InfoCount}");
+
+    foreach (DbValidationCheckResult check in result.Checks)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"[{check.Severity}] {check.Name}: {check.Message}");
+        foreach (string example in check.Examples.Take(options.MaxExamplesPerCheck))
+            Console.WriteLine($"  - {example}");
+
+        if (check.Examples.Count > options.MaxExamplesPerCheck)
+            Console.WriteLine($"  ... {check.Examples.Count - options.MaxExamplesPerCheck} more");
+    }
+
+    if (result.ErrorCount > 0)
+        return 1;
+
+    if (options.FailOnWarnings && result.WarningCount > 0)
+        return 1;
+
+    return 0;
+}
+
+static LiveTotalsDbContext CreateDbContext(IConfiguration configuration)
+{
+    string connectionString = configuration.GetConnectionString("LiveTotalsDb")
+        ?? throw new InvalidOperationException("Connection string 'LiveTotalsDb' was not found in appsettings.json.");
+
+    var options = new DbContextOptionsBuilder<LiveTotalsDbContext>()
+        .UseNpgsql(connectionString)
+        .Options;
+
+    return new LiveTotalsDbContext(options);
 }
 
 static async Task<int> RunImportSofaScore(string[] args)
