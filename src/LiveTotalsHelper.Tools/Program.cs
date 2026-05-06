@@ -268,8 +268,10 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         options.VolumeFactorSource = seasonVolume.Source;
     }
 
+    bool explicitTargetLines = parsed.Has("target-lines");
     AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
     AddLiveOverOdds(options.LiveOverOddsByLine, parsed);
+    AddLiveOddsLinesToTargets(options.TargetLines, options.LiveOverOddsByLine, explicitTargetLines);
 
     var pricer = new LiveTotalPricer(options);
     LiveTotalPriceResult result = await pricer.PriceAsync(CancellationToken.None);
@@ -677,7 +679,9 @@ static void AddLiveOverOdds(IDictionary<double, double> target, ParsedArgs parse
     AddLiveOverOddsForLine(target, parsed, 2.5, "live-over-2.5", "live-over-25", "over-2.5", "over-25");
     AddLiveOverOddsForLine(target, parsed, 3.0, "live-over-3.0", "live-over-30", "over-3.0", "over-30");
 
-    // Generic syntax: --live-over-odds "1.5=1.40,2.0=1.85,2.5=2.45"
+    AddDynamicLiveOverOdds(target, parsed);
+
+    // Generic syntax: --live-over-odds "1.5=1.40,2.0=1.85,2.5=2.45,3.5=4.10"
     if (!parsed.Has("live-over-odds"))
         return;
 
@@ -689,10 +693,73 @@ static void AddLiveOverOdds(IDictionary<double, double> target, ParsedArgs parse
             !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double line) ||
             !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double odds))
         {
-            throw new ArgumentException("Argument --live-over-odds must use comma-separated line=odds pairs, for example 1.5=1.40,2.0=1.85.");
+            throw new ArgumentException("Argument --live-over-odds must use comma-separated line=odds pairs, for example 1.5=1.40,2.0=1.85,3.5=4.10.");
         }
 
+        if (odds <= 1.0)
+            throw new ArgumentException($"Live over odds for line {line:0.##} must be greater than 1.0.");
+
         target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
+    }
+}
+
+static void AddDynamicLiveOverOdds(IDictionary<double, double> target, ParsedArgs parsed)
+{
+    foreach (KeyValuePair<string, string?> pair in parsed.Values)
+    {
+        string key = pair.Key;
+        if (!TryParseLiveOverLineArgument(key, out double line))
+            continue;
+
+        if (string.IsNullOrWhiteSpace(pair.Value))
+            throw new ArgumentException($"Argument --{key} requires odds value.");
+
+        if (!double.TryParse(pair.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double odds) || odds <= 1.0)
+            throw new ArgumentException($"Argument --{key} must be a number greater than 1.0.");
+
+        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
+    }
+}
+
+static bool TryParseLiveOverLineArgument(string key, out double line)
+{
+    line = 0.0;
+
+    string? suffix = null;
+    if (key.StartsWith("live-over-", StringComparison.OrdinalIgnoreCase))
+        suffix = key["live-over-".Length..];
+    else if (key.StartsWith("over-", StringComparison.OrdinalIgnoreCase))
+        suffix = key["over-".Length..];
+
+    if (string.IsNullOrWhiteSpace(suffix) || suffix.Equals("odds", StringComparison.OrdinalIgnoreCase))
+        return false;
+
+    suffix = suffix.Replace('_', '.');
+
+    // Convenience form retained for old args: --live-over-35 means line 3.5.
+    // Only two-digit compact values are interpreted this way; use decimal form for 4.25, 5.5, etc.
+    if (suffix.Length == 2 && suffix.All(char.IsDigit) &&
+        int.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out int compact) && compact > 0)
+    {
+        line = compact / 10.0;
+        return line > 0;
+    }
+
+    if (double.TryParse(suffix, NumberStyles.Float, CultureInfo.InvariantCulture, out line))
+        return line > 0;
+
+    return false;
+}
+
+static void AddLiveOddsLinesToTargets(ICollection<double> targetLines, IDictionary<double, double> liveOddsByLine, bool explicitTargetLines)
+{
+    if (explicitTargetLines)
+        return;
+
+    foreach (double line in liveOddsByLine.Keys)
+    {
+        if (!targetLines.Any(existing => Math.Abs(LiveTotalPricer.NormalizeLineKey(existing) - line) < 1e-9))
+            targetLines.Add(line);
     }
 }
 

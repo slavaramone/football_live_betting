@@ -11,6 +11,9 @@ public sealed class ParsedArgs
 
     public bool Has(string name) => _values.ContainsKey(Normalize(name));
 
+    public IReadOnlyDictionary<string, string?> Values => _values;
+
+
     public string RequiredString(string name)
     {
         string key = Normalize(name);
