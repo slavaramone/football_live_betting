@@ -17,6 +17,8 @@ public sealed class TimingBacktestOptions
     public int MinTrainingSnapshots { get; set; } = 20;
     public bool IncludeUnreliableMatches { get; set; }
     public bool WalkForward { get; set; }
+    public bool UseCurrentSeasonVolumeCalibration { get; set; }
+    public int PriorStrengthMatches { get; set; } = 100;
     public string OutputPath { get; set; } = string.Empty;
 }
 
@@ -29,6 +31,8 @@ public sealed class TimingBacktestResult
     public int TrainingSnapshots { get; set; }
     public int BacktestSnapshots { get; set; }
     public bool WalkForward { get; set; }
+    public bool UseCurrentSeasonVolumeCalibration { get; set; }
+    public int PriorStrengthMatches { get; set; }
     public int WalkForwardTrainingSnapshotsAdded { get; set; }
     public List<int> TrainingSeasonIds { get; } = [];
     public List<int> BacktestSeasonIds { get; } = [];
@@ -64,6 +68,7 @@ public sealed class TimingBacktestPredictionRow
     public string ScoreState { get; set; } = string.Empty;
     public int ActualRemainingGoals { get; set; }
     public double PredictedRemainingGoals { get; set; }
+    public double CurrentSeasonVolumeFactor { get; set; } = 1.0;
     public string PredictionSource { get; set; } = string.Empty;
     public int TrainingSampleSize { get; set; }
 }
@@ -96,11 +101,19 @@ public sealed class TimingModelBacktester
         if (_options.MinTrainingSnapshots < 1)
             throw new ArgumentException("--min-training-snapshots must be at least 1.");
 
+        if (_options.PriorStrengthMatches < 0)
+            throw new ArgumentException("--prior-strength-matches must be zero or greater.");
+
+        if (_options.UseCurrentSeasonVolumeCalibration && !_options.WalkForward)
+            throw new ArgumentException("--use-current-season-volume-calibration requires --walk-forward true.");
+
         var result = new TimingBacktestResult { OutputPath = _options.OutputPath };
         result.TrainingSeasonIds.AddRange(_options.TrainingSeasonIds.Distinct().OrderBy(x => x));
         result.BacktestSeasonIds.AddRange(_options.BacktestSeasonIds.Distinct().OrderBy(x => x));
 
         result.WalkForward = _options.WalkForward;
+        result.UseCurrentSeasonVolumeCalibration = _options.UseCurrentSeasonVolumeCalibration;
+        result.PriorStrengthMatches = _options.PriorStrengthMatches;
 
         List<PreparedMatch> trainingMatches = await LoadPreparedMatchesAsync(_options.TrainingSeasonIds, applyRoundFilter: true, cancellationToken);
         result.TrainingMatchesChecked = trainingMatches.Count;
@@ -166,7 +179,7 @@ public sealed class TimingModelBacktester
     }
 
 
-    private void PredictSnapshots(TimingBacktestResult result, IReadOnlyCollection<SnapshotRow> trainingSnapshots, IReadOnlyCollection<SnapshotRow> backtestSnapshots)
+    private void PredictSnapshots(TimingBacktestResult result, IReadOnlyCollection<SnapshotRow> trainingSnapshots, IReadOnlyCollection<SnapshotRow> backtestSnapshots, double currentSeasonVolumeFactor = 1.0)
     {
         Dictionary<ModelKey, SnapshotAggregate> exact = BuildAggregates(trainingSnapshots, x => new ModelKey(x.Minute, x.ScoreState));
         Dictionary<ModelKey, SnapshotAggregate> minuteOnly = BuildAggregates(trainingSnapshots, x => new ModelKey(x.Minute, "All"));
@@ -176,7 +189,13 @@ public sealed class TimingModelBacktester
         foreach (SnapshotRow snapshot in backtestSnapshots)
         {
             Prediction prediction = ResolvePrediction(snapshot, exact, minuteOnly, stateOnly, global);
-            result.Predictions.Add(ToPredictionRow(snapshot, prediction));
+            if (Math.Abs(currentSeasonVolumeFactor - 1.0) > 0.000001)
+            {
+                string source = prediction.Source + "|season-volume:" + currentSeasonVolumeFactor.ToString("0.###", CultureInfo.InvariantCulture);
+                prediction = new Prediction(prediction.ExpectedRemainingGoals * currentSeasonVolumeFactor, source, prediction.SampleSize);
+            }
+
+            result.Predictions.Add(ToPredictionRow(snapshot, prediction, currentSeasonVolumeFactor));
         }
     }
 
@@ -193,6 +212,8 @@ public sealed class TimingModelBacktester
             .ThenBy(x => x.SofaScoreEventId)
             .ToList();
 
+        double baseTrainingGoalsPerMatch = GoalsPerMatchFromSnapshots(baseTrainingSnapshots);
+
         foreach (var roundGroup in orderedTestMatches.GroupBy(x => new { x.SeasonId, x.RoundNumber }).OrderBy(x => x.Key.SeasonId).ThenBy(x => x.Key.RoundNumber))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -206,13 +227,17 @@ public sealed class TimingModelBacktester
             walkForwardTrainingSnapshots.AddRange(priorSnapshots);
             result.WalkForwardTrainingSnapshotsAdded += priorSnapshots.Count;
 
+            double currentSeasonVolumeFactor = 1.0;
+            if (_options.UseCurrentSeasonVolumeCalibration)
+                currentSeasonVolumeFactor = ComputeCurrentSeasonVolumeFactor(baseTrainingGoalsPerMatch, priorSameSeasonMatches);
+
             List<SnapshotRow> testSnapshots = BuildSnapshots(roundGroup.ToList());
             result.BacktestSnapshots += testSnapshots.Count;
-            PredictSnapshots(result, walkForwardTrainingSnapshots, testSnapshots);
+            PredictSnapshots(result, walkForwardTrainingSnapshots, testSnapshots, currentSeasonVolumeFactor);
         }
     }
 
-    private TimingBacktestPredictionRow ToPredictionRow(SnapshotRow snapshot, Prediction prediction)
+    private TimingBacktestPredictionRow ToPredictionRow(SnapshotRow snapshot, Prediction prediction, double currentSeasonVolumeFactor)
     {
         return new TimingBacktestPredictionRow
         {
@@ -226,6 +251,7 @@ public sealed class TimingModelBacktester
             ScoreState = snapshot.ScoreState,
             ActualRemainingGoals = snapshot.ActualRemainingGoals,
             PredictedRemainingGoals = prediction.ExpectedRemainingGoals,
+            CurrentSeasonVolumeFactor = currentSeasonVolumeFactor,
             PredictionSource = prediction.Source,
             TrainingSampleSize = prediction.SampleSize
         };
@@ -251,6 +277,37 @@ public sealed class TimingModelBacktester
             return new Prediction(stateAgg.AvgRemainingGoals, $"state:{snapshot.ScoreState}", stateAgg.Count);
 
         return new Prediction(global.AvgRemainingGoals, "global", global.Count);
+    }
+
+    private double ComputeCurrentSeasonVolumeFactor(double baseTrainingGoalsPerMatch, IReadOnlyCollection<PreparedMatch> priorSameSeasonMatches)
+    {
+        if (baseTrainingGoalsPerMatch <= 0.0 || priorSameSeasonMatches.Count == 0)
+            return 1.0;
+
+        double currentSeasonGoalsPerMatch = priorSameSeasonMatches.Average(x => x.FinalHomeGoals + x.FinalAwayGoals);
+        double rawFactor = currentSeasonGoalsPerMatch / baseTrainingGoalsPerMatch;
+        double weight = _options.PriorStrengthMatches == 0
+            ? 1.0
+            : priorSameSeasonMatches.Count / (priorSameSeasonMatches.Count + (double)_options.PriorStrengthMatches);
+
+        return 1.0 + ((rawFactor - 1.0) * weight);
+    }
+
+    private static double GoalsPerMatchFromSnapshots(IReadOnlyCollection<SnapshotRow> snapshots)
+    {
+        if (snapshots.Count == 0)
+            return 0.0;
+
+        SnapshotRow[] firstMinuteRows = snapshots
+            .GroupBy(x => x.SofaScoreEventId)
+            .Select(x => x.OrderBy(r => r.Minute).First())
+            .ToArray();
+
+        if (firstMinuteRows.Length == 0)
+            return 0.0;
+
+        // ActualRemainingGoals at the earliest configured snapshot plus current goals at that snapshot reconstructs final total goals.
+        return firstMinuteRows.Average(x => x.ActualRemainingGoals + x.CurrentHomeGoals + x.CurrentAwayGoals);
     }
 
     private async Task<List<PreparedMatch>> LoadPreparedMatchesAsync(IReadOnlyCollection<int> seasonIds, bool applyRoundFilter, CancellationToken cancellationToken)
@@ -415,7 +472,7 @@ public sealed class TimingModelBacktester
     private static string ToCsv(IEnumerable<TimingBacktestPredictionRow> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("SofaScoreEventId,SeasonId,RoundNumber,Match,Minute,CurrentHomeGoals,CurrentAwayGoals,ScoreState,ActualRemainingGoals,PredictedRemainingGoals,PredictionSource,TrainingSampleSize");
+        sb.AppendLine("SofaScoreEventId,SeasonId,RoundNumber,Match,Minute,CurrentHomeGoals,CurrentAwayGoals,ScoreState,ActualRemainingGoals,PredictedRemainingGoals,CurrentSeasonVolumeFactor,PredictionSource,TrainingSampleSize");
         foreach (TimingBacktestPredictionRow row in rows)
         {
             string[] values =
@@ -430,6 +487,7 @@ public sealed class TimingModelBacktester
                 row.ScoreState,
                 row.ActualRemainingGoals.ToString(CultureInfo.InvariantCulture),
                 row.PredictedRemainingGoals.ToString("0.######", CultureInfo.InvariantCulture),
+                row.CurrentSeasonVolumeFactor.ToString("0.######", CultureInfo.InvariantCulture),
                 row.PredictionSource,
                 row.TrainingSampleSize.ToString(CultureInfo.InvariantCulture)
             ];

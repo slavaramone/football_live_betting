@@ -171,6 +171,8 @@ public static class HelpPrinter
         Console.WriteLine("    --backtest-season-ids 71036 \\");
         Console.WriteLine("    --minutes 15,30,45,60,75 \\");
         Console.WriteLine("    --walk-forward true \\");
+        Console.WriteLine("    --use-current-season-volume-calibration true \\");
+        Console.WriteLine("    --prior-strength-matches 100 \\");
         Console.WriteLine("    --output data/backtests/npl-nsw-2023-2024-vs-2025.csv");
         Console.WriteLine();
         Console.WriteLine("Backtest timing model arguments:");
@@ -179,6 +181,8 @@ public static class HelpPrinter
         Console.WriteLine("  --backtest-season-ids    Required comma-separated backtest season ids, e.g. 71036.");
         Console.WriteLine("  --minutes                Snapshot minutes. Default: 15,30,45,60,75.");
         Console.WriteLine("  --walk-forward           true/false. If true, each test round trains on base seasons plus earlier rounds from the tested season. Default: false.");
+        Console.WriteLine("  --use-current-season-volume-calibration true/false. Requires walk-forward. Applies shrunk current-season goals-per-match factor from prior rounds. Default: false.");
+        Console.WriteLine("  --prior-strength-matches Prior strength for current-season volume shrinkage. Default: 100.");
         Console.WriteLine("  --round                  Optional single test round filter. In walk-forward mode, earlier rounds from that season can still be used as prior data.");
         Console.WriteLine("  --from-round             Optional first test round filter.");
         Console.WriteLine("  --to-round               Optional last test round filter.");
