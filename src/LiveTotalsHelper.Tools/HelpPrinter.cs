@@ -182,6 +182,8 @@ public static class HelpPrinter
         Console.WriteLine("  --minutes                Snapshot minutes. Default: 15,30,45,60,75.");
         Console.WriteLine("  --walk-forward           true/false. If true, each test round trains on base seasons plus earlier rounds from the tested season. Default: false.");
         Console.WriteLine("  --use-current-season-volume-calibration true/false. Requires walk-forward. Applies shrunk current-season goals-per-match factor from prior rounds. Default: false.");
+        Console.WriteLine("  --use-score-state-volume-calibration true/false. Requires walk-forward. Applies score-state-specific current-season volume factors where enough data exists. Default: false.");
+        Console.WriteLine("  --test-empirical-weights Comma-separated empirical weights for blend testing. 1.0 = pure empirical, 0.0 = pure Weibull. Default: 1.0.");
         Console.WriteLine("  --prior-strength-matches Prior strength for current-season volume shrinkage. Default: 100.");
         Console.WriteLine("  --round                  Optional single test round filter. In walk-forward mode, earlier rounds from that season can still be used as prior data.");
         Console.WriteLine("  --from-round             Optional first test round filter.");

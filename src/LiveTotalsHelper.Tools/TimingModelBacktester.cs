@@ -13,6 +13,7 @@ public sealed class TimingBacktestOptions
     public List<int> BacktestSeasonIds { get; } = [];
     public List<int> Rounds { get; } = [];
     public List<int> SnapshotMinutes { get; } = [15, 30, 45, 60, 75];
+    public List<double> TestEmpiricalWeights { get; } = [];
     public int MaxModelMinute { get; set; } = 90;
     public int MinTrainingSnapshots { get; set; } = 20;
     public bool IncludeUnreliableMatches { get; set; }
@@ -38,6 +39,7 @@ public sealed class TimingBacktestResult
     public int WalkForwardTrainingSnapshotsAdded { get; set; }
     public List<int> TrainingSeasonIds { get; } = [];
     public List<int> BacktestSeasonIds { get; } = [];
+    public List<double> TestedEmpiricalWeights { get; } = [];
     public List<TimingBacktestSummaryRow> OverallRows { get; } = [];
     public List<TimingBacktestSummaryRow> ByMinuteRows { get; } = [];
     public List<TimingBacktestSummaryRow> ByStateRows { get; } = [];
@@ -70,6 +72,9 @@ public sealed class TimingBacktestPredictionRow
     public string ScoreState { get; set; } = string.Empty;
     public int ActualRemainingGoals { get; set; }
     public double PredictedRemainingGoals { get; set; }
+    public double EmpiricalWeight { get; set; } = 1.0;
+    public double EmpiricalPrediction { get; set; }
+    public double WeibullPrediction { get; set; }
     public double CurrentSeasonVolumeFactor { get; set; } = 1.0;
     public string PredictionSource { get; set; } = string.Empty;
     public int TrainingSampleSize { get; set; }
@@ -88,34 +93,12 @@ public sealed class TimingModelBacktester
 
     public async Task<TimingBacktestResult> RunAsync(CancellationToken cancellationToken)
     {
-        if (_options.TrainingSeasonIds.Count == 0)
-            throw new ArgumentException("Provide --training-season-ids, for example --training-season-ids 48254,57783.");
-
-        if (_options.BacktestSeasonIds.Count == 0)
-            throw new ArgumentException("Provide --backtest-season-ids, for example --backtest-season-ids 71036.");
-
-        if (_options.SnapshotMinutes.Count == 0)
-            throw new ArgumentException("At least one snapshot minute is required.");
-
-        if (_options.MaxModelMinute <= 0)
-            throw new ArgumentException("--max-model-minute must be greater than 0.");
-
-        if (_options.MinTrainingSnapshots < 1)
-            throw new ArgumentException("--min-training-snapshots must be at least 1.");
-
-        if (_options.PriorStrengthMatches < 0)
-            throw new ArgumentException("--prior-strength-matches must be zero or greater.");
-
-        if (_options.UseCurrentSeasonVolumeCalibration && !_options.WalkForward)
-            throw new ArgumentException("--use-current-season-volume-calibration requires --walk-forward true.");
-
-        if (_options.UseScoreStateCurrentSeasonVolumeCalibration && !_options.WalkForward)
-            throw new ArgumentException("--use-score-state-volume-calibration requires --walk-forward true.");
+        ValidateOptions();
 
         var result = new TimingBacktestResult { OutputPath = _options.OutputPath };
         result.TrainingSeasonIds.AddRange(_options.TrainingSeasonIds.Distinct().OrderBy(x => x));
         result.BacktestSeasonIds.AddRange(_options.BacktestSeasonIds.Distinct().OrderBy(x => x));
-
+        result.TestedEmpiricalWeights.AddRange(GetEmpiricalWeights());
         result.WalkForward = _options.WalkForward;
         result.UseCurrentSeasonVolumeCalibration = _options.UseCurrentSeasonVolumeCalibration;
         result.UseScoreStateCurrentSeasonVolumeCalibration = _options.UseScoreStateCurrentSeasonVolumeCalibration;
@@ -130,16 +113,12 @@ public sealed class TimingModelBacktester
         int backtestMatchesChecked = allBacktestMatches.Count;
         allBacktestMatches = FilterReliable(allBacktestMatches, result.Warnings, "backtest");
 
-        List<PreparedMatch> backtestMatches = _options.WalkForward
-            ? ApplyRoundFilter(allBacktestMatches)
-            : allBacktestMatches;
-
+        List<PreparedMatch> backtestMatches = _options.WalkForward ? ApplyRoundFilter(allBacktestMatches) : allBacktestMatches;
         result.BacktestMatchesChecked = _options.WalkForward ? backtestMatchesChecked : backtestMatches.Count;
         result.BacktestReliableMatches = backtestMatches.Count;
 
         if (trainingMatches.Count == 0)
             throw new ArgumentException("No reliable finished training matches found for the requested filters.");
-
         if (backtestMatches.Count == 0)
             throw new ArgumentException("No reliable finished backtest matches found for the requested filters.");
 
@@ -147,33 +126,16 @@ public sealed class TimingModelBacktester
         result.TrainingSnapshots = baseTrainingSnapshots.Count;
 
         if (_options.WalkForward)
-        {
-            await RunWalkForwardAsync(result, baseTrainingSnapshots, allBacktestMatches, backtestMatches, cancellationToken);
-        }
+            await RunWalkForwardAsync(result, trainingMatches, baseTrainingSnapshots, allBacktestMatches, backtestMatches, cancellationToken);
         else
         {
             List<SnapshotRow> backtestSnapshots = BuildSnapshots(backtestMatches);
             result.BacktestSnapshots = backtestSnapshots.Count;
-
-            PredictSnapshots(result, baseTrainingSnapshots, backtestSnapshots);
+            TimingWeibullPredictor weibullPredictor = BuildWeibullPredictor(trainingMatches, baseTrainingSnapshots);
+            PredictSnapshots(result, baseTrainingSnapshots, weibullPredictor, backtestSnapshots);
         }
 
-        result.OverallRows.Add(Summarize("All", result.Predictions));
-        result.ByMinuteRows.AddRange(result.Predictions
-            .GroupBy(x => x.Minute)
-            .OrderBy(x => x.Key)
-            .Select(x => Summarize(x.Key.ToString(CultureInfo.InvariantCulture), x)));
-
-        result.ByStateRows.AddRange(result.Predictions
-            .GroupBy(x => x.ScoreState)
-            .OrderBy(x => ScoreStateSort(x.Key))
-            .Select(x => Summarize(x.Key, x)));
-
-        result.ByMinuteAndStateRows.AddRange(result.Predictions
-            .GroupBy(x => new { x.Minute, x.ScoreState })
-            .OrderBy(x => x.Key.Minute)
-            .ThenBy(x => ScoreStateSort(x.Key.ScoreState))
-            .Select(x => Summarize($"{x.Key.Minute} / {x.Key.ScoreState}", x)));
+        BuildSummaries(result);
 
         if (!string.IsNullOrWhiteSpace(_options.OutputPath))
         {
@@ -184,10 +146,68 @@ public sealed class TimingModelBacktester
         return result;
     }
 
+    private void ValidateOptions()
+    {
+        if (_options.TrainingSeasonIds.Count == 0)
+            throw new ArgumentException("Provide --training-season-ids, for example --training-season-ids 48254,57783.");
+        if (_options.BacktestSeasonIds.Count == 0)
+            throw new ArgumentException("Provide --backtest-season-ids, for example --backtest-season-ids 71036.");
+        if (_options.SnapshotMinutes.Count == 0)
+            throw new ArgumentException("At least one snapshot minute is required.");
+        if (_options.MaxModelMinute <= 0)
+            throw new ArgumentException("--max-model-minute must be greater than 0.");
+        if (_options.MinTrainingSnapshots < 1)
+            throw new ArgumentException("--min-training-snapshots must be at least 1.");
+        if (_options.PriorStrengthMatches < 0)
+            throw new ArgumentException("--prior-strength-matches must be zero or greater.");
+        if (_options.UseCurrentSeasonVolumeCalibration && !_options.WalkForward)
+            throw new ArgumentException("--use-current-season-volume-calibration requires --walk-forward true.");
+        if (_options.UseScoreStateCurrentSeasonVolumeCalibration && !_options.WalkForward)
+            throw new ArgumentException("--use-score-state-volume-calibration requires --walk-forward true.");
+        foreach (double weight in _options.TestEmpiricalWeights)
+        {
+            if (weight < 0.0 || weight > 1.0)
+                throw new ArgumentException("--test-empirical-weights values must be between 0 and 1.");
+        }
+    }
+
+    private List<double> GetEmpiricalWeights()
+    {
+        List<double> weights = _options.TestEmpiricalWeights.Count == 0 ? [1.0] : _options.TestEmpiricalWeights;
+        return weights.Distinct().OrderBy(x => x).ToList();
+    }
+
+    private void BuildSummaries(TimingBacktestResult result)
+    {
+        result.OverallRows.AddRange(result.Predictions
+            .GroupBy(x => x.EmpiricalWeight)
+            .OrderBy(x => x.Key)
+            .Select(x => Summarize(WeightLabel(x.Key), x)));
+
+        result.ByMinuteRows.AddRange(result.Predictions
+            .GroupBy(x => new { x.EmpiricalWeight, x.Minute })
+            .OrderBy(x => x.Key.EmpiricalWeight)
+            .ThenBy(x => x.Key.Minute)
+            .Select(x => Summarize($"{WeightLabel(x.Key.EmpiricalWeight)} / {x.Key.Minute}", x)));
+
+        result.ByStateRows.AddRange(result.Predictions
+            .GroupBy(x => new { x.EmpiricalWeight, x.ScoreState })
+            .OrderBy(x => x.Key.EmpiricalWeight)
+            .ThenBy(x => ScoreStateSort(x.Key.ScoreState))
+            .Select(x => Summarize($"{WeightLabel(x.Key.EmpiricalWeight)} / {x.Key.ScoreState}", x)));
+
+        result.ByMinuteAndStateRows.AddRange(result.Predictions
+            .GroupBy(x => new { x.EmpiricalWeight, x.Minute, x.ScoreState })
+            .OrderBy(x => x.Key.EmpiricalWeight)
+            .ThenBy(x => x.Key.Minute)
+            .ThenBy(x => ScoreStateSort(x.Key.ScoreState))
+            .Select(x => Summarize($"{WeightLabel(x.Key.EmpiricalWeight)} / {x.Key.Minute} / {x.Key.ScoreState}", x)));
+    }
 
     private void PredictSnapshots(
         TimingBacktestResult result,
         IReadOnlyCollection<SnapshotRow> trainingSnapshots,
+        TimingWeibullPredictor weibullPredictor,
         IReadOnlyCollection<SnapshotRow> backtestSnapshots,
         double currentSeasonVolumeFactor = 1.0,
         IReadOnlyDictionary<string, double>? scoreStateVolumeFactors = null)
@@ -199,7 +219,11 @@ public sealed class TimingModelBacktester
 
         foreach (SnapshotRow snapshot in backtestSnapshots)
         {
-            Prediction prediction = ResolvePrediction(snapshot, exact, minuteOnly, stateOnly, global);
+            Prediction empirical = ResolveEmpiricalPrediction(snapshot, exact, minuteOnly, stateOnly, global);
+            Prediction weibull = weibullPredictor.Predict(snapshot);
+
+            if (weibull.SampleSize == 0)
+                weibull = empirical;
 
             double appliedVolumeFactor = currentSeasonVolumeFactor;
             string volumeSource = "season-volume";
@@ -209,18 +233,22 @@ public sealed class TimingModelBacktester
                 volumeSource = "season-state-volume:" + snapshot.ScoreState;
             }
 
-            if (Math.Abs(appliedVolumeFactor - 1.0) > 0.000001)
+            foreach (double empiricalWeight in result.TestedEmpiricalWeights)
             {
-                string source = prediction.Source + "|" + volumeSource + ":" + appliedVolumeFactor.ToString("0.###", CultureInfo.InvariantCulture);
-                prediction = new Prediction(prediction.ExpectedRemainingGoals * appliedVolumeFactor, source, prediction.SampleSize);
-            }
+                double blendedBase = (empirical.ExpectedRemainingGoals * empiricalWeight) + (weibull.ExpectedRemainingGoals * (1.0 - empiricalWeight));
+                double finalPrediction = blendedBase * appliedVolumeFactor;
+                string source = $"blend:wEmp={empiricalWeight.ToString("0.##", CultureInfo.InvariantCulture)}|emp={empirical.Source}|wei={weibull.Source}";
+                if (Math.Abs(appliedVolumeFactor - 1.0) > 0.000001)
+                    source += "|" + volumeSource + ":" + appliedVolumeFactor.ToString("0.###", CultureInfo.InvariantCulture);
 
-            result.Predictions.Add(ToPredictionRow(snapshot, prediction, appliedVolumeFactor));
+                result.Predictions.Add(ToPredictionRow(snapshot, finalPrediction, empiricalWeight, empirical.ExpectedRemainingGoals, weibull.ExpectedRemainingGoals, appliedVolumeFactor, source, empirical.SampleSize));
+            }
         }
     }
 
     private async Task RunWalkForwardAsync(
         TimingBacktestResult result,
+        IReadOnlyCollection<PreparedMatch> baseTrainingMatches,
         IReadOnlyCollection<SnapshotRow> baseTrainingSnapshots,
         IReadOnlyCollection<PreparedMatch> allBacktestMatches,
         IReadOnlyCollection<PreparedMatch> selectedBacktestMatches,
@@ -242,6 +270,9 @@ public sealed class TimingModelBacktester
                 .Where(x => x.SeasonId == roundGroup.Key.SeasonId && x.RoundNumber < roundGroup.Key.RoundNumber)
                 .ToList();
 
+            List<PreparedMatch> walkForwardTrainingMatches = new(baseTrainingMatches);
+            walkForwardTrainingMatches.AddRange(priorSameSeasonMatches);
+
             List<SnapshotRow> walkForwardTrainingSnapshots = new(baseTrainingSnapshots);
             List<SnapshotRow> priorSnapshots = BuildSnapshots(priorSameSeasonMatches);
             walkForwardTrainingSnapshots.AddRange(priorSnapshots);
@@ -255,13 +286,22 @@ public sealed class TimingModelBacktester
             if (_options.UseScoreStateCurrentSeasonVolumeCalibration)
                 scoreStateVolumeFactors = ComputeCurrentSeasonScoreStateVolumeFactors(baseTrainingSnapshots, priorSnapshots, currentSeasonVolumeFactor);
 
+            TimingWeibullPredictor weibullPredictor = BuildWeibullPredictor(walkForwardTrainingMatches, walkForwardTrainingSnapshots);
             List<SnapshotRow> testSnapshots = BuildSnapshots(roundGroup.ToList());
             result.BacktestSnapshots += testSnapshots.Count;
-            PredictSnapshots(result, walkForwardTrainingSnapshots, testSnapshots, currentSeasonVolumeFactor, scoreStateVolumeFactors);
+            PredictSnapshots(result, walkForwardTrainingSnapshots, weibullPredictor, testSnapshots, currentSeasonVolumeFactor, scoreStateVolumeFactors);
         }
     }
 
-    private TimingBacktestPredictionRow ToPredictionRow(SnapshotRow snapshot, Prediction prediction, double currentSeasonVolumeFactor)
+    private TimingBacktestPredictionRow ToPredictionRow(
+        SnapshotRow snapshot,
+        double predictedRemainingGoals,
+        double empiricalWeight,
+        double empiricalPrediction,
+        double weibullPrediction,
+        double currentSeasonVolumeFactor,
+        string source,
+        int trainingSampleSize)
     {
         return new TimingBacktestPredictionRow
         {
@@ -274,14 +314,17 @@ public sealed class TimingModelBacktester
             CurrentAwayGoals = snapshot.CurrentAwayGoals,
             ScoreState = snapshot.ScoreState,
             ActualRemainingGoals = snapshot.ActualRemainingGoals,
-            PredictedRemainingGoals = prediction.ExpectedRemainingGoals,
+            PredictedRemainingGoals = predictedRemainingGoals,
+            EmpiricalWeight = empiricalWeight,
+            EmpiricalPrediction = empiricalPrediction,
+            WeibullPrediction = weibullPrediction,
             CurrentSeasonVolumeFactor = currentSeasonVolumeFactor,
-            PredictionSource = prediction.Source,
-            TrainingSampleSize = prediction.SampleSize
+            PredictionSource = source,
+            TrainingSampleSize = trainingSampleSize
         };
     }
 
-    private Prediction ResolvePrediction(
+    private Prediction ResolveEmpiricalPrediction(
         SnapshotRow snapshot,
         IReadOnlyDictionary<ModelKey, SnapshotAggregate> exact,
         IReadOnlyDictionary<ModelKey, SnapshotAggregate> minuteOnly,
@@ -303,6 +346,77 @@ public sealed class TimingModelBacktester
         return new Prediction(global.AvgRemainingGoals, "global", global.Count);
     }
 
+    private TimingWeibullPredictor BuildWeibullPredictor(IReadOnlyCollection<PreparedMatch> trainingMatches, IReadOnlyCollection<SnapshotRow> trainingSnapshots)
+    {
+        var goalMinutesByState = new Dictionary<string, List<double>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["All"] = []
+        };
+
+        foreach (PreparedMatch match in trainingMatches)
+        {
+            int home = 0;
+            int away = 0;
+            foreach (GoalRow goal in match.Goals.OrderBy(x => x.ModelMinute).ThenBy(x => x.Id))
+            {
+                string state = ScoreState(Math.Abs(home - away));
+                if (!goalMinutesByState.TryGetValue(state, out List<double>? stateMinutes))
+                {
+                    stateMinutes = [];
+                    goalMinutesByState[state] = stateMinutes;
+                }
+
+                stateMinutes.Add(goal.ModelMinute);
+                goalMinutesByState["All"].Add(goal.ModelMinute);
+
+                if (goal.IsHome) home++; else away++;
+            }
+        }
+
+        Dictionary<string, SnapshotRow[]> snapshotsByState = trainingSnapshots
+            .GroupBy(x => x.ScoreState)
+            .ToDictionary(x => x.Key, x => x.ToArray(), StringComparer.OrdinalIgnoreCase);
+        snapshotsByState["All"] = trainingSnapshots.ToArray();
+
+        var models = new Dictionary<string, WeibullStateModel>(StringComparer.OrdinalIgnoreCase);
+        foreach ((string state, List<double> minutes) in goalMinutesByState)
+        {
+            if (minutes.Count < Math.Max(5, _options.MinTrainingSnapshots / 2))
+                continue;
+            if (!snapshotsByState.TryGetValue(state, out SnapshotRow[]? snapshots) || snapshots.Length == 0)
+                continue;
+
+            WeibullEstimate estimate = EstimateWeibull(minutes);
+            double cdfAtMax = WeibullCdf(_options.MaxModelMinute, estimate.ShapeK, estimate.ScaleLambda);
+            if (cdfAtMax <= 0.0)
+                continue;
+
+            double numerator = 0.0;
+            double denominator = 0.0;
+            foreach (SnapshotRow snapshot in snapshots)
+            {
+                double survival = NormalizedSurvival(snapshot.Minute, estimate.ShapeK, estimate.ScaleLambda, cdfAtMax);
+                numerator += snapshot.ActualRemainingGoals * survival;
+                denominator += survival * survival;
+            }
+
+            if (denominator <= 0.0)
+                continue;
+
+            models[state] = new WeibullStateModel
+            {
+                ScoreState = state,
+                ShapeK = estimate.ShapeK,
+                ScaleLambda = estimate.ScaleLambda,
+                CdfAtMaxMinute = cdfAtMax,
+                VolumeScale = numerator / denominator,
+                SampleSize = snapshots.Length
+            };
+        }
+
+        return new TimingWeibullPredictor(models, _options.MaxModelMinute);
+    }
+
     private double ComputeCurrentSeasonVolumeFactor(double baseTrainingGoalsPerMatch, IReadOnlyCollection<PreparedMatch> priorSameSeasonMatches)
     {
         if (baseTrainingGoalsPerMatch <= 0.0 || priorSameSeasonMatches.Count == 0)
@@ -316,7 +430,6 @@ public sealed class TimingModelBacktester
 
         return 1.0 + ((rawFactor - 1.0) * weight);
     }
-
 
     private Dictionary<string, double> ComputeCurrentSeasonScoreStateVolumeFactors(
         IReadOnlyCollection<SnapshotRow> baseTrainingSnapshots,
@@ -352,9 +465,6 @@ public sealed class TimingModelBacktester
                 : currentMatchCount / (currentMatchCount + (double)_options.PriorStrengthMatches);
 
             double factor = 1.0 + ((rawFactor - 1.0) * weight);
-
-            // Keep the state-specific factor from becoming too noisy early in the season.
-            // The global current-season factor remains the fallback for sparse states.
             factor = Math.Clamp(factor, fallbackGlobalFactor * 0.80, fallbackGlobalFactor * 1.20);
             factors[currentGroup.Key] = factor;
         }
@@ -372,11 +482,9 @@ public sealed class TimingModelBacktester
             .Select(x => x.OrderBy(r => r.Minute).First())
             .ToArray();
 
-        if (firstMinuteRows.Length == 0)
-            return 0.0;
-
-        // ActualRemainingGoals at the earliest configured snapshot plus current goals at that snapshot reconstructs final total goals.
-        return firstMinuteRows.Average(x => x.ActualRemainingGoals + x.CurrentHomeGoals + x.CurrentAwayGoals);
+        return firstMinuteRows.Length == 0
+            ? 0.0
+            : firstMinuteRows.Average(x => x.ActualRemainingGoals + x.CurrentHomeGoals + x.CurrentAwayGoals);
     }
 
     private async Task<List<PreparedMatch>> LoadPreparedMatchesAsync(IReadOnlyCollection<int> seasonIds, bool applyRoundFilter, CancellationToken cancellationToken)
@@ -436,7 +544,6 @@ public sealed class TimingModelBacktester
         return prepared;
     }
 
-
     private List<PreparedMatch> ApplyRoundFilter(IEnumerable<PreparedMatch> matches)
     {
         if (_options.Rounds.Count == 0)
@@ -460,7 +567,6 @@ public sealed class TimingModelBacktester
     private List<SnapshotRow> BuildSnapshots(IReadOnlyCollection<PreparedMatch> matches)
     {
         var rows = new List<SnapshotRow>();
-
         foreach (PreparedMatch match in matches)
         {
             int finalTotal = match.FinalHomeGoals + match.FinalAwayGoals;
@@ -516,9 +622,7 @@ public sealed class TimingModelBacktester
 
     private static Dictionary<ModelKey, SnapshotAggregate> BuildAggregates(IEnumerable<SnapshotRow> snapshots, Func<SnapshotRow, ModelKey> keySelector)
     {
-        return snapshots
-            .GroupBy(keySelector)
-            .ToDictionary(x => x.Key, x => SnapshotAggregate.From(x));
+        return snapshots.GroupBy(keySelector).ToDictionary(x => x.Key, x => SnapshotAggregate.From(x));
     }
 
     private static TimingBacktestSummaryRow Summarize(string group, IEnumerable<TimingBacktestPredictionRow> rows)
@@ -541,7 +645,7 @@ public sealed class TimingModelBacktester
     private static string ToCsv(IEnumerable<TimingBacktestPredictionRow> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("SofaScoreEventId,SeasonId,RoundNumber,Match,Minute,CurrentHomeGoals,CurrentAwayGoals,ScoreState,ActualRemainingGoals,PredictedRemainingGoals,CurrentSeasonVolumeFactor,PredictionSource,TrainingSampleSize");
+        sb.AppendLine("SofaScoreEventId,SeasonId,RoundNumber,Match,Minute,CurrentHomeGoals,CurrentAwayGoals,ScoreState,ActualRemainingGoals,PredictedRemainingGoals,EmpiricalWeight,EmpiricalPrediction,WeibullPrediction,CurrentSeasonVolumeFactor,PredictionSource,TrainingSampleSize");
         foreach (TimingBacktestPredictionRow row in rows)
         {
             string[] values =
@@ -556,6 +660,9 @@ public sealed class TimingModelBacktester
                 row.ScoreState,
                 row.ActualRemainingGoals.ToString(CultureInfo.InvariantCulture),
                 row.PredictedRemainingGoals.ToString("0.######", CultureInfo.InvariantCulture),
+                row.EmpiricalWeight.ToString("0.######", CultureInfo.InvariantCulture),
+                row.EmpiricalPrediction.ToString("0.######", CultureInfo.InvariantCulture),
+                row.WeibullPrediction.ToString("0.######", CultureInfo.InvariantCulture),
                 row.CurrentSeasonVolumeFactor.ToString("0.######", CultureInfo.InvariantCulture),
                 row.PredictionSource,
                 row.TrainingSampleSize.ToString(CultureInfo.InvariantCulture)
@@ -570,9 +677,10 @@ public sealed class TimingModelBacktester
     {
         if (value.Contains('"') || value.Contains(',') || value.Contains('\n') || value.Contains('\r'))
             return $"\"{value.Replace("\"", "\"\"")}\"";
-
         return value;
     }
+
+    private static string WeightLabel(double weight) => "w=" + weight.ToString("0.##", CultureInfo.InvariantCulture);
 
     private static string ScoreState(int absGoalDiff)
     {
@@ -593,8 +701,76 @@ public sealed class TimingModelBacktester
             "OneGoalMargin" => 1,
             "TwoGoalMargin" => 2,
             "ThreePlusGoalMargin" => 3,
+            "All" => 4,
             _ => 99
         };
+    }
+
+    private static WeibullEstimate EstimateWeibull(IReadOnlyList<double> values)
+    {
+        double[] x = values.Where(v => v > 0).ToArray();
+        if (x.Length == 0)
+            return new WeibullEstimate(1.0, 1.0);
+
+        double meanLog = x.Select(v => Math.Log(v)).Average();
+        double varianceLog = x.Select(v => Math.Pow(Math.Log(v) - meanLog, 2)).Average();
+        double k = varianceLog > 0 ? Math.PI / Math.Sqrt(6.0 * varianceLog) : 1.5;
+        k = Math.Clamp(k, 0.15, 10.0);
+
+        for (int i = 0; i < 100; i++)
+        {
+            double f = ShapeEquation(k, x, meanLog);
+            double step = Math.Max(1e-5, k * 1e-5);
+            double fp = ShapeEquation(k + step, x, meanLog);
+            double fm = ShapeEquation(Math.Max(0.05, k - step), x, meanLog);
+            double derivative = (fp - fm) / ((k + step) - Math.Max(0.05, k - step));
+            if (Math.Abs(derivative) < 1e-12)
+                break;
+
+            double next = k - f / derivative;
+            if (double.IsNaN(next) || double.IsInfinity(next) || next <= 0)
+                next = k / 2.0;
+
+            next = Math.Clamp(next, 0.05, 25.0);
+            if (Math.Abs(next - k) < 1e-9)
+            {
+                k = next;
+                break;
+            }
+            k = next;
+        }
+
+        double lambda = Math.Pow(x.Select(v => Math.Pow(v, k)).Average(), 1.0 / k);
+        return new WeibullEstimate(k, lambda);
+    }
+
+    private static double ShapeEquation(double k, IReadOnlyList<double> x, double meanLog)
+    {
+        double sumXk = 0.0;
+        double sumXkLogX = 0.0;
+        foreach (double value in x)
+        {
+            double xk = Math.Pow(value, k);
+            sumXk += xk;
+            sumXkLogX += xk * Math.Log(value);
+        }
+
+        return (1.0 / k) + meanLog - (sumXkLogX / sumXk);
+    }
+
+    private static double WeibullCdf(double minute, double shapeK, double scaleLambda)
+    {
+        if (minute <= 0)
+            return 0.0;
+        return 1.0 - Math.Exp(-Math.Pow(minute / scaleLambda, shapeK));
+    }
+
+    private static double NormalizedSurvival(double minute, double shapeK, double scaleLambda, double cdfAtMaxMinute)
+    {
+        if (cdfAtMaxMinute <= 0)
+            return 0.0;
+        double cdf = Math.Min(cdfAtMaxMinute, WeibullCdf(Math.Max(0, minute), shapeK, scaleLambda));
+        return Math.Clamp((cdfAtMaxMinute - cdf) / cdfAtMaxMinute, 0.0, 1.0);
     }
 
     private sealed class PreparedMatch
@@ -630,8 +806,41 @@ public sealed class TimingModelBacktester
         public int ActualRemainingGoals { get; set; }
     }
 
+    private sealed class WeibullStateModel
+    {
+        public string ScoreState { get; set; } = string.Empty;
+        public double ShapeK { get; set; }
+        public double ScaleLambda { get; set; }
+        public double CdfAtMaxMinute { get; set; }
+        public double VolumeScale { get; set; }
+        public int SampleSize { get; set; }
+    }
+
+    private sealed class TimingWeibullPredictor
+    {
+        private readonly IReadOnlyDictionary<string, WeibullStateModel> _models;
+        private readonly int _maxModelMinute;
+
+        public TimingWeibullPredictor(IReadOnlyDictionary<string, WeibullStateModel> models, int maxModelMinute)
+        {
+            _models = models;
+            _maxModelMinute = maxModelMinute;
+        }
+
+        public Prediction Predict(SnapshotRow snapshot)
+        {
+            if (!_models.TryGetValue(snapshot.ScoreState, out WeibullStateModel? model) && !_models.TryGetValue("All", out model))
+                return new Prediction(0.0, "weibull:none", 0);
+
+            double survival = NormalizedSurvival(Math.Min(snapshot.Minute, _maxModelMinute), model.ShapeK, model.ScaleLambda, model.CdfAtMaxMinute);
+            double expected = model.VolumeScale * survival;
+            return new Prediction(expected, $"weibull:{model.ScoreState}:k={model.ShapeK.ToString("0.###", CultureInfo.InvariantCulture)}", model.SampleSize);
+        }
+    }
+
     private readonly record struct ModelKey(int Minute, string ScoreState);
     private readonly record struct Prediction(double ExpectedRemainingGoals, string Source, int SampleSize);
+    private readonly record struct WeibullEstimate(double ShapeK, double ScaleLambda);
 
     private sealed class SnapshotAggregate
     {

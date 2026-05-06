@@ -1,3 +1,4 @@
+using System.Globalization;
 using LiveTotalsHelper.Infrastructure.Persistence;
 using LiveTotalsHelper.Infrastructure.Persistence.SofaScore;
 using LiveTotalsHelper.Infrastructure.SofaScore;
@@ -236,6 +237,7 @@ static async Task<int> RunBacktestTimingModel(string[] args)
     AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
     AddRequiredIntList(options.BacktestSeasonIds, parsed, "backtest-season-ids");
     AddOptionalIntList(options.SnapshotMinutes, parsed, "minutes", clearExisting: true);
+    AddOptionalDoubleList(options.TestEmpiricalWeights, parsed, "test-empirical-weights", clearExisting: true);
 
     if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
         AddRounds(options.Rounds, parsed);
@@ -264,6 +266,7 @@ static async Task<int> RunBacktestTimingModel(string[] args)
     Console.WriteLine($"Score-state current-season volume calibration: {result.UseScoreStateCurrentSeasonVolumeCalibration}");
     if (result.UseCurrentSeasonVolumeCalibration || result.UseScoreStateCurrentSeasonVolumeCalibration)
         Console.WriteLine($"Prior strength matches: {result.PriorStrengthMatches}");
+    Console.WriteLine($"Empirical weights tested: {string.Join(", ", result.TestedEmpiricalWeights.Select(x => x.ToString("0.##", CultureInfo.InvariantCulture)))}");
     if (result.WalkForward)
         Console.WriteLine($"Walk-forward prior-season snapshots added across rounds: {result.WalkForwardTrainingSnapshotsAdded}");
     Console.WriteLine($"Backtest snapshots: {result.BacktestSnapshots}");
@@ -585,6 +588,23 @@ static void AddIntList(ICollection<int> target, string raw, string argumentName,
     {
         if (!int.TryParse(token, out int value))
             throw new ArgumentException($"Argument --{argumentName} must contain comma-separated integers.");
+        target.Add(value);
+    }
+}
+
+static void AddOptionalDoubleList(ICollection<double> target, ParsedArgs parsed, string argumentName, bool clearExisting)
+{
+    if (!parsed.Has(argumentName))
+        return;
+
+    string raw = parsed.RequiredString(argumentName);
+    if (clearExisting)
+        target.Clear();
+
+    foreach (string token in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (!double.TryParse(token, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value))
+            throw new ArgumentException($"Argument --{argumentName} must contain comma-separated numbers.");
         target.Add(value);
     }
 }
