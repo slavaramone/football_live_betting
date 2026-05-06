@@ -228,6 +228,7 @@ static async Task<int> RunBacktestTimingModel(string[] args)
         IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
         WalkForward = parsed.Bool("walk-forward", false),
         UseCurrentSeasonVolumeCalibration = parsed.Bool("use-current-season-volume-calibration", false),
+        UseScoreStateCurrentSeasonVolumeCalibration = parsed.Bool("use-score-state-volume-calibration", false),
         PriorStrengthMatches = parsed.Int("prior-strength-matches", 100),
         OutputPath = parsed.String("output", string.Empty)
     };
@@ -260,7 +261,8 @@ static async Task<int> RunBacktestTimingModel(string[] args)
     Console.WriteLine($"Training snapshots: {result.TrainingSnapshots}");
     Console.WriteLine($"Walk-forward: {result.WalkForward}");
     Console.WriteLine($"Current-season volume calibration: {result.UseCurrentSeasonVolumeCalibration}");
-    if (result.UseCurrentSeasonVolumeCalibration)
+    Console.WriteLine($"Score-state current-season volume calibration: {result.UseScoreStateCurrentSeasonVolumeCalibration}");
+    if (result.UseCurrentSeasonVolumeCalibration || result.UseScoreStateCurrentSeasonVolumeCalibration)
         Console.WriteLine($"Prior strength matches: {result.PriorStrengthMatches}");
     if (result.WalkForward)
         Console.WriteLine($"Walk-forward prior-season snapshots added across rounds: {result.WalkForwardTrainingSnapshotsAdded}");

@@ -18,6 +18,7 @@ public sealed class TimingBacktestOptions
     public bool IncludeUnreliableMatches { get; set; }
     public bool WalkForward { get; set; }
     public bool UseCurrentSeasonVolumeCalibration { get; set; }
+    public bool UseScoreStateCurrentSeasonVolumeCalibration { get; set; }
     public int PriorStrengthMatches { get; set; } = 100;
     public string OutputPath { get; set; } = string.Empty;
 }
@@ -32,6 +33,7 @@ public sealed class TimingBacktestResult
     public int BacktestSnapshots { get; set; }
     public bool WalkForward { get; set; }
     public bool UseCurrentSeasonVolumeCalibration { get; set; }
+    public bool UseScoreStateCurrentSeasonVolumeCalibration { get; set; }
     public int PriorStrengthMatches { get; set; }
     public int WalkForwardTrainingSnapshotsAdded { get; set; }
     public List<int> TrainingSeasonIds { get; } = [];
@@ -107,12 +109,16 @@ public sealed class TimingModelBacktester
         if (_options.UseCurrentSeasonVolumeCalibration && !_options.WalkForward)
             throw new ArgumentException("--use-current-season-volume-calibration requires --walk-forward true.");
 
+        if (_options.UseScoreStateCurrentSeasonVolumeCalibration && !_options.WalkForward)
+            throw new ArgumentException("--use-score-state-volume-calibration requires --walk-forward true.");
+
         var result = new TimingBacktestResult { OutputPath = _options.OutputPath };
         result.TrainingSeasonIds.AddRange(_options.TrainingSeasonIds.Distinct().OrderBy(x => x));
         result.BacktestSeasonIds.AddRange(_options.BacktestSeasonIds.Distinct().OrderBy(x => x));
 
         result.WalkForward = _options.WalkForward;
         result.UseCurrentSeasonVolumeCalibration = _options.UseCurrentSeasonVolumeCalibration;
+        result.UseScoreStateCurrentSeasonVolumeCalibration = _options.UseScoreStateCurrentSeasonVolumeCalibration;
         result.PriorStrengthMatches = _options.PriorStrengthMatches;
 
         List<PreparedMatch> trainingMatches = await LoadPreparedMatchesAsync(_options.TrainingSeasonIds, applyRoundFilter: true, cancellationToken);
@@ -179,7 +185,12 @@ public sealed class TimingModelBacktester
     }
 
 
-    private void PredictSnapshots(TimingBacktestResult result, IReadOnlyCollection<SnapshotRow> trainingSnapshots, IReadOnlyCollection<SnapshotRow> backtestSnapshots, double currentSeasonVolumeFactor = 1.0)
+    private void PredictSnapshots(
+        TimingBacktestResult result,
+        IReadOnlyCollection<SnapshotRow> trainingSnapshots,
+        IReadOnlyCollection<SnapshotRow> backtestSnapshots,
+        double currentSeasonVolumeFactor = 1.0,
+        IReadOnlyDictionary<string, double>? scoreStateVolumeFactors = null)
     {
         Dictionary<ModelKey, SnapshotAggregate> exact = BuildAggregates(trainingSnapshots, x => new ModelKey(x.Minute, x.ScoreState));
         Dictionary<ModelKey, SnapshotAggregate> minuteOnly = BuildAggregates(trainingSnapshots, x => new ModelKey(x.Minute, "All"));
@@ -189,13 +200,22 @@ public sealed class TimingModelBacktester
         foreach (SnapshotRow snapshot in backtestSnapshots)
         {
             Prediction prediction = ResolvePrediction(snapshot, exact, minuteOnly, stateOnly, global);
-            if (Math.Abs(currentSeasonVolumeFactor - 1.0) > 0.000001)
+
+            double appliedVolumeFactor = currentSeasonVolumeFactor;
+            string volumeSource = "season-volume";
+            if (scoreStateVolumeFactors is not null && scoreStateVolumeFactors.TryGetValue(snapshot.ScoreState, out double stateFactor))
             {
-                string source = prediction.Source + "|season-volume:" + currentSeasonVolumeFactor.ToString("0.###", CultureInfo.InvariantCulture);
-                prediction = new Prediction(prediction.ExpectedRemainingGoals * currentSeasonVolumeFactor, source, prediction.SampleSize);
+                appliedVolumeFactor = stateFactor;
+                volumeSource = "season-state-volume:" + snapshot.ScoreState;
             }
 
-            result.Predictions.Add(ToPredictionRow(snapshot, prediction, currentSeasonVolumeFactor));
+            if (Math.Abs(appliedVolumeFactor - 1.0) > 0.000001)
+            {
+                string source = prediction.Source + "|" + volumeSource + ":" + appliedVolumeFactor.ToString("0.###", CultureInfo.InvariantCulture);
+                prediction = new Prediction(prediction.ExpectedRemainingGoals * appliedVolumeFactor, source, prediction.SampleSize);
+            }
+
+            result.Predictions.Add(ToPredictionRow(snapshot, prediction, appliedVolumeFactor));
         }
     }
 
@@ -228,12 +248,16 @@ public sealed class TimingModelBacktester
             result.WalkForwardTrainingSnapshotsAdded += priorSnapshots.Count;
 
             double currentSeasonVolumeFactor = 1.0;
-            if (_options.UseCurrentSeasonVolumeCalibration)
+            if (_options.UseCurrentSeasonVolumeCalibration || _options.UseScoreStateCurrentSeasonVolumeCalibration)
                 currentSeasonVolumeFactor = ComputeCurrentSeasonVolumeFactor(baseTrainingGoalsPerMatch, priorSameSeasonMatches);
+
+            IReadOnlyDictionary<string, double>? scoreStateVolumeFactors = null;
+            if (_options.UseScoreStateCurrentSeasonVolumeCalibration)
+                scoreStateVolumeFactors = ComputeCurrentSeasonScoreStateVolumeFactors(baseTrainingSnapshots, priorSnapshots, currentSeasonVolumeFactor);
 
             List<SnapshotRow> testSnapshots = BuildSnapshots(roundGroup.ToList());
             result.BacktestSnapshots += testSnapshots.Count;
-            PredictSnapshots(result, walkForwardTrainingSnapshots, testSnapshots, currentSeasonVolumeFactor);
+            PredictSnapshots(result, walkForwardTrainingSnapshots, testSnapshots, currentSeasonVolumeFactor, scoreStateVolumeFactors);
         }
     }
 
@@ -291,6 +315,51 @@ public sealed class TimingModelBacktester
             : priorSameSeasonMatches.Count / (priorSameSeasonMatches.Count + (double)_options.PriorStrengthMatches);
 
         return 1.0 + ((rawFactor - 1.0) * weight);
+    }
+
+
+    private Dictionary<string, double> ComputeCurrentSeasonScoreStateVolumeFactors(
+        IReadOnlyCollection<SnapshotRow> baseTrainingSnapshots,
+        IReadOnlyCollection<SnapshotRow> priorSameSeasonSnapshots,
+        double fallbackGlobalFactor)
+    {
+        var factors = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        if (priorSameSeasonSnapshots.Count == 0)
+            return factors;
+
+        Dictionary<string, SnapshotRow[]> baseByState = baseTrainingSnapshots
+            .GroupBy(x => x.ScoreState)
+            .ToDictionary(x => x.Key, x => x.ToArray(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (IGrouping<string, SnapshotRow> currentGroup in priorSameSeasonSnapshots.GroupBy(x => x.ScoreState))
+        {
+            if (!baseByState.TryGetValue(currentGroup.Key, out SnapshotRow[]? baseRows))
+                continue;
+
+            SnapshotRow[] currentRows = currentGroup.ToArray();
+            if (currentRows.Length < _options.MinTrainingSnapshots || baseRows.Length < _options.MinTrainingSnapshots)
+                continue;
+
+            double baseAvg = baseRows.Average(x => x.ActualRemainingGoals);
+            if (baseAvg <= 0.0)
+                continue;
+
+            double currentAvg = currentRows.Average(x => x.ActualRemainingGoals);
+            double rawFactor = currentAvg / baseAvg;
+            int currentMatchCount = currentRows.Select(x => x.SofaScoreEventId).Distinct().Count();
+            double weight = _options.PriorStrengthMatches == 0
+                ? 1.0
+                : currentMatchCount / (currentMatchCount + (double)_options.PriorStrengthMatches);
+
+            double factor = 1.0 + ((rawFactor - 1.0) * weight);
+
+            // Keep the state-specific factor from becoming too noisy early in the season.
+            // The global current-season factor remains the fallback for sparse states.
+            factor = Math.Clamp(factor, fallbackGlobalFactor * 0.80, fallbackGlobalFactor * 1.20);
+            factors[currentGroup.Key] = factor;
+        }
+
+        return factors;
     }
 
     private static double GoalsPerMatchFromSnapshots(IReadOnlyCollection<SnapshotRow> snapshots)
