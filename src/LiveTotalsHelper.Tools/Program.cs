@@ -238,8 +238,35 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         HomeRedCards = parsed.Int("home-red-cards", parsed.Int("home-reds", 0)),
         AwayRedCards = parsed.Int("away-red-cards", parsed.Int("away-reds", 0)),
         LastGoalMinute = parsed.Int("last-goal-minute", -1),
-        RecentGoalMinutes = parsed.Int("recent-goal-minutes", 2)
+        RecentGoalMinutes = parsed.Int("recent-goal-minutes", 2),
+        VolumeFactor = parsed.Double("volume-factor", 1.0),
+        VolumeFactorSource = parsed.Has("volume-factor") ? "manual --volume-factor" : "none/default 1.0"
     };
+
+    bool useCurrentSeasonVolume = parsed.Bool("use-current-season-volume", false);
+    SeasonVolumeFactorResult? seasonVolume = null;
+    if (useCurrentSeasonVolume)
+    {
+        var volumeOptions = new SeasonVolumeFactorOptions
+        {
+            League = parsed.String("league", string.Empty),
+            CurrentSeasonId = parsed.RequiredInt("current-season-id"),
+            BeforeRound = parsed.RequiredInt("before-round"),
+            PriorStrengthMatches = parsed.Int("prior-strength-matches", 100)
+        };
+        AddRequiredIntList(volumeOptions.BaseSeasonIds, parsed, "base-season-ids");
+
+        IConfiguration configuration = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+            .Build();
+
+        await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
+        var volumeCalculator = new SeasonVolumeFactorCalculator(dbContext);
+        seasonVolume = await volumeCalculator.CalculateAsync(volumeOptions, CancellationToken.None);
+        options.VolumeFactor = seasonVolume.Factor;
+        options.VolumeFactorSource = seasonVolume.Source;
+    }
 
     AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
     AddLiveOverOdds(options.LiveOverOddsByLine, parsed);
@@ -260,6 +287,16 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     Console.WriteLine($"Starting total xG: {result.StartingTotalXg:0.###}");
     Console.WriteLine($"Blend: Empirical {result.EmpiricalWeight:P0}, Weibull {result.WeibullWeight:P0}");
     Console.WriteLine($"Remaining share: Weibull {result.WeibullRemainingShare:P1}, Empirical {result.EmpiricalRemainingShare:P1}, Used {result.TimingRemainingShare:P1}");
+    Console.WriteLine($"Remaining xG before volume: {result.RemainingXgBeforeVolume:0.###}");
+    Console.WriteLine($"Volume factor: {result.VolumeFactor:0.###} ({result.VolumeFactorSource})");
+    if (seasonVolume is not null)
+    {
+        Console.WriteLine($"Volume base: {seasonVolume.BaseGoals} goals / {seasonVolume.BaseMatches} matches = {seasonVolume.BaseGoalsPerMatch:0.###} GPM");
+        Console.WriteLine($"Volume current: {seasonVolume.CurrentGoals} goals / {seasonVolume.CurrentMatches} matches = {seasonVolume.CurrentGoalsPerMatch:0.###} GPM");
+        Console.WriteLine($"Volume raw factor: {seasonVolume.RawFactor:0.###}, shrink weight: {seasonVolume.Weight:P1}");
+        if (!string.IsNullOrWhiteSpace(seasonVolume.Warning))
+            result.Warnings.Add(seasonVolume.Warning);
+    }
     Console.WriteLine($"Expected remaining goals: {result.RemainingXg:0.###}");
 
     if (result.Warnings.Count > 0)

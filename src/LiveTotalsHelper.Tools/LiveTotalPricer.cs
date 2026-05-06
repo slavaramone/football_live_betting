@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using LiveTotalsHelper.Modeling;
 
 namespace LiveTotalsHelper.Tools;
 
@@ -18,6 +19,8 @@ public sealed class LiveTotalPriceOptions
     public int AwayRedCards { get; set; }
     public int LastGoalMinute { get; set; } = -1;
     public int RecentGoalMinutes { get; set; } = 2;
+    public double VolumeFactor { get; set; } = 1.0;
+    public string VolumeFactorSource { get; set; } = "manual/default";
     public List<double> TargetLines { get; } = [1.5, 2.0, 2.5, 3.0];
     public Dictionary<double, double> LiveOverOddsByLine { get; } = new();
 }
@@ -43,6 +46,9 @@ public sealed class LiveTotalPriceResult
     public double WeibullRemainingShare { get; set; }
     public double EmpiricalRemainingShare { get; set; }
     public double TimingRemainingShare { get; set; }
+    public double RemainingXgBeforeVolume { get; set; }
+    public double VolumeFactor { get; set; } = 1.0;
+    public string VolumeFactorSource { get; set; } = string.Empty;
     public double RemainingXg { get; set; }
     public int HomeRedCards { get; set; }
     public int AwayRedCards { get; set; }
@@ -86,19 +92,27 @@ public sealed class LiveTotalPricer
             PropertyNameCaseInsensitive = true
         }, cancellationToken) ?? throw new InvalidOperationException("Could not read timing model JSON.");
 
-        string scoreState = ResolveScoreState(_options.HomeGoals, _options.AwayGoals);
+        string scoreState = ScoreStateResolver.FromScore(_options.HomeGoals, _options.AwayGoals);
         TimingModelSource source = ResolveTimingModel(model, scoreState);
 
-        double startingFairOverProbability = RemoveTwoWayMargin(_options.StartingOverOdds, _options.StartingUnderOdds);
-        double startingTotalXg = SolveTotalXg(_options.StartingLine, startingFairOverProbability);
+        double startingFairOverProbability = TotalGoalsPricingCalculator.RemoveTwoWayMargin(_options.StartingOverOdds, _options.StartingUnderOdds);
+        double startingTotalXg = TotalGoalsPricingCalculator.SolveTotalXg(_options.StartingLine, startingFairOverProbability);
 
         double minute = Math.Clamp(_options.Minute, 0, model.MaxMinute > 0 ? model.MaxMinute : 90);
-        double weibullElapsed = NormalizedWeibullCdf(minute, source.ShapeK, source.ScaleLambda, source.CdfAtMaxMinute);
-        double empiricalElapsed = EmpiricalCdf(minute, source.EmpiricalBuckets);
-        double empiricalWeight = Math.Clamp(_options.EmpiricalWeight, 0.0, 1.0);
-        double blendedElapsed = empiricalWeight * empiricalElapsed + (1.0 - empiricalWeight) * weibullElapsed;
-        double remainingShare = Math.Clamp(1.0 - blendedElapsed, 0.0, 1.0);
-        double remainingXg = startingTotalXg * remainingShare;
+        TimingBlendResult timing = TimingShareCalculator.Calculate(new TimingBlendInput
+        {
+            Minute = minute,
+            ShapeK = source.ShapeK,
+            ScaleLambda = source.ScaleLambda,
+            CdfAtMaxMinute = source.CdfAtMaxMinute,
+            EmpiricalBuckets = MapBuckets(source.EmpiricalBuckets),
+            EmpiricalWeight = _options.EmpiricalWeight
+        });
+        double empiricalWeight = timing.EmpiricalWeight;
+        double remainingShare = timing.BlendedRemainingShare;
+        double remainingXgBeforeVolume = startingTotalXg * remainingShare;
+        double volumeFactor = Math.Clamp(_options.VolumeFactor, 0.20, 2.50);
+        double remainingXg = remainingXgBeforeVolume * volumeFactor;
 
         var result = new LiveTotalPriceResult
         {
@@ -116,9 +130,12 @@ public sealed class LiveTotalPricer
             StartingFairOverProbability = startingFairOverProbability,
             StartingTotalXg = startingTotalXg,
             EmpiricalWeight = empiricalWeight,
-            WeibullRemainingShare = Math.Clamp(1.0 - weibullElapsed, 0.0, 1.0),
-            EmpiricalRemainingShare = Math.Clamp(1.0 - empiricalElapsed, 0.0, 1.0),
+            WeibullRemainingShare = timing.WeibullRemainingShare,
+            EmpiricalRemainingShare = timing.EmpiricalRemainingShare,
             TimingRemainingShare = remainingShare,
+            RemainingXgBeforeVolume = remainingXgBeforeVolume,
+            VolumeFactor = volumeFactor,
+            VolumeFactorSource = _options.VolumeFactorSource,
             RemainingXg = remainingXg,
             HomeRedCards = _options.HomeRedCards,
             AwayRedCards = _options.AwayRedCards,
@@ -143,8 +160,8 @@ public sealed class LiveTotalPricer
 
         foreach (double line in _options.TargetLines.Distinct().OrderBy(x => x))
         {
-            SettlementProbabilities probabilities = CalculateOverSettlementProbabilities(line, result.CurrentGoals, remainingXg);
-            double fairOdds = CalculateFairOdds(probabilities);
+            OverSettlementProbabilities probabilities = TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(line, result.CurrentGoals, remainingXg);
+            double fairOdds = TotalGoalsPricingCalculator.CalculateFairOdds(probabilities);
             _options.LiveOverOddsByLine.TryGetValue(NormalizeLineKey(line), out double bookOdds);
             bool hasBookOdds = bookOdds > 1.0;
 
@@ -209,6 +226,8 @@ public sealed class LiveTotalPricer
             throw new ArgumentException("--empirical-weight must be between 0 and 1.");
         if (_options.EdgeThreshold < 0)
             throw new ArgumentException("--edge-threshold must be >= 0.");
+        if (_options.VolumeFactor <= 0)
+            throw new ArgumentException("--volume-factor must be greater than 0.");
     }
 
     private static double RemoveTwoWayMargin(double overOdds, double underOdds)
@@ -415,6 +434,20 @@ public sealed class LiveTotalPricer
         }
 
         return 1.0;
+    }
+
+    private static List<EmpiricalTimingBucketModel> MapBuckets(IEnumerable<EmpiricalTimingBucket> buckets)
+    {
+        return buckets.Select(x => new EmpiricalTimingBucketModel
+        {
+            FromMinuteExclusive = x.FromMinuteExclusive,
+            ToMinuteInclusive = x.ToMinuteInclusive,
+            Label = x.Label,
+            GoalCount = x.GoalCount,
+            GoalShare = x.GoalShare,
+            CumulativeShareBefore = x.CumulativeShareBefore,
+            CumulativeShareAfter = x.CumulativeShareAfter
+        }).ToList();
     }
 
     public static double NormalizeLineKey(double line) => Math.Round(line, 2);

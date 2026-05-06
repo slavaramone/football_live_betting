@@ -3,6 +3,7 @@ using System.Text;
 using LiveTotalsHelper.Infrastructure.Persistence;
 using LiveTotalsHelper.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
+using LiveTotalsHelper.Modeling;
 
 namespace LiveTotalsHelper.Tools;
 
@@ -84,6 +85,8 @@ public sealed class TimingModelBacktester
 {
     private readonly LiveTotalsDbContext _db;
     private readonly TimingBacktestOptions _options;
+    private int _baseTrainingMatchCountForVolume;
+    private int _baseTrainingGoalCountForVolume;
 
     public TimingModelBacktester(LiveTotalsDbContext db, TimingBacktestOptions options)
     {
@@ -123,6 +126,8 @@ public sealed class TimingModelBacktester
             throw new ArgumentException("No reliable finished backtest matches found for the requested filters.");
 
         List<SnapshotRow> baseTrainingSnapshots = BuildSnapshots(trainingMatches);
+        _baseTrainingMatchCountForVolume = trainingMatches.Count;
+        _baseTrainingGoalCountForVolume = trainingMatches.Sum(x => x.FinalHomeGoals + x.FinalAwayGoals);
         result.TrainingSnapshots = baseTrainingSnapshots.Count;
 
         if (_options.WalkForward)
@@ -359,7 +364,7 @@ public sealed class TimingModelBacktester
             int away = 0;
             foreach (GoalRow goal in match.Goals.OrderBy(x => x.ModelMinute).ThenBy(x => x.Id))
             {
-                string state = ScoreState(Math.Abs(home - away));
+                string state = ScoreStateResolver.FromAbsoluteGoalDifference(Math.Abs(home - away));
                 if (!goalMinutesByState.TryGetValue(state, out List<double>? stateMinutes))
                 {
                     stateMinutes = [];
@@ -387,7 +392,7 @@ public sealed class TimingModelBacktester
                 continue;
 
             WeibullEstimate estimate = EstimateWeibull(minutes);
-            double cdfAtMax = WeibullCdf(_options.MaxModelMinute, estimate.ShapeK, estimate.ScaleLambda);
+            double cdfAtMax = TimingShareCalculator.WeibullCdf(_options.MaxModelMinute, estimate.ShapeK, estimate.ScaleLambda);
             if (cdfAtMax <= 0.0)
                 continue;
 
@@ -395,7 +400,7 @@ public sealed class TimingModelBacktester
             double denominator = 0.0;
             foreach (SnapshotRow snapshot in snapshots)
             {
-                double survival = NormalizedSurvival(snapshot.Minute, estimate.ShapeK, estimate.ScaleLambda, cdfAtMax);
+                double survival = TimingShareCalculator.NormalizedWeibullSurvival(snapshot.Minute, estimate.ShapeK, estimate.ScaleLambda, cdfAtMax);
                 numerator += snapshot.ActualRemainingGoals * survival;
                 denominator += survival * survival;
             }
@@ -419,16 +424,16 @@ public sealed class TimingModelBacktester
 
     private double ComputeCurrentSeasonVolumeFactor(double baseTrainingGoalsPerMatch, IReadOnlyCollection<PreparedMatch> priorSameSeasonMatches)
     {
-        if (baseTrainingGoalsPerMatch <= 0.0 || priorSameSeasonMatches.Count == 0)
-            return 1.0;
+        SeasonVolumeFactorMathResult result = SeasonVolumeFactorMath.Calculate(new SeasonVolumeFactorMathInput
+        {
+            BaseGoals = _baseTrainingGoalCountForVolume,
+            BaseMatches = _baseTrainingMatchCountForVolume,
+            CurrentGoals = priorSameSeasonMatches.Sum(x => x.FinalHomeGoals + x.FinalAwayGoals),
+            CurrentMatches = priorSameSeasonMatches.Count,
+            PriorStrengthMatches = _options.PriorStrengthMatches
+        });
 
-        double currentSeasonGoalsPerMatch = priorSameSeasonMatches.Average(x => x.FinalHomeGoals + x.FinalAwayGoals);
-        double rawFactor = currentSeasonGoalsPerMatch / baseTrainingGoalsPerMatch;
-        double weight = _options.PriorStrengthMatches == 0
-            ? 1.0
-            : priorSameSeasonMatches.Count / (priorSameSeasonMatches.Count + (double)_options.PriorStrengthMatches);
-
-        return 1.0 + ((rawFactor - 1.0) * weight);
+        return result.Factor;
     }
 
     private Dictionary<string, double> ComputeCurrentSeasonScoreStateVolumeFactors(
@@ -579,7 +584,7 @@ public sealed class TimingModelBacktester
                 int currentAway = match.Goals.Count(x => !x.IsHome && x.ModelMinute <= minute);
                 int currentTotal = currentHome + currentAway;
                 int remaining = Math.Max(0, finalTotal - currentTotal);
-                string state = ScoreState(Math.Abs(currentHome - currentAway));
+                string state = ScoreStateResolver.FromAbsoluteGoalDifference(Math.Abs(currentHome - currentAway));
 
                 rows.Add(new SnapshotRow
                 {
@@ -693,18 +698,7 @@ public sealed class TimingModelBacktester
         };
     }
 
-    private static int ScoreStateSort(string state)
-    {
-        return state switch
-        {
-            "Level" => 0,
-            "OneGoalMargin" => 1,
-            "TwoGoalMargin" => 2,
-            "ThreePlusGoalMargin" => 3,
-            "All" => 4,
-            _ => 99
-        };
-    }
+    private static int ScoreStateSort(string state) => ScoreStateResolver.SortKey(state);
 
     private static WeibullEstimate EstimateWeibull(IReadOnlyList<double> values)
     {
@@ -832,7 +826,7 @@ public sealed class TimingModelBacktester
             if (!_models.TryGetValue(snapshot.ScoreState, out WeibullStateModel? model) && !_models.TryGetValue("All", out model))
                 return new Prediction(0.0, "weibull:none", 0);
 
-            double survival = NormalizedSurvival(Math.Min(snapshot.Minute, _maxModelMinute), model.ShapeK, model.ScaleLambda, model.CdfAtMaxMinute);
+            double survival = TimingShareCalculator.NormalizedWeibullSurvival(Math.Min(snapshot.Minute, _maxModelMinute), model.ShapeK, model.ScaleLambda, model.CdfAtMaxMinute);
             double expected = model.VolumeScale * survival;
             return new Prediction(expected, $"weibull:{model.ScoreState}:k={model.ShapeK.ToString("0.###", CultureInfo.InvariantCulture)}", model.SampleSize);
         }

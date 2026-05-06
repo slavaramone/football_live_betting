@@ -8,6 +8,7 @@
   <ItemGroup>
     <ProjectReference Include="..\LiveTotalsHelper.Core\LiveTotalsHelper.Core.csproj" />
     <ProjectReference Include="..\LiveTotalsHelper.Infrastructure\LiveTotalsHelper.Infrastructure.csproj" />
+    <ProjectReference Include="..\LiveTotalsHelper.Modeling\LiveTotalsHelper.Modeling.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
