@@ -16,6 +16,7 @@ public sealed class TimingBacktestOptions
     public int MaxModelMinute { get; set; } = 90;
     public int MinTrainingSnapshots { get; set; } = 20;
     public bool IncludeUnreliableMatches { get; set; }
+    public bool WalkForward { get; set; }
     public string OutputPath { get; set; } = string.Empty;
 }
 
@@ -27,6 +28,8 @@ public sealed class TimingBacktestResult
     public int BacktestReliableMatches { get; set; }
     public int TrainingSnapshots { get; set; }
     public int BacktestSnapshots { get; set; }
+    public bool WalkForward { get; set; }
+    public int WalkForwardTrainingSnapshotsAdded { get; set; }
     public List<int> TrainingSeasonIds { get; } = [];
     public List<int> BacktestSeasonIds { get; } = [];
     public List<TimingBacktestSummaryRow> OverallRows { get; } = [];
@@ -97,14 +100,22 @@ public sealed class TimingModelBacktester
         result.TrainingSeasonIds.AddRange(_options.TrainingSeasonIds.Distinct().OrderBy(x => x));
         result.BacktestSeasonIds.AddRange(_options.BacktestSeasonIds.Distinct().OrderBy(x => x));
 
-        List<PreparedMatch> trainingMatches = await LoadPreparedMatchesAsync(_options.TrainingSeasonIds, cancellationToken);
+        result.WalkForward = _options.WalkForward;
+
+        List<PreparedMatch> trainingMatches = await LoadPreparedMatchesAsync(_options.TrainingSeasonIds, applyRoundFilter: true, cancellationToken);
         result.TrainingMatchesChecked = trainingMatches.Count;
         trainingMatches = FilterReliable(trainingMatches, result.Warnings, "training");
         result.TrainingReliableMatches = trainingMatches.Count;
 
-        List<PreparedMatch> backtestMatches = await LoadPreparedMatchesAsync(_options.BacktestSeasonIds, cancellationToken);
-        result.BacktestMatchesChecked = backtestMatches.Count;
-        backtestMatches = FilterReliable(backtestMatches, result.Warnings, "backtest");
+        List<PreparedMatch> allBacktestMatches = await LoadPreparedMatchesAsync(_options.BacktestSeasonIds, applyRoundFilter: !_options.WalkForward, cancellationToken);
+        int backtestMatchesChecked = allBacktestMatches.Count;
+        allBacktestMatches = FilterReliable(allBacktestMatches, result.Warnings, "backtest");
+
+        List<PreparedMatch> backtestMatches = _options.WalkForward
+            ? ApplyRoundFilter(allBacktestMatches)
+            : allBacktestMatches;
+
+        result.BacktestMatchesChecked = _options.WalkForward ? backtestMatchesChecked : backtestMatches.Count;
         result.BacktestReliableMatches = backtestMatches.Count;
 
         if (trainingMatches.Count == 0)
@@ -113,34 +124,19 @@ public sealed class TimingModelBacktester
         if (backtestMatches.Count == 0)
             throw new ArgumentException("No reliable finished backtest matches found for the requested filters.");
 
-        List<SnapshotRow> trainingSnapshots = BuildSnapshots(trainingMatches);
-        List<SnapshotRow> backtestSnapshots = BuildSnapshots(backtestMatches);
-        result.TrainingSnapshots = trainingSnapshots.Count;
-        result.BacktestSnapshots = backtestSnapshots.Count;
+        List<SnapshotRow> baseTrainingSnapshots = BuildSnapshots(trainingMatches);
+        result.TrainingSnapshots = baseTrainingSnapshots.Count;
 
-        Dictionary<ModelKey, SnapshotAggregate> exact = BuildAggregates(trainingSnapshots, x => new ModelKey(x.Minute, x.ScoreState));
-        Dictionary<ModelKey, SnapshotAggregate> minuteOnly = BuildAggregates(trainingSnapshots, x => new ModelKey(x.Minute, "All"));
-        Dictionary<ModelKey, SnapshotAggregate> stateOnly = BuildAggregates(trainingSnapshots, x => new ModelKey(-1, x.ScoreState));
-        SnapshotAggregate global = SnapshotAggregate.From(trainingSnapshots);
-
-        foreach (SnapshotRow snapshot in backtestSnapshots)
+        if (_options.WalkForward)
         {
-            Prediction prediction = ResolvePrediction(snapshot, exact, minuteOnly, stateOnly, global);
-            result.Predictions.Add(new TimingBacktestPredictionRow
-            {
-                SofaScoreEventId = snapshot.SofaScoreEventId,
-                SeasonId = snapshot.SeasonId,
-                RoundNumber = snapshot.RoundNumber,
-                Match = snapshot.MatchName,
-                Minute = snapshot.Minute,
-                CurrentHomeGoals = snapshot.CurrentHomeGoals,
-                CurrentAwayGoals = snapshot.CurrentAwayGoals,
-                ScoreState = snapshot.ScoreState,
-                ActualRemainingGoals = snapshot.ActualRemainingGoals,
-                PredictedRemainingGoals = prediction.ExpectedRemainingGoals,
-                PredictionSource = prediction.Source,
-                TrainingSampleSize = prediction.SampleSize
-            });
+            await RunWalkForwardAsync(result, baseTrainingSnapshots, allBacktestMatches, backtestMatches, cancellationToken);
+        }
+        else
+        {
+            List<SnapshotRow> backtestSnapshots = BuildSnapshots(backtestMatches);
+            result.BacktestSnapshots = backtestSnapshots.Count;
+
+            PredictSnapshots(result, baseTrainingSnapshots, backtestSnapshots);
         }
 
         result.OverallRows.Add(Summarize("All", result.Predictions));
@@ -169,6 +165,72 @@ public sealed class TimingModelBacktester
         return result;
     }
 
+
+    private void PredictSnapshots(TimingBacktestResult result, IReadOnlyCollection<SnapshotRow> trainingSnapshots, IReadOnlyCollection<SnapshotRow> backtestSnapshots)
+    {
+        Dictionary<ModelKey, SnapshotAggregate> exact = BuildAggregates(trainingSnapshots, x => new ModelKey(x.Minute, x.ScoreState));
+        Dictionary<ModelKey, SnapshotAggregate> minuteOnly = BuildAggregates(trainingSnapshots, x => new ModelKey(x.Minute, "All"));
+        Dictionary<ModelKey, SnapshotAggregate> stateOnly = BuildAggregates(trainingSnapshots, x => new ModelKey(-1, x.ScoreState));
+        SnapshotAggregate global = SnapshotAggregate.From(trainingSnapshots);
+
+        foreach (SnapshotRow snapshot in backtestSnapshots)
+        {
+            Prediction prediction = ResolvePrediction(snapshot, exact, minuteOnly, stateOnly, global);
+            result.Predictions.Add(ToPredictionRow(snapshot, prediction));
+        }
+    }
+
+    private async Task RunWalkForwardAsync(
+        TimingBacktestResult result,
+        IReadOnlyCollection<SnapshotRow> baseTrainingSnapshots,
+        IReadOnlyCollection<PreparedMatch> allBacktestMatches,
+        IReadOnlyCollection<PreparedMatch> selectedBacktestMatches,
+        CancellationToken cancellationToken)
+    {
+        List<PreparedMatch> orderedTestMatches = selectedBacktestMatches
+            .OrderBy(x => x.SeasonId)
+            .ThenBy(x => x.RoundNumber)
+            .ThenBy(x => x.SofaScoreEventId)
+            .ToList();
+
+        foreach (var roundGroup in orderedTestMatches.GroupBy(x => new { x.SeasonId, x.RoundNumber }).OrderBy(x => x.Key.SeasonId).ThenBy(x => x.Key.RoundNumber))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            List<PreparedMatch> priorSameSeasonMatches = allBacktestMatches
+                .Where(x => x.SeasonId == roundGroup.Key.SeasonId && x.RoundNumber < roundGroup.Key.RoundNumber)
+                .ToList();
+
+            List<SnapshotRow> walkForwardTrainingSnapshots = new(baseTrainingSnapshots);
+            List<SnapshotRow> priorSnapshots = BuildSnapshots(priorSameSeasonMatches);
+            walkForwardTrainingSnapshots.AddRange(priorSnapshots);
+            result.WalkForwardTrainingSnapshotsAdded += priorSnapshots.Count;
+
+            List<SnapshotRow> testSnapshots = BuildSnapshots(roundGroup.ToList());
+            result.BacktestSnapshots += testSnapshots.Count;
+            PredictSnapshots(result, walkForwardTrainingSnapshots, testSnapshots);
+        }
+    }
+
+    private TimingBacktestPredictionRow ToPredictionRow(SnapshotRow snapshot, Prediction prediction)
+    {
+        return new TimingBacktestPredictionRow
+        {
+            SofaScoreEventId = snapshot.SofaScoreEventId,
+            SeasonId = snapshot.SeasonId,
+            RoundNumber = snapshot.RoundNumber,
+            Match = snapshot.MatchName,
+            Minute = snapshot.Minute,
+            CurrentHomeGoals = snapshot.CurrentHomeGoals,
+            CurrentAwayGoals = snapshot.CurrentAwayGoals,
+            ScoreState = snapshot.ScoreState,
+            ActualRemainingGoals = snapshot.ActualRemainingGoals,
+            PredictedRemainingGoals = prediction.ExpectedRemainingGoals,
+            PredictionSource = prediction.Source,
+            TrainingSampleSize = prediction.SampleSize
+        };
+    }
+
     private Prediction ResolvePrediction(
         SnapshotRow snapshot,
         IReadOnlyDictionary<ModelKey, SnapshotAggregate> exact,
@@ -191,7 +253,7 @@ public sealed class TimingModelBacktester
         return new Prediction(global.AvgRemainingGoals, "global", global.Count);
     }
 
-    private async Task<List<PreparedMatch>> LoadPreparedMatchesAsync(IReadOnlyCollection<int> seasonIds, CancellationToken cancellationToken)
+    private async Task<List<PreparedMatch>> LoadPreparedMatchesAsync(IReadOnlyCollection<int> seasonIds, bool applyRoundFilter, CancellationToken cancellationToken)
     {
         IQueryable<MatchEntity> query = _db.Matches.AsNoTracking();
 
@@ -200,7 +262,7 @@ public sealed class TimingModelBacktester
 
         query = query.Where(x => seasonIds.Contains(x.SofaScoreSeasonId));
 
-        if (_options.Rounds.Count > 0)
+        if (applyRoundFilter && _options.Rounds.Count > 0)
             query = query.Where(x => _options.Rounds.Contains(x.RoundNumber));
 
         List<MatchEntity> matches = await query
@@ -246,6 +308,15 @@ public sealed class TimingModelBacktester
         }
 
         return prepared;
+    }
+
+
+    private List<PreparedMatch> ApplyRoundFilter(IEnumerable<PreparedMatch> matches)
+    {
+        if (_options.Rounds.Count == 0)
+            return matches.ToList();
+
+        return matches.Where(x => _options.Rounds.Contains(x.RoundNumber)).ToList();
     }
 
     private List<PreparedMatch> FilterReliable(List<PreparedMatch> matches, List<string> warnings, string label)

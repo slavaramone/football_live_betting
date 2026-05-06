@@ -226,6 +226,7 @@ static async Task<int> RunBacktestTimingModel(string[] args)
         MaxModelMinute = parsed.Int("max-model-minute", 90),
         MinTrainingSnapshots = parsed.Int("min-training-snapshots", 20),
         IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
+        WalkForward = parsed.Bool("walk-forward", false),
         OutputPath = parsed.String("output", string.Empty)
     };
 
@@ -255,6 +256,9 @@ static async Task<int> RunBacktestTimingModel(string[] args)
     Console.WriteLine($"Backtest matches checked: {result.BacktestMatchesChecked}");
     Console.WriteLine($"Backtest reliable matches: {result.BacktestReliableMatches}");
     Console.WriteLine($"Training snapshots: {result.TrainingSnapshots}");
+    Console.WriteLine($"Walk-forward: {result.WalkForward}");
+    if (result.WalkForward)
+        Console.WriteLine($"Walk-forward prior-season snapshots added across rounds: {result.WalkForwardTrainingSnapshotsAdded}");
     Console.WriteLine($"Backtest snapshots: {result.BacktestSnapshots}");
     if (!string.IsNullOrWhiteSpace(result.OutputPath))
         Console.WriteLine($"Prediction CSV: {result.OutputPath}");
