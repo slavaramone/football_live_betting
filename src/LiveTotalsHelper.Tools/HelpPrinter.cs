@@ -130,8 +130,9 @@ public static class HelpPrinter
         Console.WriteLine("  --minute-column      CSV column to fit. Default: GoalMinuteForModel");
         Console.WriteLine("  --max-iterations     Maximum MLE iterations. Default: 100");
         Console.WriteLine("  --tolerance          MLE convergence tolerance. Default: 1e-9");
+        Console.WriteLine("  --blend-weibull-weight Weight for blended model. Default: 0.30, so blend = 30% Weibull + 70% empirical.");
         Console.WriteLine();
-        Console.WriteLine("Output JSON stores shapeK, scaleLambda, normalized checkpoints and empirical bucket comparison.");
+        Console.WriteLine("Output JSON stores three timing models: pure Weibull, empirical bucket curve, and blended Weibull+empirical model.");
     }
 
     public static void PrintValidateDb()

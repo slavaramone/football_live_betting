@@ -144,7 +144,8 @@ static async Task<int> RunFitWeibull(string[] args)
         MaxMinute = parsed.Int("max-minute", 90),
         MinuteColumn = parsed.String("minute-column", "GoalMinuteForModel"),
         MaxIterations = parsed.Int("max-iterations", 100),
-        Tolerance = parsed.Double("tolerance", 1e-9)
+        Tolerance = parsed.Double("tolerance", 1e-9),
+        BlendWeibullWeight = parsed.Double("blend-weibull-weight", 0.30)
     };
 
     var fitter = new WeibullModelFitter(options);
@@ -164,18 +165,25 @@ static async Task<int> RunFitWeibull(string[] args)
     Console.WriteLine($"Scale lambda: {result.ScaleLambda:0.######}");
     Console.WriteLine($"Log-likelihood: {result.LogLikelihood:0.###}");
     Console.WriteLine($"CDF at max minute ({result.MaxMinute}): {result.CdfAtMaxMinute:P2}");
+    Console.WriteLine($"Blend weights: Weibull {result.BlendWeibullWeight:P0}, Empirical {result.BlendEmpiricalWeight:P0}");
 
     Console.WriteLine();
-    Console.WriteLine("Minute checkpoints, normalized to max minute:");
-    Console.WriteLine("Minute   CDF       Remaining");
-    foreach (WeibullMinuteCheckpoint checkpoint in result.Checkpoints)
-        Console.WriteLine($"{checkpoint.Minute,6}   {checkpoint.NormalizedCdf,7:P1}   {checkpoint.RemainingShare,9:P1}");
+    Console.WriteLine("Minute checkpoints, remaining share by model:");
+    Console.WriteLine("Minute   Weibull   Empirical   Blended");
+    foreach (TimingMinuteCheckpoint checkpoint in result.Checkpoints)
+        Console.WriteLine($"{checkpoint.Minute,6}   {checkpoint.WeibullRemainingShare,7:P1}   {checkpoint.EmpiricalRemainingShare,9:P1}   {checkpoint.BlendedRemainingShare,7:P1}");
 
     Console.WriteLine();
     Console.WriteLine("Bucket comparison:");
-    Console.WriteLine("Bucket     Actual    Weibull");
-    foreach (WeibullBucketComparison bucket in result.Buckets)
-        Console.WriteLine($"{bucket.Bucket,8}   {bucket.ActualPct,7:P1}   {bucket.WeibullExpectedPct,7:P1}   ({bucket.ActualGoals} goals)");
+    Console.WriteLine("Bucket     Actual    Weibull   Empirical   Blended");
+    foreach (TimingBucketComparison bucket in result.Buckets)
+        Console.WriteLine($"{bucket.Bucket,8}   {bucket.ActualPct,7:P1}   {bucket.WeibullExpectedPct,7:P1}   {bucket.EmpiricalExpectedPct,9:P1}   {bucket.BlendedExpectedPct,7:P1}   ({bucket.ActualGoals} goals)");
+
+    Console.WriteLine();
+    Console.WriteLine("Timing model fit scores by bucket error:");
+    Console.WriteLine("Model       MAE       RMSE      MaxErr");
+    foreach (TimingModelFitScore score in result.FitScores.OrderBy(x => x.MeanAbsoluteBucketError))
+        Console.WriteLine($"{score.Model,-9}   {score.MeanAbsoluteBucketError,7:P2}   {score.RootMeanSquaredBucketError,7:P2}   {score.MaxAbsoluteBucketError,7:P2}");
 
     if (result.Warnings.Count > 0)
     {

@@ -14,6 +14,7 @@ public sealed class WeibullFitOptions
     public string MinuteColumn { get; set; } = "GoalMinuteForModel";
     public int MaxIterations { get; set; } = 100;
     public double Tolerance { get; set; } = 1e-9;
+    public double BlendWeibullWeight { get; set; } = 0.30;
     public int[] BucketEdges { get; set; } = [0, 15, 30, 45, 60, 75, 90];
 }
 
@@ -32,42 +33,93 @@ public sealed class WeibullFitResult
     public double MeanGoalMinute { get; set; }
     public double MedianGoalMinute { get; set; }
     public double CdfAtMaxMinute { get; set; }
-    public List<WeibullMinuteCheckpoint> Checkpoints { get; } = [];
-    public List<WeibullBucketComparison> Buckets { get; } = [];
+    public double BlendWeibullWeight { get; set; }
+    public double BlendEmpiricalWeight => 1.0 - BlendWeibullWeight;
+    public List<TimingMinuteCheckpoint> Checkpoints { get; } = [];
+    public List<TimingBucketComparison> Buckets { get; } = [];
+    public List<EmpiricalTimingBucket> EmpiricalBuckets { get; } = [];
+    public List<TimingModelFitScore> FitScores { get; } = [];
     public List<string> Warnings { get; } = [];
 }
 
-public sealed class WeibullMinuteCheckpoint
+public sealed class TimingMinuteCheckpoint
 {
     public int Minute { get; set; }
-    public double RawCdf { get; set; }
-    public double NormalizedCdf { get; set; }
-    public double RemainingShare { get; set; }
+    public double WeibullCdf { get; set; }
+    public double WeibullRemainingShare { get; set; }
+    public double EmpiricalCdf { get; set; }
+    public double EmpiricalRemainingShare { get; set; }
+    public double BlendedCdf { get; set; }
+    public double BlendedRemainingShare { get; set; }
 }
 
-public sealed class WeibullBucketComparison
+public sealed class EmpiricalTimingBucket
+{
+    public int FromMinuteExclusive { get; set; }
+    public int ToMinuteInclusive { get; set; }
+    public string Label { get; set; } = string.Empty;
+    public int GoalCount { get; set; }
+    public double GoalShare { get; set; }
+    public double CumulativeShareBefore { get; set; }
+    public double CumulativeShareAfter { get; set; }
+}
+
+public sealed class TimingBucketComparison
 {
     public string Bucket { get; set; } = string.Empty;
     public int ActualGoals { get; set; }
     public double ActualPct { get; set; }
     public double WeibullExpectedPct { get; set; }
+    public double EmpiricalExpectedPct { get; set; }
+    public double BlendedExpectedPct { get; set; }
+}
+
+public sealed class TimingModelFitScore
+{
+    public string Model { get; set; } = string.Empty;
+    public double MeanAbsoluteBucketError { get; set; }
+    public double RootMeanSquaredBucketError { get; set; }
+    public double MaxAbsoluteBucketError { get; set; }
 }
 
 public sealed class WeibullModelFile
 {
-    public string ModelType { get; set; } = "weibull-goal-timing";
+    public string ModelType { get; set; } = "goal-timing-weibull-empirical-blended";
     public string League { get; set; } = string.Empty;
     public List<int> SeasonIds { get; set; } = [];
     public int GoalCount { get; set; }
     public int MatchCount { get; set; }
     public int MaxMinute { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public string RecommendedTimingModel { get; set; } = "empirical";
+    public string Usage { get; set; } = "Use empirical or blended remaining share for live totals. Pure Weibull is retained for diagnostics/experiments.";
+    public WeibullTimingModel Weibull { get; set; } = new();
+    public EmpiricalTimingModel Empirical { get; set; } = new();
+    public BlendedTimingModel Blended { get; set; } = new();
+    public List<TimingMinuteCheckpoint> Checkpoints { get; set; } = [];
+    public List<TimingBucketComparison> BucketComparison { get; set; } = [];
+    public List<TimingModelFitScore> FitScores { get; set; } = [];
+}
+
+public sealed class WeibullTimingModel
+{
     public double ShapeK { get; set; }
     public double ScaleLambda { get; set; }
     public double CdfAtMaxMinute { get; set; }
-    public string CdfUsage { get; set; } = "Use normalized elapsed share = WeibullCDF(minute) / WeibullCDF(maxMinute); remaining share = 1 - normalized elapsed share.";
-    public DateTime CreatedAtUtc { get; set; }
-    public List<WeibullMinuteCheckpoint> Checkpoints { get; set; } = [];
-    public List<WeibullBucketComparison> Buckets { get; set; } = [];
+    public string CdfUsage { get; set; } = "elapsedShare = WeibullCDF(minute) / WeibullCDF(maxMinute); remainingShare = 1 - elapsedShare.";
+}
+
+public sealed class EmpiricalTimingModel
+{
+    public string CdfUsage { get; set; } = "Use piecewise-linear interpolation inside the listed buckets; remainingShare = 1 - empiricalElapsedShare.";
+    public List<EmpiricalTimingBucket> Buckets { get; set; } = [];
+}
+
+public sealed class BlendedTimingModel
+{
+    public double WeibullWeight { get; set; }
+    public double EmpiricalWeight { get; set; }
+    public string CdfUsage { get; set; } = "elapsedShare = WeibullWeight * WeibullElapsedShare + EmpiricalWeight * EmpiricalElapsedShare.";
 }
 
 public sealed class WeibullModelFitter
@@ -90,6 +142,9 @@ public sealed class WeibullModelFitter
         if (_options.MaxMinute <= 0)
             throw new ArgumentException("--max-minute must be greater than 0 for fitting/live-pricing normalization.");
 
+        if (_options.BlendWeibullWeight < 0 || _options.BlendWeibullWeight > 1)
+            throw new ArgumentException("--blend-weibull-weight must be between 0 and 1.");
+
         List<Dictionary<string, string>> rows = await ReadCsvAsync(_options.InputPath, cancellationToken);
         if (rows.Count == 0)
             throw new ArgumentException("Input CSV has no data rows.");
@@ -110,9 +165,7 @@ public sealed class WeibullModelFitter
             if (minute <= 0)
                 continue;
 
-            if (_options.MaxMinute > 0)
-                minute = Math.Min(minute, _options.MaxMinute);
-
+            minute = Math.Min(minute, _options.MaxMinute);
             minutes.Add(minute);
 
             if (row.TryGetValue("SofaScoreSeasonId", out string? seasonRaw) && int.TryParse(seasonRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int seasonId))
@@ -128,7 +181,10 @@ public sealed class WeibullModelFitter
         }
 
         if (minutes.Count < 5)
-            throw new ArgumentException($"Not enough goal minutes to fit Weibull. Found {minutes.Count}, need at least 5.");
+            throw new ArgumentException($"Not enough goal minutes to fit timing models. Found {minutes.Count}, need at least 5.");
+
+        int[] edges = ResolveBucketEdges(_options.BucketEdges, _options.MaxMinute);
+        List<EmpiricalTimingBucket> empiricalBuckets = BuildEmpiricalBuckets(minutes, edges);
 
         WeibullEstimate estimate = EstimateWeibull(minutes, _options.MaxIterations, _options.Tolerance);
         double cdfAtMaxMinute = WeibullCdf(_options.MaxMinute, estimate.ShapeK, estimate.ScaleLambda);
@@ -149,18 +205,25 @@ public sealed class WeibullModelFitter
             LogLikelihood = estimate.LogLikelihood,
             MeanGoalMinute = minutes.Average(),
             MedianGoalMinute = Median(minutes),
-            CdfAtMaxMinute = cdfAtMaxMinute
+            CdfAtMaxMinute = cdfAtMaxMinute,
+            BlendWeibullWeight = _options.BlendWeibullWeight
         };
 
         result.SeasonIds.AddRange(seasonIds.OrderBy(x => x));
-        AddCheckpoints(result, estimate.ShapeK, estimate.ScaleLambda, cdfAtMaxMinute);
-        AddBucketComparisons(result, minutes, estimate.ShapeK, estimate.ScaleLambda, cdfAtMaxMinute);
+        result.EmpiricalBuckets.AddRange(empiricalBuckets);
+        AddCheckpoints(result, empiricalBuckets, estimate.ShapeK, estimate.ScaleLambda, cdfAtMaxMinute);
+        AddBucketComparisons(result, minutes, empiricalBuckets, estimate.ShapeK, estimate.ScaleLambda, cdfAtMaxMinute);
+        AddFitScores(result);
 
         if (estimate.ShapeK <= 1.0)
             result.Warnings.Add($"Fitted shapeK={estimate.ShapeK.ToString("0.####", CultureInfo.InvariantCulture)}. k <= 1 means goal intensity is flat/decreasing over time; check if dataset has enough lower-league goals or if model minutes are wrong.");
 
         if (cdfAtMaxMinute < 0.85)
             result.Warnings.Add($"Weibull CDF at max minute is only {cdfAtMaxMinute:P1}. Live model will normalize by this value, but inspect the fit.");
+
+        TimingModelFitScore? best = result.FitScores.OrderBy(x => x.MeanAbsoluteBucketError).FirstOrDefault();
+        string recommended = best?.Model.Equals("Weibull", StringComparison.OrdinalIgnoreCase) == true ? "weibull" :
+            best?.Model.Equals("Blended", StringComparison.OrdinalIgnoreCase) == true ? "blended" : "empirical";
 
         var modelFile = new WeibullModelFile
         {
@@ -169,12 +232,26 @@ public sealed class WeibullModelFitter
             GoalCount = result.GoalCount,
             MatchCount = result.MatchCount,
             MaxMinute = result.MaxMinute,
-            ShapeK = result.ShapeK,
-            ScaleLambda = result.ScaleLambda,
-            CdfAtMaxMinute = result.CdfAtMaxMinute,
             CreatedAtUtc = DateTime.UtcNow,
+            RecommendedTimingModel = recommended,
+            Weibull = new WeibullTimingModel
+            {
+                ShapeK = result.ShapeK,
+                ScaleLambda = result.ScaleLambda,
+                CdfAtMaxMinute = result.CdfAtMaxMinute
+            },
+            Empirical = new EmpiricalTimingModel
+            {
+                Buckets = result.EmpiricalBuckets.ToList()
+            },
+            Blended = new BlendedTimingModel
+            {
+                WeibullWeight = result.BlendWeibullWeight,
+                EmpiricalWeight = result.BlendEmpiricalWeight
+            },
             Checkpoints = result.Checkpoints.ToList(),
-            Buckets = result.Buckets.ToList()
+            BucketComparison = result.Buckets.ToList(),
+            FitScores = result.FitScores.ToList()
         };
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
@@ -188,56 +265,143 @@ public sealed class WeibullModelFitter
         return result;
     }
 
-    private void AddCheckpoints(WeibullFitResult result, double shapeK, double scaleLambda, double cdfAtMaxMinute)
+    private void AddCheckpoints(WeibullFitResult result, IReadOnlyList<EmpiricalTimingBucket> empiricalBuckets, double shapeK, double scaleLambda, double cdfAtMaxMinute)
     {
         foreach (int minute in new[] { 15, 30, 45, 60, 75, result.MaxMinute }.Distinct().OrderBy(x => x))
         {
-            double rawCdf = WeibullCdf(minute, shapeK, scaleLambda);
-            double normalized = Math.Min(1.0, rawCdf / cdfAtMaxMinute);
-            result.Checkpoints.Add(new WeibullMinuteCheckpoint
+            double weibullCdf = NormalizedWeibullCdf(minute, shapeK, scaleLambda, cdfAtMaxMinute);
+            double empiricalCdf = EmpiricalCdf(minute, empiricalBuckets);
+            double blendedCdf = Blend(weibullCdf, empiricalCdf, result.BlendWeibullWeight);
+
+            result.Checkpoints.Add(new TimingMinuteCheckpoint
             {
                 Minute = minute,
-                RawCdf = rawCdf,
-                NormalizedCdf = normalized,
-                RemainingShare = Math.Max(0.0, 1.0 - normalized)
+                WeibullCdf = weibullCdf,
+                WeibullRemainingShare = Math.Max(0.0, 1.0 - weibullCdf),
+                EmpiricalCdf = empiricalCdf,
+                EmpiricalRemainingShare = Math.Max(0.0, 1.0 - empiricalCdf),
+                BlendedCdf = blendedCdf,
+                BlendedRemainingShare = Math.Max(0.0, 1.0 - blendedCdf)
             });
         }
     }
 
-    private void AddBucketComparisons(WeibullFitResult result, IReadOnlyList<double> minutes, double shapeK, double scaleLambda, double cdfAtMaxMinute)
+    private void AddBucketComparisons(WeibullFitResult result, IReadOnlyList<double> minutes, IReadOnlyList<EmpiricalTimingBucket> empiricalBuckets, double shapeK, double scaleLambda, double cdfAtMaxMinute)
     {
-        int[] edges = _options.BucketEdges
-            .Where(x => x >= 0 && x <= _options.MaxMinute)
+        foreach (EmpiricalTimingBucket bucket in empiricalBuckets)
+        {
+            double weibullExpectedPct = (WeibullCdf(bucket.ToMinuteInclusive, shapeK, scaleLambda) - WeibullCdf(bucket.FromMinuteExclusive, shapeK, scaleLambda)) / cdfAtMaxMinute;
+            weibullExpectedPct = Clamp01(weibullExpectedPct);
+            double empiricalExpectedPct = bucket.GoalShare;
+            double blendedExpectedPct = Blend(weibullExpectedPct, empiricalExpectedPct, result.BlendWeibullWeight);
+
+            result.Buckets.Add(new TimingBucketComparison
+            {
+                Bucket = bucket.Label,
+                ActualGoals = bucket.GoalCount,
+                ActualPct = (double)bucket.GoalCount / minutes.Count,
+                WeibullExpectedPct = weibullExpectedPct,
+                EmpiricalExpectedPct = empiricalExpectedPct,
+                BlendedExpectedPct = blendedExpectedPct
+            });
+        }
+    }
+
+    private static void AddFitScores(WeibullFitResult result)
+    {
+        result.FitScores.Add(ScoreModel("Weibull", result.Buckets.Select(b => b.WeibullExpectedPct - b.ActualPct)));
+        result.FitScores.Add(ScoreModel("Empirical", result.Buckets.Select(b => b.EmpiricalExpectedPct - b.ActualPct)));
+        result.FitScores.Add(ScoreModel("Blended", result.Buckets.Select(b => b.BlendedExpectedPct - b.ActualPct)));
+    }
+
+    private static TimingModelFitScore ScoreModel(string name, IEnumerable<double> errors)
+    {
+        double[] e = errors.ToArray();
+        return new TimingModelFitScore
+        {
+            Model = name,
+            MeanAbsoluteBucketError = e.Select(x => Math.Abs(x)).Average(),
+            RootMeanSquaredBucketError = Math.Sqrt(e.Select(x => x * x).Average()),
+            MaxAbsoluteBucketError = e.Select(x => Math.Abs(x)).Max()
+        };
+    }
+
+    private static List<EmpiricalTimingBucket> BuildEmpiricalBuckets(IReadOnlyList<double> minutes, IReadOnlyList<int> edges)
+    {
+        var buckets = new List<EmpiricalTimingBucket>();
+        double cumulative = 0.0;
+
+        for (int i = 0; i < edges.Count - 1; i++)
+        {
+            int left = edges[i];
+            int right = edges[i + 1];
+            int count = minutes.Count(x => x > left && x <= right);
+            double share = (double)count / minutes.Count;
+
+            buckets.Add(new EmpiricalTimingBucket
+            {
+                FromMinuteExclusive = left,
+                ToMinuteInclusive = right,
+                Label = $"{left + 1}-{right}",
+                GoalCount = count,
+                GoalShare = share,
+                CumulativeShareBefore = cumulative,
+                CumulativeShareAfter = cumulative + share
+            });
+
+            cumulative += share;
+        }
+
+        if (buckets.Count > 0)
+            buckets[^1].CumulativeShareAfter = 1.0;
+
+        return buckets;
+    }
+
+    private static double EmpiricalCdf(double minute, IReadOnlyList<EmpiricalTimingBucket> buckets)
+    {
+        if (minute <= 0 || buckets.Count == 0)
+            return 0.0;
+
+        foreach (EmpiricalTimingBucket bucket in buckets)
+        {
+            if (minute <= bucket.FromMinuteExclusive)
+                return bucket.CumulativeShareBefore;
+
+            if (minute <= bucket.ToMinuteInclusive)
+            {
+                double width = bucket.ToMinuteInclusive - bucket.FromMinuteExclusive;
+                if (width <= 0)
+                    return bucket.CumulativeShareAfter;
+
+                double progress = (minute - bucket.FromMinuteExclusive) / width;
+                return Clamp01(bucket.CumulativeShareBefore + bucket.GoalShare * progress);
+            }
+        }
+
+        return 1.0;
+    }
+
+    private static int[] ResolveBucketEdges(IReadOnlyList<int> sourceEdges, int maxMinute)
+    {
+        int[] edges = sourceEdges
+            .Where(x => x >= 0 && x <= maxMinute)
+            .Append(0)
+            .Append(maxMinute)
             .Distinct()
             .OrderBy(x => x)
             .ToArray();
 
-        if (edges.Length < 2 || edges[^1] != _options.MaxMinute)
-            edges = [0, 15, 30, 45, 60, 75, _options.MaxMinute];
+        if (edges.Length < 2)
+            return [0, maxMinute];
 
-        for (int i = 0; i < edges.Length - 1; i++)
-        {
-            int left = edges[i];
-            int right = edges[i + 1];
-            int actual = minutes.Count(x => x > left && x <= right);
-            double actualPct = (double)actual / minutes.Count;
-            double expectedPct = (WeibullCdf(right, shapeK, scaleLambda) - WeibullCdf(left, shapeK, scaleLambda)) / cdfAtMaxMinute;
-            expectedPct = Math.Max(0, Math.Min(1, expectedPct));
-
-            result.Buckets.Add(new WeibullBucketComparison
-            {
-                Bucket = $"{left + 1}-{right}",
-                ActualGoals = actual,
-                ActualPct = actualPct,
-                WeibullExpectedPct = expectedPct
-            });
-        }
+        return edges;
     }
 
     private static WeibullEstimate EstimateWeibull(IReadOnlyList<double> values, int maxIterations, double tolerance)
     {
         double[] x = values.Where(v => v > 0).ToArray();
-        double meanLog = x.Select(Math.Log).Average();
+        double meanLog = x.Select(v => Math.Log(v)).Average();
         double varianceLog = x.Select(v => Math.Pow(Math.Log(v) - meanLog, 2)).Average();
         double k = varianceLog > 0 ? Math.PI / Math.Sqrt(6.0 * varianceLog) : 1.5;
         k = Math.Clamp(k, 0.15, 10.0);
@@ -295,6 +459,21 @@ public sealed class WeibullModelFitter
 
         return 1.0 - Math.Exp(-Math.Pow(minute / scaleLambda, shapeK));
     }
+
+    private static double NormalizedWeibullCdf(double minute, double shapeK, double scaleLambda, double cdfAtMaxMinute)
+    {
+        if (cdfAtMaxMinute <= 0)
+            return 0.0;
+
+        return Clamp01(WeibullCdf(minute, shapeK, scaleLambda) / cdfAtMaxMinute);
+    }
+
+    private static double Blend(double weibullValue, double empiricalValue, double weibullWeight)
+    {
+        return Clamp01(weibullWeight * weibullValue + (1.0 - weibullWeight) * empiricalValue);
+    }
+
+    private static double Clamp01(double value) => Math.Max(0.0, Math.Min(1.0, value));
 
     private static double Median(IReadOnlyList<double> values)
     {
