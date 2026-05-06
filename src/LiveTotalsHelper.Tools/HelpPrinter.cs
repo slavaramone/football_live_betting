@@ -12,6 +12,7 @@ public static class HelpPrinter
         Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
         Console.WriteLine("  build-weibull-dataset Export reliable goal-minute rows to CSV for Weibull fitting.");
         Console.WriteLine("  fit-weibull           Fit a league-wide Weibull timing model from a goal-minute CSV.");
+        Console.WriteLine("  backtest-timing-model Backtest score-state timing model using explicit training and test seasons.");
         Console.WriteLine();
         PrintDownloadSofaScore();
         Console.WriteLine();
@@ -22,6 +23,8 @@ public static class HelpPrinter
         PrintBuildWeibullDataset();
         Console.WriteLine();
         PrintFitWeibull();
+        Console.WriteLine();
+        PrintBacktestTimingModel();
     }
 
     public static int UnknownCommand(string command)
@@ -110,7 +113,7 @@ public static class HelpPrinter
         Console.WriteLine("  --include-unreliable true/false. Include matches where final score does not match goal events. Default: false");
         Console.WriteLine("  --max-examples       Maximum warning examples printed. Default: 20");
         Console.WriteLine();
-        Console.WriteLine("Output is one row per reliable goal event, designed for league-wide and opponent-wide Weibull fitting.");
+        Console.WriteLine("Output is one row per reliable goal event. It includes score-before and score-state fields for state-aware timing models.");
     }
 
 
@@ -128,11 +131,14 @@ public static class HelpPrinter
         Console.WriteLine("  --league             Optional league name stored in output model metadata.");
         Console.WriteLine("  --max-minute         Normalize CDF/remaining share to this match minute. Default: 90");
         Console.WriteLine("  --minute-column      CSV column to fit. Default: GoalMinuteForModel");
+        Console.WriteLine("  --group-by           Optional CSV column for state-aware fits, e.g. ScoreStateBefore, GoalTeamStateBefore, LeadingTeamBefore.");
+        Console.WriteLine("  --min-group-goals    Minimum goals required to fit a group model. Default: 30");
         Console.WriteLine("  --max-iterations     Maximum MLE iterations. Default: 100");
         Console.WriteLine("  --tolerance          MLE convergence tolerance. Default: 1e-9");
         Console.WriteLine("  --blend-weibull-weight Weight for blended model. Default: 0.30, so blend = 30% Weibull + 70% empirical.");
         Console.WriteLine();
         Console.WriteLine("Output JSON stores three timing models: pure Weibull, empirical bucket curve, and blended Weibull+empirical model.");
+        Console.WriteLine("Use --group-by ScoreStateBefore after rebuilding the dataset to produce Level/OneGoalMargin/TwoGoalMargin/ThreePlusGoalMargin models.");
     }
 
     public static void PrintValidateDb()
@@ -153,6 +159,33 @@ public static class HelpPrinter
         Console.WriteLine("  --max-examples       Maximum examples printed per check. Default: 20");
         Console.WriteLine();
         Console.WriteLine("Validation checks include score vs goal events, goal timing ranges, score progression, future fixtures with details, missing model stats, duplicated incidents and red-card stat consistency.");
+    }
+
+
+    public static void PrintBacktestTimingModel()
+    {
+        Console.WriteLine("Backtest timing model usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- backtest-timing-model \\");
+        Console.WriteLine("    --league \"NPL New South Wales\" \\");
+        Console.WriteLine("    --training-season-ids 48254,57783 \\");
+        Console.WriteLine("    --backtest-season-ids 71036 \\");
+        Console.WriteLine("    --minutes 15,30,45,60,75 \\");
+        Console.WriteLine("    --output data/backtests/npl-nsw-2023-2024-vs-2025.csv");
+        Console.WriteLine();
+        Console.WriteLine("Backtest timing model arguments:");
+        Console.WriteLine("  --league                 Optional league name or slug filter.");
+        Console.WriteLine("  --training-season-ids    Required comma-separated training season ids, e.g. 48254,57783.");
+        Console.WriteLine("  --backtest-season-ids    Required comma-separated backtest season ids, e.g. 71036.");
+        Console.WriteLine("  --minutes                Snapshot minutes. Default: 15,30,45,60,75.");
+        Console.WriteLine("  --round                  Optional single round filter applied to train and backtest sets.");
+        Console.WriteLine("  --from-round             Optional first round filter.");
+        Console.WriteLine("  --to-round               Optional last round filter.");
+        Console.WriteLine("  --min-training-snapshots Minimum exact minute+state training snapshots before fallback. Default: 20.");
+        Console.WriteLine("  --max-model-minute       Cap goal minutes at this value. Default: 90.");
+        Console.WriteLine("  --include-unreliable     true/false. Include matches where final score does not match goal events. Default: false.");
+        Console.WriteLine("  --output                 Optional CSV path for per-snapshot predictions.");
+        Console.WriteLine();
+        Console.WriteLine("This is not a betting/odds backtest. It tests whether score-state timing estimates trained on selected seasons predict actual remaining goals in held-out seasons.");
     }
 
 }

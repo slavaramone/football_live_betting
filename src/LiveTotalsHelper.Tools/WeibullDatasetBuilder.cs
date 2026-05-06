@@ -119,9 +119,33 @@ public sealed class WeibullDatasetBuilder
             }
 
             int goalIndex = 0;
+            int runningHome = 0;
+            int runningAway = 0;
+
             foreach (MatchEventEntity goal in matchGoals)
             {
                 goalIndex++;
+
+                int scoreBeforeHome = runningHome;
+                int scoreBeforeAway = runningAway;
+                int scoreBeforeTotal = scoreBeforeHome + scoreBeforeAway;
+                int goalDiffBefore = scoreBeforeHome - scoreBeforeAway;
+                int absGoalDiffBefore = Math.Abs(goalDiffBefore);
+                string scoreStateBefore = ScoreState(absGoalDiffBefore);
+                string leadingTeamBefore = goalDiffBefore > 0 ? "Home" : goalDiffBefore < 0 ? "Away" : "Level";
+                bool goalTeamWasHome = goal.IsHome;
+                string goalTeamStateBefore = GoalTeamStateBefore(goalTeamWasHome, goalDiffBefore);
+
+                if (goal.IsHome)
+                    runningHome++;
+                else
+                    runningAway++;
+
+                int scoreAfterHome = runningHome;
+                int scoreAfterAway = runningAway;
+                int goalDiffAfter = scoreAfterHome - scoreAfterAway;
+                string scoreStateAfter = ScoreState(Math.Abs(goalDiffAfter));
+
                 int rawMinute = goal.Minute;
                 int modelMinute = ComputeModelMinute(goal, _options.MaxModelMinute);
 
@@ -150,8 +174,25 @@ public sealed class WeibullDatasetBuilder
                     GoalTimeSeconds = goal.TimeSeconds,
                     GoalMinuteForModel = modelMinute,
                     IsHomeGoal = goal.IsHome,
-                    HomeScoreAfterGoal = goal.HomeScore,
-                    AwayScoreAfterGoal = goal.AwayScore,
+                    ScoreBeforeHome = scoreBeforeHome,
+                    ScoreBeforeAway = scoreBeforeAway,
+                    ScoreBeforeTotalGoals = scoreBeforeTotal,
+                    GoalDifferenceBefore = goalDiffBefore,
+                    AbsGoalDifferenceBefore = absGoalDiffBefore,
+                    ScoreStateBefore = scoreStateBefore,
+                    LeadingTeamBefore = leadingTeamBefore,
+                    GoalTeamStateBefore = goalTeamStateBefore,
+                    HomeScoreAfterGoalModel = scoreAfterHome,
+                    AwayScoreAfterGoalModel = scoreAfterAway,
+                    ScoreAfterTotalGoals = scoreAfterHome + scoreAfterAway,
+                    GoalDifferenceAfter = goalDiffAfter,
+                    ScoreStateAfter = scoreStateAfter,
+                    IsEqualizer = goalDiffBefore != 0 && goalDiffAfter == 0,
+                    IsGoAheadGoal = goalDiffBefore == 0 && goalDiffAfter != 0,
+                    IsGoalByTrailingTeam = goalTeamStateBefore == "Trailing",
+                    IsGoalByLeadingTeam = goalTeamStateBefore == "Leading",
+                    SofaScoreHomeScoreAfterGoal = goal.HomeScore,
+                    SofaScoreAwayScoreAfterGoal = goal.AwayScore,
                     IncidentClass = goal.IncidentClass,
                     PlayerName = goal.PlayerName,
                     AssistPlayerName = goal.AssistPlayerName,
@@ -180,6 +221,27 @@ public sealed class WeibullDatasetBuilder
         return string.Equals(match.StatusType, "finished", StringComparison.OrdinalIgnoreCase)
             || string.Equals(match.StatusDescription, "Ended", StringComparison.OrdinalIgnoreCase)
             || string.Equals(match.StatusDescription, "Finished", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ScoreState(int absGoalDiffBefore)
+    {
+        return absGoalDiffBefore switch
+        {
+            0 => "Level",
+            1 => "OneGoalMargin",
+            2 => "TwoGoalMargin",
+            _ => "ThreePlusGoalMargin"
+        };
+    }
+
+    private static string GoalTeamStateBefore(bool goalByHome, int goalDiffBefore)
+    {
+        if (goalDiffBefore == 0)
+            return "Level";
+
+        bool homeLeading = goalDiffBefore > 0;
+        bool goalTeamLeading = goalByHome == homeLeading;
+        return goalTeamLeading ? "Leading" : "Trailing";
     }
 
     private static int ComputeModelMinute(MatchEventEntity goal, int maxModelMinute)
@@ -275,8 +337,25 @@ public sealed class WeibullDatasetBuilder
                 row.GoalTimeSeconds?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
                 row.GoalMinuteForModel.ToString(CultureInfo.InvariantCulture),
                 row.IsHomeGoal ? "1" : "0",
-                row.HomeScoreAfterGoal?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-                row.AwayScoreAfterGoal?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                row.ScoreBeforeHome.ToString(CultureInfo.InvariantCulture),
+                row.ScoreBeforeAway.ToString(CultureInfo.InvariantCulture),
+                row.ScoreBeforeTotalGoals.ToString(CultureInfo.InvariantCulture),
+                row.GoalDifferenceBefore.ToString(CultureInfo.InvariantCulture),
+                row.AbsGoalDifferenceBefore.ToString(CultureInfo.InvariantCulture),
+                row.ScoreStateBefore,
+                row.LeadingTeamBefore,
+                row.GoalTeamStateBefore,
+                row.HomeScoreAfterGoalModel.ToString(CultureInfo.InvariantCulture),
+                row.AwayScoreAfterGoalModel.ToString(CultureInfo.InvariantCulture),
+                row.ScoreAfterTotalGoals.ToString(CultureInfo.InvariantCulture),
+                row.GoalDifferenceAfter.ToString(CultureInfo.InvariantCulture),
+                row.ScoreStateAfter,
+                row.IsEqualizer ? "1" : "0",
+                row.IsGoAheadGoal ? "1" : "0",
+                row.IsGoalByTrailingTeam ? "1" : "0",
+                row.IsGoalByLeadingTeam ? "1" : "0",
+                row.SofaScoreHomeScoreAfterGoal?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                row.SofaScoreAwayScoreAfterGoal?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
                 row.IncidentClass,
                 row.PlayerName,
                 row.AssistPlayerName,
@@ -322,8 +401,25 @@ public sealed class WeibullDatasetBuilder
         "GoalTimeSeconds",
         "GoalMinuteForModel",
         "IsHomeGoal",
-        "HomeScoreAfterGoal",
-        "AwayScoreAfterGoal",
+        "ScoreBeforeHome",
+        "ScoreBeforeAway",
+        "ScoreBeforeTotalGoals",
+        "GoalDifferenceBefore",
+        "AbsGoalDifferenceBefore",
+        "ScoreStateBefore",
+        "LeadingTeamBefore",
+        "GoalTeamStateBefore",
+        "HomeScoreAfterGoalModel",
+        "AwayScoreAfterGoalModel",
+        "ScoreAfterTotalGoals",
+        "GoalDifferenceAfter",
+        "ScoreStateAfter",
+        "IsEqualizer",
+        "IsGoAheadGoal",
+        "IsGoalByTrailingTeam",
+        "IsGoalByLeadingTeam",
+        "SofaScoreHomeScoreAfterGoal",
+        "SofaScoreAwayScoreAfterGoal",
         "IncidentClass",
         "PlayerName",
         "AssistPlayerName",
@@ -356,8 +452,25 @@ internal sealed class WeibullGoalDatasetRow
     public int? GoalTimeSeconds { get; set; }
     public int GoalMinuteForModel { get; set; }
     public bool IsHomeGoal { get; set; }
-    public int? HomeScoreAfterGoal { get; set; }
-    public int? AwayScoreAfterGoal { get; set; }
+    public int ScoreBeforeHome { get; set; }
+    public int ScoreBeforeAway { get; set; }
+    public int ScoreBeforeTotalGoals { get; set; }
+    public int GoalDifferenceBefore { get; set; }
+    public int AbsGoalDifferenceBefore { get; set; }
+    public string ScoreStateBefore { get; set; } = string.Empty;
+    public string LeadingTeamBefore { get; set; } = string.Empty;
+    public string GoalTeamStateBefore { get; set; } = string.Empty;
+    public int HomeScoreAfterGoalModel { get; set; }
+    public int AwayScoreAfterGoalModel { get; set; }
+    public int ScoreAfterTotalGoals { get; set; }
+    public int GoalDifferenceAfter { get; set; }
+    public string ScoreStateAfter { get; set; } = string.Empty;
+    public bool IsEqualizer { get; set; }
+    public bool IsGoAheadGoal { get; set; }
+    public bool IsGoalByTrailingTeam { get; set; }
+    public bool IsGoalByLeadingTeam { get; set; }
+    public int? SofaScoreHomeScoreAfterGoal { get; set; }
+    public int? SofaScoreAwayScoreAfterGoal { get; set; }
     public string IncidentClass { get; set; } = string.Empty;
     public string PlayerName { get; set; } = string.Empty;
     public string AssistPlayerName { get; set; } = string.Empty;

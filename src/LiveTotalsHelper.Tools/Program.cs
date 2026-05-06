@@ -23,6 +23,7 @@ try
         "validate-db" => await RunValidateDb(commandArgs),
         "build-weibull-dataset" => await RunBuildWeibullDataset(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
+        "backtest-timing-model" => await RunBacktestTimingModel(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -143,6 +144,8 @@ static async Task<int> RunFitWeibull(string[] args)
         League = parsed.String("league", string.Empty),
         MaxMinute = parsed.Int("max-minute", 90),
         MinuteColumn = parsed.String("minute-column", "GoalMinuteForModel"),
+        GroupByColumn = parsed.String("group-by", string.Empty),
+        MinGroupGoals = parsed.Int("min-group-goals", 30),
         MaxIterations = parsed.Int("max-iterations", 100),
         Tolerance = parsed.Double("tolerance", 1e-9),
         BlendWeibullWeight = parsed.Double("blend-weibull-weight", 0.30)
@@ -166,6 +169,8 @@ static async Task<int> RunFitWeibull(string[] args)
     Console.WriteLine($"Log-likelihood: {result.LogLikelihood:0.###}");
     Console.WriteLine($"CDF at max minute ({result.MaxMinute}): {result.CdfAtMaxMinute:P2}");
     Console.WriteLine($"Blend weights: Weibull {result.BlendWeibullWeight:P0}, Empirical {result.BlendEmpiricalWeight:P0}");
+    if (!string.IsNullOrWhiteSpace(result.GroupByColumn))
+        Console.WriteLine($"Group by: {result.GroupByColumn} ({result.Groups.Count} fitted groups)");
 
     Console.WriteLine();
     Console.WriteLine("Minute checkpoints, remaining share by model:");
@@ -185,6 +190,20 @@ static async Task<int> RunFitWeibull(string[] args)
     foreach (TimingModelFitScore score in result.FitScores.OrderBy(x => x.MeanAbsoluteBucketError))
         Console.WriteLine($"{score.Model,-9}   {score.MeanAbsoluteBucketError,7:P2}   {score.RootMeanSquaredBucketError,7:P2}   {score.MaxAbsoluteBucketError,7:P2}");
 
+
+    if (result.Groups.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Grouped timing models:");
+        Console.WriteLine("Group                 Goals  Matches  MeanMin  k        Lambda   Emp75Rem  Best");
+        foreach (TimingModelGroupResult group in result.Groups.OrderByDescending(x => x.GoalCount))
+        {
+            TimingMinuteCheckpoint? cp75 = group.Checkpoints.FirstOrDefault(x => x.Minute == 75);
+            string best = group.FitScores.OrderBy(x => x.MeanAbsoluteBucketError).FirstOrDefault()?.Model ?? "n/a";
+            Console.WriteLine($"{group.GroupName,-20} {group.GoalCount,5}  {group.MatchCount,7}  {group.MeanGoalMinute,7:0.00}  {group.ShapeK,7:0.####}  {group.ScaleLambda,7:0.##}  {cp75?.EmpiricalRemainingShare ?? 0,8:P1}  {best}");
+        }
+    }
+
     if (result.Warnings.Count > 0)
     {
         Console.WriteLine();
@@ -194,6 +213,77 @@ static async Task<int> RunFitWeibull(string[] args)
     }
 
     return 0;
+}
+
+
+static async Task<int> RunBacktestTimingModel(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    var options = new TimingBacktestOptions
+    {
+        League = parsed.String("league", string.Empty),
+        MaxModelMinute = parsed.Int("max-model-minute", 90),
+        MinTrainingSnapshots = parsed.Int("min-training-snapshots", 20),
+        IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
+        OutputPath = parsed.String("output", string.Empty)
+    };
+
+    AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
+    AddRequiredIntList(options.BacktestSeasonIds, parsed, "backtest-season-ids");
+    AddOptionalIntList(options.SnapshotMinutes, parsed, "minutes", clearExisting: true);
+
+    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
+        AddRounds(options.Rounds, parsed);
+
+    IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+
+    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
+    var backtester = new TimingModelBacktester(dbContext, options);
+    TimingBacktestResult result = await backtester.RunAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Timing model backtest done.");
+    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(options.League) ? "all" : options.League)}");
+    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
+    Console.WriteLine($"Backtest seasons: {string.Join(", ", result.BacktestSeasonIds)}");
+    Console.WriteLine($"Training matches checked: {result.TrainingMatchesChecked}");
+    Console.WriteLine($"Training reliable matches: {result.TrainingReliableMatches}");
+    Console.WriteLine($"Backtest matches checked: {result.BacktestMatchesChecked}");
+    Console.WriteLine($"Backtest reliable matches: {result.BacktestReliableMatches}");
+    Console.WriteLine($"Training snapshots: {result.TrainingSnapshots}");
+    Console.WriteLine($"Backtest snapshots: {result.BacktestSnapshots}");
+    if (!string.IsNullOrWhiteSpace(result.OutputPath))
+        Console.WriteLine($"Prediction CSV: {result.OutputPath}");
+
+    PrintBacktestTable("Overall", result.OverallRows);
+    PrintBacktestTable("By minute", result.ByMinuteRows);
+    PrintBacktestTable("By score state", result.ByStateRows);
+    PrintBacktestTable("By minute and score state", result.ByMinuteAndStateRows);
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
+    }
+
+    return 0;
+}
+
+static void PrintBacktestTable(string title, IReadOnlyList<TimingBacktestSummaryRow> rows)
+{
+    Console.WriteLine();
+    Console.WriteLine(title + ":");
+    Console.WriteLine("Group                         N   PredRem   ActRem     Bias      MAE     RMSE");
+    foreach (TimingBacktestSummaryRow row in rows)
+    {
+        Console.WriteLine($"{row.Group,-28} {row.Count,4}  {row.AvgPredictedRemainingGoals,8:0.000}  {row.AvgActualRemainingGoals,7:0.000}  {row.Bias,7:0.000}  {row.MeanAbsoluteError,7:0.000}  {row.RootMeanSquaredError,7:0.000}");
+    }
 }
 
 static async Task<int> RunValidateDb(string[] args)
@@ -457,6 +547,35 @@ static string FormatImportException(Exception exception)
     }
 
     return string.Join(Environment.NewLine, lines);
+}
+
+
+static void AddRequiredIntList(ICollection<int> target, ParsedArgs parsed, string argumentName)
+{
+    string raw = parsed.RequiredString(argumentName);
+    AddIntList(target, raw, argumentName, clearExisting: false);
+}
+
+static void AddOptionalIntList(ICollection<int> target, ParsedArgs parsed, string argumentName, bool clearExisting)
+{
+    if (!parsed.Has(argumentName))
+        return;
+
+    string raw = parsed.RequiredString(argumentName);
+    AddIntList(target, raw, argumentName, clearExisting);
+}
+
+static void AddIntList(ICollection<int> target, string raw, string argumentName, bool clearExisting)
+{
+    if (clearExisting)
+        target.Clear();
+
+    foreach (string token in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (!int.TryParse(token, out int value))
+            throw new ArgumentException($"Argument --{argumentName} must contain comma-separated integers.");
+        target.Add(value);
+    }
 }
 
 static void AddSeasonIds(List<int> seasonIds, ParsedArgs parsed)
