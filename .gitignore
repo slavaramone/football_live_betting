@@ -13,3 +13,4 @@
 /src/LiveTotalsHelper.Modeling/obj
 /src/LiveTotalsHelper.Tools/bin/Debug/net8.0
 /src/LiveTotalsHelper.Tools/obj
+/src/LiveTotalsHelper.Tools/appsettings.json

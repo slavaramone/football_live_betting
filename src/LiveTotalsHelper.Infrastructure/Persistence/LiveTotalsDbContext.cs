@@ -66,7 +66,7 @@ public sealed class LiveTotalsDbContext : DbContext
         {
             entity.ToTable("MatchTeamStats");
             entity.HasKey(x => x.Id);
-            entity.HasIndex(x => new { x.MatchId, x.Period, x.Key }).IsUnique();
+            entity.HasIndex(x => new { x.MatchId, x.Period, x.GroupName, x.Key }).IsUnique();
             entity.HasIndex(x => new { x.SofaScoreEventId, x.Period });
 
             entity.Property(x => x.Period).HasMaxLength(30).IsRequired();

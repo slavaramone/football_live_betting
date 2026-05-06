@@ -110,7 +110,7 @@ partial class LiveTotalsDbContextModelSnapshot : ModelSnapshot
             b.Property<double?>("AwayTotal").HasColumnType("double precision");
             b.Property<string>("StatisticsJsonPath").IsRequired().HasMaxLength(1000).HasColumnType("character varying(1000)");
             b.HasKey("Id");
-            b.HasIndex("MatchId", "Period", "Key").IsUnique();
+            b.HasIndex("MatchId", "Period", "GroupName", "Key").IsUnique();
             b.HasIndex("SofaScoreEventId", "Period");
             b.ToTable("MatchTeamStats");
         });

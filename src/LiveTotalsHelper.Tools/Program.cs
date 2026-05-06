@@ -79,6 +79,7 @@ static async Task<int> RunImportSofaScore(string[] args)
     int tournamentId = parsed.Int("tournament-id", 0);
     int seasonId = parsed.RequiredInt("season-id");
     string inputRoot = parsed.String("input", parsed.String("output", "data/sofascore"));
+    bool debugImport = parsed.Bool("debug-import", false);
 
     var rounds = new List<int>();
     if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
@@ -92,7 +93,7 @@ static async Task<int> RunImportSofaScore(string[] args)
     await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
     var importer = new SofaScoreDbImporter(dbContext);
 
-    SofaScoreImportResult result = await ImportSofaScoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, Console.Out, CancellationToken.None);
+    SofaScoreImportResult result = await ImportSofaScoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, debugImport, Console.Out, CancellationToken.None);
 
     Console.WriteLine();
     Console.WriteLine("Import done.");
@@ -129,6 +130,7 @@ static async Task<SofaScoreImportResult> ImportSofaScoreFolderAsync(
     int tournamentId,
     int seasonId,
     IReadOnlyCollection<int> requestedRounds,
+    bool debugImport,
     TextWriter log,
     CancellationToken cancellationToken)
 {
@@ -180,13 +182,16 @@ static async Task<SofaScoreImportResult> ImportSofaScoreFolderAsync(
         try
         {
             string calendarJson = await File.ReadAllTextAsync(calendarPath, cancellationToken);
+            if (debugImport)
+                await log.WriteLineAsync($"  calendar: {calendarPath}");
+
             await importer.ImportCalendarAsync(calendarJson, tournamentId, seasonId, round, calendarPath, cancellationToken);
             result.CalendarsImported++;
             result.RoundsImported++;
         }
         catch (Exception ex)
         {
-            result.Failures.Add($"round {round}: calendar import failed: {ex.Message}");
+            result.Failures.Add($"round {round}: calendar import failed:{Environment.NewLine}{FormatImportException(ex)}");
             continue;
         }
 
@@ -212,12 +217,15 @@ static async Task<SofaScoreImportResult> ImportSofaScoreFolderAsync(
                 try
                 {
                     string json = await File.ReadAllTextAsync(incidentsPath, cancellationToken);
+                    if (debugImport)
+                        await log.WriteLineAsync($"  event {eventId}: incidents {incidentsPath}");
+
                     await importer.ImportIncidentsAsync(eventId, json, incidentsPath, cancellationToken);
                     result.IncidentsImported++;
                 }
                 catch (Exception ex)
                 {
-                    result.Warnings.Add($"event {eventId}: incidents import failed: {ex.Message}");
+                    result.Warnings.Add($"event {eventId}: incidents import failed:{Environment.NewLine}{FormatImportException(ex)}");
                 }
             }
 
@@ -227,18 +235,38 @@ static async Task<SofaScoreImportResult> ImportSofaScoreFolderAsync(
                 try
                 {
                     string json = await File.ReadAllTextAsync(statisticsPath, cancellationToken);
+                    if (debugImport)
+                        await log.WriteLineAsync($"  event {eventId}: statistics {statisticsPath}");
+
                     await importer.ImportStatisticsAsync(eventId, json, statisticsPath, cancellationToken);
                     result.StatisticsImported++;
                 }
                 catch (Exception ex)
                 {
-                    result.Warnings.Add($"event {eventId}: statistics import failed: {ex.Message}");
+                    result.Warnings.Add($"event {eventId}: statistics import failed:{Environment.NewLine}{FormatImportException(ex)}");
                 }
             }
         }
     }
 
     return result;
+}
+
+
+static string FormatImportException(Exception exception)
+{
+    var lines = new List<string>();
+    Exception? current = exception;
+    int depth = 0;
+    while (current is not null && depth < 8)
+    {
+        string prefix = depth == 0 ? string.Empty : $"Inner[{depth}]: ";
+        lines.Add($"{prefix}{current.GetType().FullName}: {current.Message}");
+        current = current.InnerException;
+        depth++;
+    }
+
+    return string.Join(Environment.NewLine, lines);
 }
 
 static void AddRounds(ICollection<int> target, ParsedArgs parsed)

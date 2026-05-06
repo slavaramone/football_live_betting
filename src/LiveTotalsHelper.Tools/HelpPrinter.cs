@@ -70,6 +70,7 @@ public static class HelpPrinter
         Console.WriteLine("  --from-round         First round when importing a range.");
         Console.WriteLine("  --to-round           Last round when importing a range.");
         Console.WriteLine("  --input              Input root where JSON was downloaded. Default: data/sofascore");
+        Console.WriteLine("  --debug-import       true/false. Prints every file before importing and returns detailed DB errors. Default: false");
         Console.WriteLine();
         Console.WriteLine("Database:");
         Console.WriteLine("  Connection string: src/LiveTotalsHelper.Tools/appsettings.json");

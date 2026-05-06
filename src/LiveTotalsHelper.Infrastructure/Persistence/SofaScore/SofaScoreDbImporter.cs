@@ -1,7 +1,10 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using LiveTotalsHelper.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Npgsql;
 
 namespace LiveTotalsHelper.Infrastructure.Persistence.SofaScore;
 
@@ -29,7 +32,7 @@ public sealed class SofaScoreDbImporter
         foreach (JsonElement eventElement in eventsElement.EnumerateArray())
             await UpsertCalendarEventAsync(eventElement, tournamentId, seasonId, requestedRound, calendarFilePath, cancellationToken);
 
-        await _db.SaveChangesAsync(cancellationToken);
+        await SaveChangesWithDiagnosticsAsync($"calendar round={requestedRound} file={calendarFilePath}", cancellationToken);
     }
 
     public async Task ImportIncidentsAsync(long sofaScoreEventId, string incidentsJson, string incidentsFilePath, CancellationToken cancellationToken)
@@ -44,7 +47,7 @@ public sealed class SofaScoreDbImporter
         using JsonDocument document = JsonDocument.Parse(incidentsJson);
         if (!document.RootElement.TryGetProperty("incidents", out JsonElement incidentsElement) || incidentsElement.ValueKind != JsonValueKind.Array)
         {
-            await _db.SaveChangesAsync(cancellationToken);
+            await SaveChangesWithDiagnosticsAsync($"incidents empty event={sofaScoreEventId} file={incidentsFilePath}", cancellationToken);
             return;
         }
 
@@ -77,7 +80,7 @@ public sealed class SofaScoreDbImporter
             _db.MatchEvents.Add(matchEvent);
         }
 
-        await _db.SaveChangesAsync(cancellationToken);
+        await SaveChangesWithDiagnosticsAsync($"incidents event={sofaScoreEventId} file={incidentsFilePath}", cancellationToken);
     }
 
     public async Task ImportStatisticsAsync(long sofaScoreEventId, string statisticsJson, string statisticsFilePath, CancellationToken cancellationToken)
@@ -92,7 +95,7 @@ public sealed class SofaScoreDbImporter
         using JsonDocument document = JsonDocument.Parse(statisticsJson);
         if (!document.RootElement.TryGetProperty("statistics", out JsonElement statisticsElement) || statisticsElement.ValueKind != JsonValueKind.Array)
         {
-            await _db.SaveChangesAsync(cancellationToken);
+            await SaveChangesWithDiagnosticsAsync($"statistics empty event={sofaScoreEventId} file={statisticsFilePath}", cancellationToken);
             return;
         }
 
@@ -136,7 +139,104 @@ public sealed class SofaScoreDbImporter
             }
         }
 
-        await _db.SaveChangesAsync(cancellationToken);
+        await SaveChangesWithDiagnosticsAsync($"statistics event={sofaScoreEventId} file={statisticsFilePath}", cancellationToken);
+    }
+
+
+    private async Task SaveChangesWithDiagnosticsAsync(string operation, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex)
+        {
+            string message = BuildDbUpdateDiagnosticMessage(operation, ex);
+            _db.ChangeTracker.Clear();
+            throw new InvalidOperationException(message, ex);
+        }
+        catch
+        {
+            _db.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
+    private string BuildDbUpdateDiagnosticMessage(string operation, DbUpdateException ex)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"DB save failed during {operation}.");
+        builder.AppendLine($"Exception: {ex.GetType().Name}: {ex.Message}");
+
+        PostgresException? postgresException = FindPostgresException(ex);
+        if (postgresException is not null)
+        {
+            builder.AppendLine("PostgreSQL details:");
+            builder.AppendLine($"  SqlState: {postgresException.SqlState}");
+            builder.AppendLine($"  Severity: {postgresException.Severity}");
+            builder.AppendLine($"  MessageText: {postgresException.MessageText}");
+            builder.AppendLine($"  Detail: {postgresException.Detail}");
+            builder.AppendLine($"  Hint: {postgresException.Hint}");
+            builder.AppendLine($"  SchemaName: {postgresException.SchemaName}");
+            builder.AppendLine($"  TableName: {postgresException.TableName}");
+            builder.AppendLine($"  ColumnName: {postgresException.ColumnName}");
+            builder.AppendLine($"  ConstraintName: {postgresException.ConstraintName}");
+        }
+
+        if (ex.Entries.Count > 0)
+        {
+            builder.AppendLine("EF entries involved:");
+            foreach (EntityEntry entry in ex.Entries)
+            {
+                builder.AppendLine($"  {entry.Entity.GetType().Name} State={entry.State}");
+                AppendEntityPreview(builder, entry.Entity);
+            }
+        }
+
+        builder.AppendLine("Inner exception chain:");
+        Exception? current = ex;
+        int depth = 0;
+        while (current is not null && depth < 8)
+        {
+            builder.AppendLine($"  [{depth}] {current.GetType().FullName}: {current.Message}");
+            current = current.InnerException;
+            depth++;
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static PostgresException? FindPostgresException(Exception exception)
+    {
+        Exception? current = exception;
+        while (current is not null)
+        {
+            if (current is PostgresException postgresException)
+                return postgresException;
+
+            current = current.InnerException;
+        }
+
+        return null;
+    }
+
+    private static void AppendEntityPreview(StringBuilder builder, object entity)
+    {
+        switch (entity)
+        {
+            case MatchEntity match:
+                builder.AppendLine($"    Match: EventId={match.SofaScoreEventId}, Tournament={match.SofaScoreUniqueTournamentId}, Season={match.SofaScoreSeasonId}, Round={match.RoundNumber}, {match.HomeTeamName} vs {match.AwayTeamName}, Status={match.StatusType}, Start={match.StartTimeUtc:O}");
+                break;
+            case MatchEventEntity matchEvent:
+                builder.AppendLine($"    MatchEvent: MatchId={matchEvent.MatchId}, EventId={matchEvent.SofaScoreEventId}, IncidentId={matchEvent.SofaScoreIncidentId}, Type={matchEvent.IncidentType}, Class={matchEvent.IncidentClass}, Minute={matchEvent.Minute}, Player={matchEvent.PlayerName}");
+                break;
+            case MatchTeamStatEntity stat:
+                builder.AppendLine($"    MatchTeamStat: MatchId={stat.MatchId}, EventId={stat.SofaScoreEventId}, Period={stat.Period}, Group={stat.GroupName}, Key={stat.Key}, Name={stat.Name}, HomeRaw={stat.HomeRaw}, AwayRaw={stat.AwayRaw}");
+                break;
+            default:
+                builder.AppendLine($"    Entity: {entity}");
+                break;
+        }
     }
 
     private async Task UpsertCalendarEventAsync(JsonElement eventElement, int requestedTournamentId, int requestedSeasonId, int requestedRound, string calendarFilePath, CancellationToken cancellationToken)
