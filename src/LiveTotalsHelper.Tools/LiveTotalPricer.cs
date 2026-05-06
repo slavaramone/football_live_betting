@@ -23,6 +23,7 @@ public sealed class LiveTotalPriceOptions
     public string VolumeFactorSource { get; set; } = "manual/default";
     public List<double> TargetLines { get; } = [1.5, 2.0, 2.5, 3.0];
     public Dictionary<double, double> LiveOverOddsByLine { get; } = new();
+    public Dictionary<double, double> LiveUnderOddsByLine { get; } = new();
 }
 
 public sealed class LiveTotalPriceResult
@@ -67,9 +68,18 @@ public sealed class LiveTotalLinePrice
     public double PushProbability { get; set; }
     public double LossProbability { get; set; }
     public double FairOdds { get; set; }
+    public double UnderWinProbability => LossProbability;
+    public double UnderPushProbability => PushProbability;
+    public double UnderLossProbability => WinProbability;
+    public double FairUnderOdds { get; set; }
     public double? BookOverOdds { get; set; }
-    public double? Edge { get; set; }
-    public double? ExpectedValue { get; set; }
+    public double? BookUnderOdds { get; set; }
+    public double? OverEdge { get; set; }
+    public double? OverExpectedValue { get; set; }
+    public double? UnderEdge { get; set; }
+    public double? UnderExpectedValue { get; set; }
+    public string OverDecision { get; set; } = string.Empty;
+    public string UnderDecision { get; set; } = string.Empty;
     public string Decision { get; set; } = string.Empty;
 }
 
@@ -161,33 +171,47 @@ public sealed class LiveTotalPricer
         foreach (double line in _options.TargetLines.Distinct().OrderBy(x => x))
         {
             OverSettlementProbabilities probabilities = TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(line, result.CurrentGoals, remainingXg);
-            double fairOdds = TotalGoalsPricingCalculator.CalculateFairOdds(probabilities);
-            _options.LiveOverOddsByLine.TryGetValue(NormalizeLineKey(line), out double bookOdds);
-            bool hasBookOdds = bookOdds > 1.0;
+            double fairOverOdds = TotalGoalsPricingCalculator.CalculateFairOdds(probabilities);
+            double fairUnderOdds = TotalGoalsPricingCalculator.CalculateFairOdds(new OverSettlementProbabilities(
+                probabilities.LossProbability,
+                probabilities.PushProbability,
+                probabilities.WinProbability));
 
-            double? edge = null;
-            double? ev = null;
-            string decision;
-            if (!hasBookOdds)
+            double normalizedLine = NormalizeLineKey(line);
+            _options.LiveOverOddsByLine.TryGetValue(normalizedLine, out double bookOverOdds);
+            _options.LiveUnderOddsByLine.TryGetValue(normalizedLine, out double bookUnderOdds);
+            bool hasBookOverOdds = bookOverOdds > 1.0;
+            bool hasBookUnderOdds = bookUnderOdds > 1.0;
+
+            double? overEdge = null;
+            double? overEv = null;
+            string overDecision;
+            if (!hasBookOverOdds)
             {
-                decision = "NO ODDS";
+                overDecision = "NO ODDS";
             }
             else
             {
-                edge = fairOdds > 0 && !double.IsInfinity(fairOdds) ? bookOdds / fairOdds - 1.0 : null;
-                ev = probabilities.WinProbability * (bookOdds - 1.0) - probabilities.LossProbability;
-
-                if (result.HasRecentGoal)
-                    decision = "WAIT";
-                else if (_options.HomeRedCards + _options.AwayRedCards > 0)
-                    decision = edge >= _options.EdgeThreshold ? "MANUAL REVIEW" : "NO BET";
-                else if (edge >= _options.EdgeThreshold)
-                    decision = "BET OVER";
-                else if (edge >= _options.EdgeThreshold / 2.0)
-                    decision = "LEAN OVER";
-                else
-                    decision = "NO BET";
+                overEdge = fairOverOdds > 0 && !double.IsInfinity(fairOverOdds) ? bookOverOdds / fairOverOdds - 1.0 : null;
+                overEv = probabilities.WinProbability * (bookOverOdds - 1.0) - probabilities.LossProbability;
+                overDecision = BuildSideDecision(overEdge, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "OVER");
             }
+
+            double? underEdge = null;
+            double? underEv = null;
+            string underDecision;
+            if (!hasBookUnderOdds)
+            {
+                underDecision = "NO ODDS";
+            }
+            else
+            {
+                underEdge = fairUnderOdds > 0 && !double.IsInfinity(fairUnderOdds) ? bookUnderOdds / fairUnderOdds - 1.0 : null;
+                underEv = probabilities.LossProbability * (bookUnderOdds - 1.0) - probabilities.WinProbability;
+                underDecision = BuildSideDecision(underEdge, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "UNDER");
+            }
+
+            string decision = SelectBestDecision(overEdge, overDecision, underEdge, underDecision);
 
             result.Lines.Add(new LiveTotalLinePrice
             {
@@ -195,15 +219,55 @@ public sealed class LiveTotalPricer
                 WinProbability = probabilities.WinProbability,
                 PushProbability = probabilities.PushProbability,
                 LossProbability = probabilities.LossProbability,
-                FairOdds = fairOdds,
-                BookOverOdds = hasBookOdds ? bookOdds : null,
-                Edge = edge,
-                ExpectedValue = ev,
+                FairOdds = fairOverOdds,
+                FairUnderOdds = fairUnderOdds,
+                BookOverOdds = hasBookOverOdds ? bookOverOdds : null,
+                BookUnderOdds = hasBookUnderOdds ? bookUnderOdds : null,
+                OverEdge = overEdge,
+                OverExpectedValue = overEv,
+                UnderEdge = underEdge,
+                UnderExpectedValue = underEv,
+                OverDecision = overDecision,
+                UnderDecision = underDecision,
                 Decision = decision
             });
         }
 
         return result;
+    }
+
+    private string BuildSideDecision(double? edge, bool hasRecentGoal, bool hasRedCard, string side)
+    {
+        if (!edge.HasValue)
+            return "NO ODDS";
+        if (hasRecentGoal)
+            return "WAIT";
+        if (hasRedCard)
+            return edge >= _options.EdgeThreshold ? "MANUAL REVIEW" : "NO BET";
+        if (edge >= _options.EdgeThreshold)
+            return $"BET {side}";
+        if (edge >= _options.EdgeThreshold / 2.0)
+            return $"LEAN {side}";
+        return "NO BET";
+    }
+
+    private static string SelectBestDecision(double? overEdge, string overDecision, double? underEdge, string underDecision)
+    {
+        bool overAction = overDecision.StartsWith("BET ", StringComparison.OrdinalIgnoreCase) || overDecision.StartsWith("LEAN ", StringComparison.OrdinalIgnoreCase) || overDecision.Equals("MANUAL REVIEW", StringComparison.OrdinalIgnoreCase);
+        bool underAction = underDecision.StartsWith("BET ", StringComparison.OrdinalIgnoreCase) || underDecision.StartsWith("LEAN ", StringComparison.OrdinalIgnoreCase) || underDecision.Equals("MANUAL REVIEW", StringComparison.OrdinalIgnoreCase);
+
+        if (overAction && underAction)
+        {
+            double o = overEdge ?? double.NegativeInfinity;
+            double u = underEdge ?? double.NegativeInfinity;
+            return o >= u ? overDecision : underDecision;
+        }
+
+        if (overAction) return overDecision;
+        if (underAction) return underDecision;
+        if (overDecision == "WAIT" || underDecision == "WAIT") return "WAIT";
+        if (overDecision == "NO ODDS" && underDecision == "NO ODDS") return "NO ODDS";
+        return "NO BET";
     }
 
     private void ValidateOptions()

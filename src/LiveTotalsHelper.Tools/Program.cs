@@ -271,7 +271,9 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     bool explicitTargetLines = parsed.Has("target-lines");
     AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
     AddLiveOverOdds(options.LiveOverOddsByLine, parsed);
+    AddLiveUnderOdds(options.LiveUnderOddsByLine, parsed);
     AddLiveOddsLinesToTargets(options.TargetLines, options.LiveOverOddsByLine, explicitTargetLines);
+    AddLiveOddsLinesToTargets(options.TargetLines, options.LiveUnderOddsByLine, explicitTargetLines);
 
     var pricer = new LiveTotalPricer(options);
     LiveTotalPriceResult result = await pricer.PriceAsync(CancellationToken.None);
@@ -310,15 +312,21 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     }
 
     Console.WriteLine();
-    Console.WriteLine("Over pricing:");
-    Console.WriteLine("Line   Win%    Push%   FairOdds  BookOdds   Edge     EV       Decision");
+    Console.WriteLine("Over/Under pricing:");
+    Console.WriteLine("Line   Over%   Push%  Under%  FairO  BookO   EdgeO     EVO    FairU  BookU   EdgeU     EVU    Decision");
     foreach (LiveTotalLinePrice line in result.Lines)
     {
-        string book = line.BookOverOdds.HasValue ? line.BookOverOdds.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";
-        string edge = line.Edge.HasValue ? line.Edge.Value.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture) : "-";
-        string ev = line.ExpectedValue.HasValue ? line.ExpectedValue.Value.ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture) : "-";
-        string fair = double.IsInfinity(line.FairOdds) ? "inf" : line.FairOdds.ToString("0.###", CultureInfo.InvariantCulture);
-        Console.WriteLine($"{line.Line,4:0.##}  {line.WinProbability,6:P1}  {line.PushProbability,6:P1}  {fair,8}  {book,8}  {edge,7}  {ev,7}  {line.Decision}");
+        string bookOver = line.BookOverOdds.HasValue ? line.BookOverOdds.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";
+        string overEdge = line.OverEdge.HasValue ? line.OverEdge.Value.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture) : "-";
+        string overEv = line.OverExpectedValue.HasValue ? line.OverExpectedValue.Value.ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture) : "-";
+        string fairOver = double.IsInfinity(line.FairOdds) ? "inf" : line.FairOdds.ToString("0.###", CultureInfo.InvariantCulture);
+
+        string bookUnder = line.BookUnderOdds.HasValue ? line.BookUnderOdds.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";
+        string underEdge = line.UnderEdge.HasValue ? line.UnderEdge.Value.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture) : "-";
+        string underEv = line.UnderExpectedValue.HasValue ? line.UnderExpectedValue.Value.ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture) : "-";
+        string fairUnder = double.IsInfinity(line.FairUnderOdds) ? "inf" : line.FairUnderOdds.ToString("0.###", CultureInfo.InvariantCulture);
+
+        Console.WriteLine($"{line.Line,4:0.##}  {line.WinProbability,6:P1}  {line.PushProbability,6:P1}  {line.UnderWinProbability,6:P1}  {fairOver,5}  {bookOver,5}  {overEdge,7}  {overEv,7}  {fairUnder,6}  {bookUnder,5}  {underEdge,7}  {underEv,7}  {line.Decision}");
     }
 
     return 0;
@@ -703,6 +711,37 @@ static void AddLiveOverOdds(IDictionary<double, double> target, ParsedArgs parse
     }
 }
 
+static void AddLiveUnderOdds(IDictionary<double, double> target, ParsedArgs parsed)
+{
+    AddLiveUnderOddsForLine(target, parsed, 1.5, "live-under-1.5", "live-under-15", "under-1.5", "under-15");
+    AddLiveUnderOddsForLine(target, parsed, 2.0, "live-under-2.0", "live-under-20", "under-2.0", "under-20");
+    AddLiveUnderOddsForLine(target, parsed, 2.5, "live-under-2.5", "live-under-25", "under-2.5", "under-25");
+    AddLiveUnderOddsForLine(target, parsed, 3.0, "live-under-3.0", "live-under-30", "under-3.0", "under-30");
+
+    AddDynamicLiveUnderOdds(target, parsed);
+
+    // Generic syntax: --live-under-odds "1.5=3.60,2.0=2.10,2.5=1.65,3.5=1.90"
+    if (!parsed.Has("live-under-odds"))
+        return;
+
+    string raw = parsed.RequiredString("live-under-odds");
+    foreach (string token in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        string[] parts = token.Split('=', StringSplitOptions.TrimEntries);
+        if (parts.Length != 2 ||
+            !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double line) ||
+            !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double odds))
+        {
+            throw new ArgumentException("Argument --live-under-odds must use comma-separated line=odds pairs, for example 1.5=3.60,2.0=2.10,3.5=1.90.");
+        }
+
+        if (odds <= 1.0)
+            throw new ArgumentException($"Live under odds for line {line:0.##} must be greater than 1.0.");
+
+        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
+    }
+}
+
 static void AddDynamicLiveOverOdds(IDictionary<double, double> target, ParsedArgs parsed)
 {
     foreach (KeyValuePair<string, string?> pair in parsed.Values)
@@ -719,6 +758,52 @@ static void AddDynamicLiveOverOdds(IDictionary<double, double> target, ParsedArg
 
         target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
     }
+}
+
+static void AddDynamicLiveUnderOdds(IDictionary<double, double> target, ParsedArgs parsed)
+{
+    foreach (KeyValuePair<string, string?> pair in parsed.Values)
+    {
+        string key = pair.Key;
+        if (!TryParseLiveUnderLineArgument(key, out double line))
+            continue;
+
+        if (string.IsNullOrWhiteSpace(pair.Value))
+            throw new ArgumentException($"Argument --{key} requires odds value.");
+
+        if (!double.TryParse(pair.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double odds) || odds <= 1.0)
+            throw new ArgumentException($"Argument --{key} must be a number greater than 1.0.");
+
+        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
+    }
+}
+
+static bool TryParseLiveUnderLineArgument(string key, out double line)
+{
+    line = 0.0;
+
+    string? suffix = null;
+    if (key.StartsWith("live-under-", StringComparison.OrdinalIgnoreCase))
+        suffix = key["live-under-".Length..];
+    else if (key.StartsWith("under-", StringComparison.OrdinalIgnoreCase))
+        suffix = key["under-".Length..];
+
+    if (string.IsNullOrWhiteSpace(suffix) || suffix.Equals("odds", StringComparison.OrdinalIgnoreCase))
+        return false;
+
+    suffix = suffix.Replace('_', '.');
+
+    if (suffix.Length == 2 && suffix.All(char.IsDigit) &&
+        int.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out int compact) && compact > 0)
+    {
+        line = compact / 10.0;
+        return line > 0;
+    }
+
+    if (double.TryParse(suffix, NumberStyles.Float, CultureInfo.InvariantCulture, out line))
+        return line > 0;
+
+    return false;
 }
 
 static bool TryParseLiveOverLineArgument(string key, out double line)
@@ -764,6 +849,21 @@ static void AddLiveOddsLinesToTargets(ICollection<double> targetLines, IDictiona
 }
 
 static void AddLiveOverOddsForLine(IDictionary<double, double> target, ParsedArgs parsed, double line, params string[] names)
+{
+    foreach (string name in names)
+    {
+        if (!parsed.Has(name))
+            continue;
+
+        double odds = parsed.Double(name, 0.0);
+        if (odds <= 1.0)
+            throw new ArgumentException($"Argument --{name} must be greater than 1.0.");
+
+        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
+    }
+}
+
+static void AddLiveUnderOddsForLine(IDictionary<double, double> target, ParsedArgs parsed, double line, params string[] names)
 {
     foreach (string name in names)
     {
