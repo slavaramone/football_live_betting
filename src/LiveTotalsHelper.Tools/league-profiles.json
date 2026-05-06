@@ -1,17 +1,30 @@
 {
   "profiles": [
     {
+      "id": "m-league-division-a",
+      "league": "M-League, Division A",
+      "modelPath": "C:\\Temp\\football_data\\m-league-division-a-2023-2025-fit-weibull-score-state.json",
+      "baseSeasonIds": [ 52516, 58327, 72384 ],
+      "currentSeasonId": null,
+      "defaultEmpiricalWeight": 0.8,
+      "edgeThreshold": 0.10,
+      "priorStrengthMatches": 100,
+      "useCurrentSeasonVolume": true,
+      "riskLevel": "Medium-Low",
+      "notes": "Strong 3-season sample. Holdout backtests stable. Empirical weight 0.8 recommended, 0.9/1.0 also viable."
+    },
+    {
       "key": "npl-nsw",
       "name": "NPL New South Wales",
       "league": "NPL New South Wales",
       "modelPath": "C:\\Temp\\football_data\\npl-nsw-2023-2025-fit-weibull-score-state.json",
-      "baseSeasonIds": [48254, 57783, 71036],
+      "baseSeasonIds": [ 48254, 57783, 71036 ],
       "currentSeasonId": 88562,
       "useCurrentSeasonVolume": true,
       "defaultEmpiricalWeight": 0.8,
       "edgeThreshold": 0.10,
       "priorStrengthMatches": 100,
-      "targetLines": [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5],
+      "targetLines": [ 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5 ],
       "riskLevel": "Medium",
       "notes": "Three historical seasons. Cross-season holdout backtests were stable; default empirical weight 0.8."
     },
@@ -20,13 +33,13 @@
       "name": "Western Australia State League 1",
       "league": "Western Australia State League 1",
       "modelPath": "C:\\Temp\\football_data\\western-state-league-1-2025-fit-weibull-score-state.json",
-      "baseSeasonIds": [74475],
+      "baseSeasonIds": [ 74475 ],
       "currentSeasonId": 91167,
       "useCurrentSeasonVolume": true,
       "defaultEmpiricalWeight": 0.5,
       "edgeThreshold": 0.20,
       "priorStrengthMatches": 30,
-      "targetLines": [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0],
+      "targetLines": [ 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0 ],
       "riskLevel": "High",
       "notes": "Only one completed training season. Use high edge threshold and manual review, especially for margin states."
     }
