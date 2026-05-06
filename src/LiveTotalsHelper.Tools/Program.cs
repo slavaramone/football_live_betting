@@ -21,6 +21,7 @@ try
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
         "import-sofascore" => await RunImportSofaScore(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
+        "build-weibull-dataset" => await RunBuildWeibullDataset(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -73,6 +74,61 @@ static async Task<int> RunDownloadSofaScore(string[] args)
     return result.Failures.Count == 0 ? 0 : 1;
 }
 
+
+
+static async Task<int> RunBuildWeibullDataset(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    var options = new WeibullDatasetOptions
+    {
+        League = parsed.String("league", string.Empty),
+        SeasonId = parsed.Int("season-id", 0),
+        OutputPath = parsed.String("output", string.Empty),
+        MaxModelMinute = parsed.Int("max-model-minute", 90),
+        IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
+        MaxExamples = parsed.Int("max-examples", 20)
+    };
+
+
+    AddSeasonIds(options.SeasonIds, parsed);
+
+    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
+        AddRounds(options.Rounds, parsed);
+
+    IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+
+    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
+    var builder = new WeibullDatasetBuilder(dbContext, options);
+    WeibullDatasetResult result = await builder.BuildAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Weibull dataset build done.");
+    Console.WriteLine($"Matches checked: {result.MatchesChecked}");
+    Console.WriteLine($"Finished matches: {result.FinishedMatches}");
+    Console.WriteLine($"Reliable finished matches: {result.ReliableFinishedMatches}");
+    Console.WriteLine($"Unreliable finished matches: {result.UnreliableFinishedMatches}");
+    Console.WriteLine($"Seasons included: {(result.SeasonsIncluded.Count == 0 ? "none" : string.Join(", ", result.SeasonsIncluded))}");
+    Console.WriteLine($"Goal rows written: {result.GoalRowsWritten}");
+    Console.WriteLine($"Output: {result.OutputPath}");
+    Console.WriteLine($"Warnings: {result.Warnings.Count}");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings.Take(options.MaxExamples + 1))
+            Console.WriteLine($"- {warning}");
+
+        if (result.Warnings.Count > options.MaxExamples + 1)
+            Console.WriteLine($"... {result.Warnings.Count - options.MaxExamples - 1} more");
+    }
+
+    return 0;
+}
 
 static async Task<int> RunValidateDb(string[] args)
 {
@@ -335,6 +391,31 @@ static string FormatImportException(Exception exception)
     }
 
     return string.Join(Environment.NewLine, lines);
+}
+
+static void AddSeasonIds(List<int> seasonIds, ParsedArgs parsed)
+{
+    if (parsed.Has("season-ids"))
+    {
+        string raw = parsed.RequiredString("season-ids");
+        foreach (string part in raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!int.TryParse(part, out int seasonId) || seasonId <= 0)
+                throw new ArgumentException($"Argument --season-ids contains invalid season id '{part}'. Use comma-separated integers, for example --season-ids 57783,88562.");
+
+            if (!seasonIds.Contains(seasonId))
+                seasonIds.Add(seasonId);
+        }
+    }
+
+    if (parsed.Has("season-id"))
+    {
+        int seasonId = parsed.Int("season-id", 0);
+        if (seasonId > 0 && !seasonIds.Contains(seasonId))
+            seasonIds.Add(seasonId);
+    }
+
+    seasonIds.Sort();
 }
 
 static void AddRounds(ICollection<int> target, ParsedArgs parsed)

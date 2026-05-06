@@ -10,12 +10,15 @@ public static class HelpPrinter
         Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON only.");
         Console.WriteLine("  import-sofascore     Import saved SofaScore JSON into PostgreSQL and apply pending migrations.");
         Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
+        Console.WriteLine("  build-weibull-dataset Export reliable goal-minute rows to CSV for Weibull fitting.");
         Console.WriteLine();
         PrintDownloadSofaScore();
         Console.WriteLine();
         PrintImportSofaScore();
         Console.WriteLine();
         PrintValidateDb();
+        Console.WriteLine();
+        PrintBuildWeibullDataset();
     }
 
     public static int UnknownCommand(string command)
@@ -82,6 +85,29 @@ public static class HelpPrinter
         Console.WriteLine("Before first run, install Playwright browser binaries for download-sofascore:");
         Console.WriteLine("  dotnet build src/LiveTotalsHelper.Tools/LiveTotalsHelper.Tools.csproj");
         Console.WriteLine("  powershell -ExecutionPolicy Bypass -File src/LiveTotalsHelper.Tools/bin/Debug/net8.0/playwright.ps1 install chromium");
+    }
+
+
+    public static void PrintBuildWeibullDataset()
+    {
+        Console.WriteLine("Build Weibull dataset usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-weibull-dataset \\");
+        Console.WriteLine("    --league \"NPL NSW\" --season-ids 57783,88562 --from-round 1 --to-round 30 \\");
+        Console.WriteLine("    --output data/weibull/npl-nsw-multi-season-goals.csv");
+        Console.WriteLine();
+        Console.WriteLine("Build Weibull dataset arguments:");
+        Console.WriteLine("  --league             Optional league name or league slug filter.");
+        Console.WriteLine("  --season-id          Optional single SofaScore season id filter.");
+        Console.WriteLine("  --season-ids         Optional comma-separated season ids, e.g. 57783,88562. Can be used instead of --season-id.");
+        Console.WriteLine("  --round              Optional single round filter.");
+        Console.WriteLine("  --from-round         Optional first round filter.");
+        Console.WriteLine("  --to-round           Optional last round filter.");
+        Console.WriteLine("  --output             Output CSV path. Default: data/weibull/{league}-{season selection}-goals.csv");
+        Console.WriteLine("  --max-model-minute   Cap GoalMinuteForModel at this value. Default: 90. Use 0 for no cap.");
+        Console.WriteLine("  --include-unreliable true/false. Include matches where final score does not match goal events. Default: false");
+        Console.WriteLine("  --max-examples       Maximum warning examples printed. Default: 20");
+        Console.WriteLine();
+        Console.WriteLine("Output is one row per reliable goal event, designed for league-wide and opponent-wide Weibull fitting.");
     }
 
     public static void PrintValidateDb()
