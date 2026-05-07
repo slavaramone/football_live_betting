@@ -2,7 +2,7 @@
   "profiles": {
     "LiveTotalsHelper.Tools": {
       "commandName": "Project",
-      "commandLineArgs": "backtest-timing-model --league \"M-League, Division A\" --training-season-ids 52516,58327 --backtest-season-ids 72384 --walk-forward true --test-empirical-weights 0.5,0.6,0.7,0.8,0.9,1.0 --use-current-season-volume-calibration true --prior-strength-matches 100 --minutes 15,30,45,60,75 --output C:\\Temp\\football_data\\m-league-division-a-2023-2024-vs-2025.csv\r\n"
+      "commandLineArgs": "price-live-total --minute 67 --home-goals 1 --away-goals 3 --live-over-odds \"5.5=1.85\" --live-under-odds \"5.5=1.85\" --starting-line 3.5 --starting-over 2.20 --starting-under 1.60 --profile \" m-league-division-a\" --before-round 7\r\n"
     }
   }
 }
