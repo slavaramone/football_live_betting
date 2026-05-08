@@ -25,6 +25,7 @@ try
         "build-weibull-dataset" => await RunBuildWeibullDataset(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
         "backtest-timing-model" => await RunBacktestTimingModel(commandArgs),
+        "backtest-live-total-calibration" => await RunBacktestLiveTotalCalibration(commandArgs),
         "price-live-total" => await RunPriceLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
@@ -481,6 +482,89 @@ static void PrintBacktestTable(string title, IReadOnlyList<TimingBacktestSummary
     foreach (TimingBacktestSummaryRow row in rows)
     {
         Console.WriteLine($"{row.Group,-28} {row.Count,4}  {row.AvgPredictedRemainingGoals,8:0.000}  {row.AvgActualRemainingGoals,7:0.000}  {row.Bias,7:0.000}  {row.MeanAbsoluteError,7:0.000}  {row.RootMeanSquaredError,7:0.000}");
+    }
+}
+
+
+static async Task<int> RunBacktestLiveTotalCalibration(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    var options = new LiveTotalCalibrationBacktestOptions
+    {
+        League = parsed.String("league", string.Empty),
+        MaxModelMinute = parsed.Int("max-model-minute", 90),
+        MinTrainingSnapshots = parsed.Int("min-training-snapshots", 20),
+        IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
+        WalkForward = parsed.Bool("walk-forward", false),
+        UseCurrentSeasonVolumeCalibration = parsed.Bool("use-current-season-volume-calibration", false),
+        PriorStrengthMatches = parsed.Int("prior-strength-matches", 100),
+        OutputPath = parsed.String("output", string.Empty)
+    };
+
+    AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
+    AddRequiredIntList(options.BacktestSeasonIds, parsed, "backtest-season-ids");
+    AddOptionalIntList(options.SnapshotMinutes, parsed, "minutes", clearExisting: true);
+    AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
+    AddOptionalDoubleList(options.TestEmpiricalWeights, parsed, "test-empirical-weights", clearExisting: true);
+
+    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
+        AddRounds(options.Rounds, parsed);
+
+    IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+
+    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
+    var backtester = new LiveTotalCalibrationBacktester(dbContext, options);
+    LiveTotalCalibrationBacktestResult result = await backtester.RunAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Live total calibration backtest done.");
+    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(options.League) ? "all" : options.League)}");
+    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
+    Console.WriteLine($"Backtest seasons: {string.Join(", ", result.BacktestSeasonIds)}");
+    Console.WriteLine($"Training matches checked: {result.TrainingMatchesChecked}");
+    Console.WriteLine($"Training reliable matches: {result.TrainingReliableMatches}");
+    Console.WriteLine($"Backtest matches checked: {result.BacktestMatchesChecked}");
+    Console.WriteLine($"Backtest reliable matches: {result.BacktestReliableMatches}");
+    Console.WriteLine($"Training snapshots: {result.TrainingSnapshots}");
+    Console.WriteLine($"Walk-forward: {result.WalkForward}");
+    Console.WriteLine($"Current-season volume calibration: {result.UseCurrentSeasonVolumeCalibration}");
+    if (result.UseCurrentSeasonVolumeCalibration)
+        Console.WriteLine($"Prior strength matches: {result.PriorStrengthMatches}");
+    Console.WriteLine($"Empirical weights tested: {string.Join(", ", result.TestedEmpiricalWeights.Select(x => x.ToString("0.##", CultureInfo.InvariantCulture)))}");
+    if (result.WalkForward)
+        Console.WriteLine($"Walk-forward prior-season snapshots added across rounds: {result.WalkForwardTrainingSnapshotsAdded}");
+    Console.WriteLine($"Backtest snapshots: {result.BacktestSnapshots}");
+    if (!string.IsNullOrWhiteSpace(result.OutputPath))
+        Console.WriteLine($"Prediction CSV: {result.OutputPath}");
+
+    PrintCalibrationTable("Overall", result.OverallRows);
+    PrintCalibrationTable("By minute", result.ByMinuteRows);
+    PrintCalibrationTable("By detailed score state", result.ByStateRows);
+    PrintCalibrationTable("By state / minute / line", result.ByStateMinuteLineRows);
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
+    }
+
+    return 0;
+}
+
+static void PrintCalibrationTable(string title, IReadOnlyList<LiveTotalCalibrationSummaryRow> rows)
+{
+    Console.WriteLine();
+    Console.WriteLine(title + ":");
+    Console.WriteLine("Group                              N  PredO  ActO   DiffO  PredU  ActU   DiffU  BrierO BrierU PredRem ActRem");
+    foreach (LiveTotalCalibrationSummaryRow row in rows)
+    {
+        Console.WriteLine($"{row.Group,-32} {row.Count,5} {row.AvgPredictedOverProbability,6:P1} {row.AvgActualOverHitRate,6:P1} {row.OverCalibrationError,7:+0.0%;-0.0%;0.0%} {row.AvgPredictedUnderProbability,6:P1} {row.AvgActualUnderHitRate,6:P1} {row.UnderCalibrationError,7:+0.0%;-0.0%;0.0%} {row.OverBrierScore,7:0.000} {row.UnderBrierScore,7:0.000} {row.AvgPredictedRemainingGoals,7:0.000} {row.AvgActualRemainingGoals,6:0.000}");
     }
 }
 

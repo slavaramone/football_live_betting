@@ -13,6 +13,7 @@ public static class HelpPrinter
         Console.WriteLine("  build-weibull-dataset Export reliable goal-minute rows to CSV for Weibull fitting.");
         Console.WriteLine("  fit-weibull           Fit a league-wide Weibull timing model from a goal-minute CSV.");
         Console.WriteLine("  backtest-timing-model Backtest score-state timing model using explicit training and test seasons.");
+        Console.WriteLine("  backtest-live-total-calibration Backtest Over/Under probability calibration by state/minute/line.");
         Console.WriteLine("  price-live-total     Price live Over totals from starting odds, score state and fitted timing model.");
         Console.WriteLine();
         PrintDownloadSofaScore();
@@ -26,6 +27,8 @@ public static class HelpPrinter
         PrintFitWeibull();
         Console.WriteLine();
         PrintBacktestTimingModel();
+        Console.WriteLine();
+        PrintBacktestLiveTotalCalibration();
         Console.WriteLine();
         PrintPriceLiveTotal();
     }
@@ -199,6 +202,42 @@ public static class HelpPrinter
         Console.WriteLine("This is not a betting/odds backtest. It tests whether score-state timing estimates trained on selected seasons predict actual remaining goals in held-out seasons.");
     }
 
+
+
+    public static void PrintBacktestLiveTotalCalibration()
+    {
+        Console.WriteLine("Backtest live total calibration usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- backtest-live-total-calibration \\");
+        Console.WriteLine("    --league \"M-League, Division A\" \\");
+        Console.WriteLine("    --training-season-ids 52516,58327 \\");
+        Console.WriteLine("    --backtest-season-ids 72384 \\");
+        Console.WriteLine("    --minutes 15,25,30,35,45,60,75 \\");
+        Console.WriteLine("    --target-lines 1.5,2.0,2.5,3.0,3.5,4.0 \\");
+        Console.WriteLine("    --walk-forward true \\");
+        Console.WriteLine("    --use-current-season-volume-calibration true \\");
+        Console.WriteLine("    --test-empirical-weights 0.5,0.6,0.7,0.8,0.9,1.0 \\");
+        Console.WriteLine("    --output data/backtests/m-league-live-total-calibration.csv");
+        Console.WriteLine();
+        Console.WriteLine("Backtest live total calibration arguments:");
+        Console.WriteLine("  --league                 Optional league name or slug filter.");
+        Console.WriteLine("  --training-season-ids    Required comma-separated base training season ids.");
+        Console.WriteLine("  --backtest-season-ids    Required comma-separated backtest season ids.");
+        Console.WriteLine("  --minutes                Snapshot minutes. Default: 15,25,30,35,45,60,75.");
+        Console.WriteLine("  --target-lines           Lines to test. Default: 1.5,2.0,2.5,3.0,3.5,4.0.");
+        Console.WriteLine("  --walk-forward           true/false. If true, each test round trains on base seasons plus earlier rounds from the tested season. Default: false.");
+        Console.WriteLine("  --use-current-season-volume-calibration true/false. Requires walk-forward. Applies shrunk current-season goals-per-match factor from prior rounds. Default: false.");
+        Console.WriteLine("  --test-empirical-weights Comma-separated empirical weights for blend testing. Default: 0.8.");
+        Console.WriteLine("  --prior-strength-matches Prior strength for current-season volume shrinkage. Default: 100.");
+        Console.WriteLine("  --round                  Optional single test round filter.");
+        Console.WriteLine("  --from-round             Optional first test round filter.");
+        Console.WriteLine("  --to-round               Optional last test round filter.");
+        Console.WriteLine("  --min-training-snapshots Minimum exact minute+state training snapshots before fallback. Default: 20.");
+        Console.WriteLine("  --max-model-minute       Cap goal minutes at this value. Default: 90.");
+        Console.WriteLine("  --include-unreliable     true/false. Include matches where final score does not match goal events. Default: false.");
+        Console.WriteLine("  --output                 Optional CSV path for per-snapshot/per-line probability predictions.");
+        Console.WriteLine();
+        Console.WriteLine("This tests whether predicted Over/Under probabilities match actual hit rates by detailed score state, minute and line. Use it to diagnose cases like 0-0 at 25' producing too many Under signals.");
+    }
 
     public static void PrintPriceLiveTotal()
     {
