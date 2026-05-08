@@ -102,7 +102,7 @@ public sealed class LiveTotalPricer
             PropertyNameCaseInsensitive = true
         }, cancellationToken) ?? throw new InvalidOperationException("Could not read timing model JSON.");
 
-        string scoreState = ScoreStateResolver.FromScore(_options.HomeGoals, _options.AwayGoals);
+        string scoreState = ScoreStateResolver.FromScoreDetailed(_options.HomeGoals, _options.AwayGoals);
         TimingModelSource source = ResolveTimingModel(model, scoreState);
 
         double startingFairOverProbability = TotalGoalsPricingCalculator.RemoveTwoWayMargin(_options.StartingOverOdds, _options.StartingUnderOdds);
@@ -439,17 +439,28 @@ public sealed class LiveTotalPricer
 
     private static TimingModelSource ResolveTimingModel(WeibullModelFile model, string scoreState)
     {
-        TimingModelGroupResult? group = model.Groups.FirstOrDefault(g => g.GroupName.Equals(scoreState, StringComparison.OrdinalIgnoreCase));
-        if (group is not null)
+        foreach (string candidate in ScoreStateResolver.FallbackCandidates(scoreState))
         {
-            return new TimingModelSource
+            if (candidate == ScoreStateResolver.All)
+                break;
+
+            TimingModelGroupResult? group = model.Groups.FirstOrDefault(g => g.GroupName.Equals(candidate, StringComparison.OrdinalIgnoreCase));
+            if (group is not null)
             {
-                GroupName = group.GroupName,
-                ShapeK = group.ShapeK,
-                ScaleLambda = group.ScaleLambda,
-                CdfAtMaxMinute = group.CdfAtMaxMinute,
-                EmpiricalBuckets = group.EmpiricalBuckets
-            };
+                string fallbackReason = candidate.Equals(scoreState, StringComparison.OrdinalIgnoreCase)
+                    ? string.Empty
+                    : $"Timing group '{scoreState}' was not found; falling back to '{candidate}'.";
+
+                return new TimingModelSource
+                {
+                    GroupName = group.GroupName,
+                    FallbackReason = fallbackReason,
+                    ShapeK = group.ShapeK,
+                    ScaleLambda = group.ScaleLambda,
+                    CdfAtMaxMinute = group.CdfAtMaxMinute,
+                    EmpiricalBuckets = group.EmpiricalBuckets
+                };
+            }
         }
 
         string fallback = model.Groups.Count > 0

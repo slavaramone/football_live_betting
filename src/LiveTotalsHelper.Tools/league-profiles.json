@@ -1,6 +1,21 @@
 {
   "profiles": [
     {
+      "key": "egyptian-second-division-a",
+      "name": "Egyptian Second Division A",
+      "league": "Egyptian Second Division A",
+      "modelPath": "C:\\Temp\\football_data\\egyptian-second-division-a-2324-2425-fit-weibull-score-state.json",
+      "baseSeasonIds": [ 55146, 66481 ],
+      "currentSeasonId": 78867,
+      "useCurrentSeasonVolume": true,
+      "defaultEmpiricalWeight": 0.8,
+      "edgeThreshold": 0.12,
+      "priorStrengthMatches": 80,
+      "targetLines": [ 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0 ],
+      "riskLevel": "Medium",
+      "notes": "Two completed seasons plus current-season holdout tested. Low-scoring league with strong late-goal timing. Empirical weight 0.8 recommended."
+    },
+    {
       "key": "m-league-division-a",
       "name": "M-League, Division A",
       "league": "M-League, Division A",

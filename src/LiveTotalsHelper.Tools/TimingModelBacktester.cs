@@ -364,7 +364,7 @@ public sealed class TimingModelBacktester
             int away = 0;
             foreach (GoalRow goal in match.Goals.OrderBy(x => x.ModelMinute).ThenBy(x => x.Id))
             {
-                string state = ScoreStateResolver.FromAbsoluteGoalDifference(Math.Abs(home - away));
+                string state = ScoreStateResolver.FromScoreDetailed(home, away);
                 if (!goalMinutesByState.TryGetValue(state, out List<double>? stateMinutes))
                 {
                     stateMinutes = [];
@@ -584,7 +584,7 @@ public sealed class TimingModelBacktester
                 int currentAway = match.Goals.Count(x => !x.IsHome && x.ModelMinute <= minute);
                 int currentTotal = currentHome + currentAway;
                 int remaining = Math.Max(0, finalTotal - currentTotal);
-                string state = ScoreStateResolver.FromAbsoluteGoalDifference(Math.Abs(currentHome - currentAway));
+                string state = ScoreStateResolver.FromScoreDetailed(currentHome, currentAway);
 
                 rows.Add(new SnapshotRow
                 {

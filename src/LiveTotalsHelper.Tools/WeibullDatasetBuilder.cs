@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using LiveTotalsHelper.Infrastructure.Persistence;
 using LiveTotalsHelper.Infrastructure.Persistence.Entities;
+using LiveTotalsHelper.Modeling;
 using Microsoft.EntityFrameworkCore;
 
 namespace LiveTotalsHelper.Tools;
@@ -131,7 +132,8 @@ public sealed class WeibullDatasetBuilder
                 int scoreBeforeTotal = scoreBeforeHome + scoreBeforeAway;
                 int goalDiffBefore = scoreBeforeHome - scoreBeforeAway;
                 int absGoalDiffBefore = Math.Abs(goalDiffBefore);
-                string scoreStateBefore = ScoreState(absGoalDiffBefore);
+                string scoreStateBefore = ScoreStateResolver.FromAbsoluteGoalDifference(absGoalDiffBefore);
+                string detailedScoreStateBefore = ScoreStateResolver.FromScoreDetailed(scoreBeforeHome, scoreBeforeAway);
                 string leadingTeamBefore = goalDiffBefore > 0 ? "Home" : goalDiffBefore < 0 ? "Away" : "Level";
                 bool goalTeamWasHome = goal.IsHome;
                 string goalTeamStateBefore = GoalTeamStateBefore(goalTeamWasHome, goalDiffBefore);
@@ -144,7 +146,8 @@ public sealed class WeibullDatasetBuilder
                 int scoreAfterHome = runningHome;
                 int scoreAfterAway = runningAway;
                 int goalDiffAfter = scoreAfterHome - scoreAfterAway;
-                string scoreStateAfter = ScoreState(Math.Abs(goalDiffAfter));
+                string scoreStateAfter = ScoreStateResolver.FromAbsoluteGoalDifference(Math.Abs(goalDiffAfter));
+                string detailedScoreStateAfter = ScoreStateResolver.FromScoreDetailed(scoreAfterHome, scoreAfterAway);
 
                 int rawMinute = goal.Minute;
                 int modelMinute = ComputeModelMinute(goal, _options.MaxModelMinute);
@@ -180,6 +183,7 @@ public sealed class WeibullDatasetBuilder
                     GoalDifferenceBefore = goalDiffBefore,
                     AbsGoalDifferenceBefore = absGoalDiffBefore,
                     ScoreStateBefore = scoreStateBefore,
+                    DetailedScoreStateBefore = detailedScoreStateBefore,
                     LeadingTeamBefore = leadingTeamBefore,
                     GoalTeamStateBefore = goalTeamStateBefore,
                     HomeScoreAfterGoalModel = scoreAfterHome,
@@ -187,6 +191,7 @@ public sealed class WeibullDatasetBuilder
                     ScoreAfterTotalGoals = scoreAfterHome + scoreAfterAway,
                     GoalDifferenceAfter = goalDiffAfter,
                     ScoreStateAfter = scoreStateAfter,
+                    DetailedScoreStateAfter = detailedScoreStateAfter,
                     IsEqualizer = goalDiffBefore != 0 && goalDiffAfter == 0,
                     IsGoAheadGoal = goalDiffBefore == 0 && goalDiffAfter != 0,
                     IsGoalByTrailingTeam = goalTeamStateBefore == "Trailing",
@@ -221,17 +226,6 @@ public sealed class WeibullDatasetBuilder
         return string.Equals(match.StatusType, "finished", StringComparison.OrdinalIgnoreCase)
             || string.Equals(match.StatusDescription, "Ended", StringComparison.OrdinalIgnoreCase)
             || string.Equals(match.StatusDescription, "Finished", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string ScoreState(int absGoalDiffBefore)
-    {
-        return absGoalDiffBefore switch
-        {
-            0 => "Level",
-            1 => "OneGoalMargin",
-            2 => "TwoGoalMargin",
-            _ => "ThreePlusGoalMargin"
-        };
     }
 
     private static string GoalTeamStateBefore(bool goalByHome, int goalDiffBefore)
@@ -343,6 +337,7 @@ public sealed class WeibullDatasetBuilder
                 row.GoalDifferenceBefore.ToString(CultureInfo.InvariantCulture),
                 row.AbsGoalDifferenceBefore.ToString(CultureInfo.InvariantCulture),
                 row.ScoreStateBefore,
+                row.DetailedScoreStateBefore,
                 row.LeadingTeamBefore,
                 row.GoalTeamStateBefore,
                 row.HomeScoreAfterGoalModel.ToString(CultureInfo.InvariantCulture),
@@ -350,6 +345,7 @@ public sealed class WeibullDatasetBuilder
                 row.ScoreAfterTotalGoals.ToString(CultureInfo.InvariantCulture),
                 row.GoalDifferenceAfter.ToString(CultureInfo.InvariantCulture),
                 row.ScoreStateAfter,
+                row.DetailedScoreStateAfter,
                 row.IsEqualizer ? "1" : "0",
                 row.IsGoAheadGoal ? "1" : "0",
                 row.IsGoalByTrailingTeam ? "1" : "0",
@@ -407,6 +403,7 @@ public sealed class WeibullDatasetBuilder
         "GoalDifferenceBefore",
         "AbsGoalDifferenceBefore",
         "ScoreStateBefore",
+        "DetailedScoreStateBefore",
         "LeadingTeamBefore",
         "GoalTeamStateBefore",
         "HomeScoreAfterGoalModel",
@@ -414,6 +411,7 @@ public sealed class WeibullDatasetBuilder
         "ScoreAfterTotalGoals",
         "GoalDifferenceAfter",
         "ScoreStateAfter",
+        "DetailedScoreStateAfter",
         "IsEqualizer",
         "IsGoAheadGoal",
         "IsGoalByTrailingTeam",
@@ -458,6 +456,7 @@ internal sealed class WeibullGoalDatasetRow
     public int GoalDifferenceBefore { get; set; }
     public int AbsGoalDifferenceBefore { get; set; }
     public string ScoreStateBefore { get; set; } = string.Empty;
+    public string DetailedScoreStateBefore { get; set; } = string.Empty;
     public string LeadingTeamBefore { get; set; } = string.Empty;
     public string GoalTeamStateBefore { get; set; } = string.Empty;
     public int HomeScoreAfterGoalModel { get; set; }
@@ -465,6 +464,7 @@ internal sealed class WeibullGoalDatasetRow
     public int ScoreAfterTotalGoals { get; set; }
     public int GoalDifferenceAfter { get; set; }
     public string ScoreStateAfter { get; set; } = string.Empty;
+    public string DetailedScoreStateAfter { get; set; } = string.Empty;
     public bool IsEqualizer { get; set; }
     public bool IsGoAheadGoal { get; set; }
     public bool IsGoalByTrailingTeam { get; set; }

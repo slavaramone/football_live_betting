@@ -134,14 +134,14 @@ public static class HelpPrinter
         Console.WriteLine("  --league             Optional league name stored in output model metadata.");
         Console.WriteLine("  --max-minute         Normalize CDF/remaining share to this match minute. Default: 90");
         Console.WriteLine("  --minute-column      CSV column to fit. Default: GoalMinuteForModel");
-        Console.WriteLine("  --group-by           Optional CSV column for state-aware fits, e.g. ScoreStateBefore, GoalTeamStateBefore, LeadingTeamBefore.");
+        Console.WriteLine("  --group-by           Optional CSV column for state-aware fits, e.g. DetailedScoreStateBefore, ScoreStateBefore, GoalTeamStateBefore, LeadingTeamBefore.");
         Console.WriteLine("  --min-group-goals    Minimum goals required to fit a group model. Default: 30");
         Console.WriteLine("  --max-iterations     Maximum MLE iterations. Default: 100");
         Console.WriteLine("  --tolerance          MLE convergence tolerance. Default: 1e-9");
         Console.WriteLine("  --blend-weibull-weight Weight for blended model. Default: 0.30, so blend = 30% Weibull + 70% empirical.");
         Console.WriteLine();
         Console.WriteLine("Output JSON stores three timing models: pure Weibull, empirical bucket curve, and blended Weibull+empirical model.");
-        Console.WriteLine("Use --group-by ScoreStateBefore after rebuilding the dataset to produce Level/OneGoalMargin/TwoGoalMargin/ThreePlusGoalMargin models.");
+        Console.WriteLine("Use --group-by DetailedScoreStateBefore after rebuilding the dataset to produce NilNil/LevelWithGoals/OneGoalMargin/TwoGoalMargin/ThreePlusGoalMargin models. Use ScoreStateBefore only for legacy broad-state models.");
     }
 
     public static void PrintValidateDb()
