@@ -10,7 +10,7 @@ public static class HelpPrinter
         Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON only.");
         Console.WriteLine("  import-sofascore     Import saved SofaScore JSON into PostgreSQL and apply pending migrations.");
         Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
-        Console.WriteLine("  build-weibull-dataset Export reliable goal-minute rows to CSV for Weibull fitting.");
+        Console.WriteLine("  build-model-dataset   Export one row per live match snapshot with pre-match history and live-state features.");
         Console.WriteLine("  fit-weibull           Fit a league-wide Weibull timing model from a goal-minute CSV.");
         Console.WriteLine("  backtest-timing-model Backtest score-state timing model using explicit training and test seasons.");
         Console.WriteLine("  price-live-total     Price live Over totals from starting odds, score state and fitted timing model.");
@@ -21,7 +21,7 @@ public static class HelpPrinter
         Console.WriteLine();
         PrintValidateDb();
         Console.WriteLine();
-        PrintBuildWeibullDataset();
+        PrintBuildModelDataset();
         Console.WriteLine();
         PrintFitWeibull();
         Console.WriteLine();
@@ -97,26 +97,32 @@ public static class HelpPrinter
     }
 
 
-    public static void PrintBuildWeibullDataset()
+    public static void PrintBuildModelDataset()
     {
-        Console.WriteLine("Build Weibull dataset usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-weibull-dataset \\");
+        Console.WriteLine("Build live model dataset usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-model-dataset \\");
         Console.WriteLine("    --league \"NPL NSW\" --season-ids 57783,88562 --from-round 1 --to-round 30 \\");
-        Console.WriteLine("    --output data/weibull/npl-nsw-multi-season-goals.csv");
+        Console.WriteLine("    --from-minute 1 --to-minute 89 --minute-step 1 --history-matches 10 \\");
+        Console.WriteLine("    --output data/datasets/npl-nsw-live-model.csv");
         Console.WriteLine();
-        Console.WriteLine("Build Weibull dataset arguments:");
+        Console.WriteLine("Build live model dataset arguments:");
         Console.WriteLine("  --league             Optional league name or league slug filter.");
         Console.WriteLine("  --season-id          Optional single SofaScore season id filter.");
         Console.WriteLine("  --season-ids         Optional comma-separated season ids, e.g. 57783,88562. Can be used instead of --season-id.");
         Console.WriteLine("  --round              Optional single round filter.");
         Console.WriteLine("  --from-round         Optional first round filter.");
         Console.WriteLine("  --to-round           Optional last round filter.");
-        Console.WriteLine("  --output             Output CSV path. Default: data/weibull/{league}-{season selection}-goals.csv");
-        Console.WriteLine("  --max-model-minute   Cap GoalMinuteForModel at this value. Default: 90. Use 0 for no cap.");
+        Console.WriteLine("  --from-minute        First snapshot minute. Default: 1");
+        Console.WriteLine("  --to-minute          Last snapshot minute. Default: 89");
+        Console.WriteLine("  --minute-step        Snapshot interval in minutes. Default: 1");
+        Console.WriteLine("  --history-matches    Prior same-league matches per team for rolling pre-match features. Default: 10");
+        Console.WriteLine("  --output             Output CSV path. Default: data/datasets/{league}-{season selection}-live-model.csv");
+        Console.WriteLine("  --max-model-minute   Maximum supported snapshot minute. Default: 90");
         Console.WriteLine("  --include-unreliable true/false. Include matches where final score does not match goal events. Default: false");
         Console.WriteLine("  --max-examples       Maximum warning examples printed. Default: 20");
         Console.WriteLine();
-        Console.WriteLine("Output is one row per reliable goal event. It includes score-before and score-state fields for state-aware timing models.");
+        Console.WriteLine("Output is one row per snapshot. It includes live score/card/goal-recency state, rolling prior team features from goals/xG/shots/shots on goal/corners/possession/red cards, and remaining-goal targets.");
+        Console.WriteLine("Legacy alias: build-weibull-dataset currently routes to the same new builder.");
     }
 
 

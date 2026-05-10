@@ -22,7 +22,8 @@ try
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
         "import-sofascore" => await RunImportSofaScore(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
-        "build-weibull-dataset" => await RunBuildWeibullDataset(commandArgs),
+        "build-model-dataset" => await RunBuildModelDataset(commandArgs),
+        "build-weibull-dataset" => await RunBuildModelDataset(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
         "backtest-timing-model" => await RunBacktestTimingModel(commandArgs),
         "price-live-total" => await RunPriceLiveTotal(commandArgs),
@@ -80,20 +81,23 @@ static async Task<int> RunDownloadSofaScore(string[] args)
 
 
 
-static async Task<int> RunBuildWeibullDataset(string[] args)
+static async Task<int> RunBuildModelDataset(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
 
-    var options = new WeibullDatasetOptions
+    var options = new LiveModelDatasetOptions
     {
         League = parsed.String("league", string.Empty),
         SeasonId = parsed.Int("season-id", 0),
         OutputPath = parsed.String("output", string.Empty),
+        FromMinute = parsed.Int("from-minute", 1),
+        ToMinute = parsed.Int("to-minute", 89),
+        MinuteStep = parsed.Int("minute-step", 1),
+        HistoryMatches = parsed.Int("history-matches", 10),
         MaxModelMinute = parsed.Int("max-model-minute", 90),
         IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
         MaxExamples = parsed.Int("max-examples", 20)
     };
-
 
     AddSeasonIds(options.SeasonIds, parsed);
 
@@ -106,29 +110,25 @@ static async Task<int> RunBuildWeibullDataset(string[] args)
         .Build();
 
     await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
-    var builder = new WeibullDatasetBuilder(dbContext, options);
-    WeibullDatasetResult result = await builder.BuildAsync(CancellationToken.None);
+    var builder = new LiveModelDatasetBuilder(dbContext, options);
+    LiveModelDatasetResult result = await builder.BuildAsync(CancellationToken.None);
 
     Console.WriteLine();
-    Console.WriteLine("Weibull dataset build done.");
+    Console.WriteLine("Live model dataset build done.");
     Console.WriteLine($"Matches checked: {result.MatchesChecked}");
     Console.WriteLine($"Finished matches: {result.FinishedMatches}");
     Console.WriteLine($"Reliable finished matches: {result.ReliableFinishedMatches}");
     Console.WriteLine($"Unreliable finished matches: {result.UnreliableFinishedMatches}");
     Console.WriteLine($"Seasons included: {(result.SeasonsIncluded.Count == 0 ? "none" : string.Join(", ", result.SeasonsIncluded))}");
-    Console.WriteLine($"Goal rows written: {result.GoalRowsWritten}");
+    Console.WriteLine($"Snapshot rows written: {result.SnapshotRowsWritten}");
     Console.WriteLine($"Output: {result.OutputPath}");
-    Console.WriteLine($"Warnings: {result.Warnings.Count}");
 
     if (result.Warnings.Count > 0)
     {
         Console.WriteLine();
         Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings.Take(options.MaxExamples + 1))
+        foreach (string warning in result.Warnings)
             Console.WriteLine($"- {warning}");
-
-        if (result.Warnings.Count > options.MaxExamples + 1)
-            Console.WriteLine($"... {result.Warnings.Count - options.MaxExamples - 1} more");
     }
 
     return 0;
