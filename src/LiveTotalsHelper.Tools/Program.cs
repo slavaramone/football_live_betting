@@ -22,10 +22,8 @@ try
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
         "import-sofascore" => await RunImportSofaScore(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
-        "build-model-dataset" => await RunBuildModelDataset(commandArgs),
-        "build-weibull-dataset" => await RunBuildModelDataset(commandArgs),
+        "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
-        "backtest-timing-model" => await RunBacktestTimingModel(commandArgs),
         "price-live-total" => await RunPriceLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
@@ -81,29 +79,36 @@ static async Task<int> RunDownloadSofaScore(string[] args)
 
 
 
-static async Task<int> RunBuildModelDataset(string[] args)
+static async Task<int> RunBuildLiveTotalCalibrationDataset(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
 
-    var options = new LiveModelDatasetOptions
+    LeagueProfile? profile = null;
+    string profilesFile = parsed.String("profiles-file", "league-profiles.json");
+    if (parsed.Has("profile"))
     {
-        League = parsed.String("league", string.Empty),
-        SeasonId = parsed.Int("season-id", 0),
+        LeagueProfileStore profileStore = await LeagueProfileStore.LoadAsync(profilesFile, CancellationToken.None);
+        profile = profileStore.FindRequired(parsed.RequiredString("profile"));
+    }
+
+    string modelPath = parsed.Has("model")
+        ? parsed.RequiredString("model")
+        : profile?.ModelPath ?? throw new ArgumentException("Missing required argument --model, or provide --profile with modelPath in league-profiles.json.");
+
+    var options = new LiveTotalCalibrationDatasetOptions
+    {
+        League = parsed.String("league", profile?.League ?? string.Empty),
+        ModelPath = modelPath,
         OutputPath = parsed.String("output", string.Empty),
-        FromMinute = parsed.Int("from-minute", 1),
-        ToMinute = parsed.Int("to-minute", 89),
-        MinuteStep = parsed.Int("minute-step", 1),
-        HistoryMatches = parsed.Int("history-matches", 10),
-        MinPreviousTeamMatches = parsed.Int("min-previous-team-matches", 5),
-        MaxModelMinute = parsed.Int("max-model-minute", 90),
+        EmpiricalWeight = parsed.Double("empirical-weight", profile?.DefaultEmpiricalWeight ?? 0.80),
         IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
         MaxExamples = parsed.Int("max-examples", 20)
     };
 
     AddSeasonIds(options.SeasonIds, parsed);
-
     if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
         AddRounds(options.Rounds, parsed);
+    AddOptionalIntList(options.SnapshotMinutes, parsed, "minutes", clearExisting: true);
 
     IConfiguration configuration = new ConfigurationBuilder()
         .SetBasePath(AppContext.BaseDirectory)
@@ -111,31 +116,24 @@ static async Task<int> RunBuildModelDataset(string[] args)
         .Build();
 
     await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
-    var builder = new LiveModelDatasetBuilder(dbContext, options);
-    LiveModelDatasetResult result = await builder.BuildAsync(CancellationToken.None);
+    var builder = new LiveTotalCalibrationDatasetBuilder(dbContext, options);
+    LiveTotalCalibrationDatasetResult result = await builder.BuildAsync(CancellationToken.None);
 
     Console.WriteLine();
-    Console.WriteLine("Live model dataset build done.");
+    Console.WriteLine("Live total calibration dataset build done.");
+    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(options.League) ? "all" : options.League)}");
+    Console.WriteLine($"Seasons included: {(result.SeasonsIncluded.Count == 0 ? "none" : string.Join(", ", result.SeasonsIncluded))}");
     Console.WriteLine($"Matches checked: {result.MatchesChecked}");
     Console.WriteLine($"Finished matches: {result.FinishedMatches}");
     Console.WriteLine($"Reliable finished matches: {result.ReliableFinishedMatches}");
     Console.WriteLine($"Unreliable finished matches: {result.UnreliableFinishedMatches}");
-    Console.WriteLine($"Skipped for insufficient same-season team history: {result.SkippedInsufficientHistoryMatches}");
-    Console.WriteLine($"Seasons included: {(result.SeasonsIncluded.Count == 0 ? "none" : string.Join(", ", result.SeasonsIncluded))}");
-    Console.WriteLine($"Snapshot rows written: {result.SnapshotRowsWritten}");
+    Console.WriteLine($"States written: {result.StatesWritten}");
     Console.WriteLine($"Output: {result.OutputPath}");
-
-    if (result.Warnings.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings)
-            Console.WriteLine($"- {warning}");
-    }
+    foreach (string warning in result.Warnings)
+        Console.WriteLine($"Warning: {warning}");
 
     return 0;
 }
-
 
 static async Task<int> RunFitWeibull(string[] args)
 {
@@ -143,11 +141,9 @@ static async Task<int> RunFitWeibull(string[] args)
 
     var options = new WeibullFitOptions
     {
-        InputPath = parsed.RequiredString("input"),
         OutputPath = parsed.String("output", string.Empty),
         League = parsed.String("league", string.Empty),
         MaxMinute = parsed.Int("max-minute", 90),
-        MinuteColumn = parsed.String("minute-column", "GoalMinuteForModel"),
         GroupByColumn = parsed.String("group-by", string.Empty),
         MinGroupGoals = parsed.Int("min-group-goals", 30),
         MaxIterations = parsed.Int("max-iterations", 100),
@@ -155,15 +151,42 @@ static async Task<int> RunFitWeibull(string[] args)
         BlendWeibullWeight = parsed.Double("blend-weibull-weight", 0.30)
     };
 
+    var sampleOptions = new WeibullDbSampleOptions
+    {
+        League = options.League,
+        GroupByColumn = options.GroupByColumn,
+        MaxMinute = options.MaxMinute,
+        IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
+        MaxExamples = parsed.Int("max-examples", 20)
+    };
+    AddSeasonIds(sampleOptions.SeasonIds, parsed);
+    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
+        AddRounds(sampleOptions.Rounds, parsed);
+
+    IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+
+    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
+    var sampleLoader = new WeibullDbSampleLoader(dbContext, sampleOptions);
+    WeibullDbSampleResult sample = await sampleLoader.LoadAsync(CancellationToken.None);
+
     var fitter = new WeibullModelFitter(options);
-    WeibullFitResult result = await fitter.FitAsync(CancellationToken.None);
+    WeibullFitResult result = await fitter.FitAsync(sample.Rows, "database", CancellationToken.None);
+    foreach (string warning in sample.Warnings)
+        result.Warnings.Insert(0, warning);
 
     Console.WriteLine();
     Console.WriteLine("Weibull fit done.");
-    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine("Source: database");
     Console.WriteLine($"Output: {result.OutputPath}");
     Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? "unknown" : result.League)}");
     Console.WriteLine($"Seasons included: {(result.SeasonIds.Count == 0 ? "unknown" : string.Join(", ", result.SeasonIds))}");
+    Console.WriteLine($"Matches checked: {sample.MatchesChecked}");
+    Console.WriteLine($"Finished matches: {sample.FinishedMatches}");
+    Console.WriteLine($"Reliable finished matches: {sample.ReliableFinishedMatches}");
+    Console.WriteLine($"Unreliable finished matches: {sample.UnreliableFinishedMatches}");
     Console.WriteLine($"Goals used: {result.GoalCount}");
     Console.WriteLine($"Matches represented: {result.MatchCount}");
     Console.WriteLine($"Mean goal minute: {result.MeanGoalMinute:0.00}");
@@ -194,7 +217,6 @@ static async Task<int> RunFitWeibull(string[] args)
     foreach (TimingModelFitScore score in result.FitScores.OrderBy(x => x.MeanAbsoluteBucketError))
         Console.WriteLine($"{score.Model,-9}   {score.MeanAbsoluteBucketError,7:P2}   {score.RootMeanSquaredBucketError,7:P2}   {score.MaxAbsoluteBucketError,7:P2}");
 
-
     if (result.Groups.Count > 0)
     {
         Console.WriteLine();
@@ -218,8 +240,6 @@ static async Task<int> RunFitWeibull(string[] args)
 
     return 0;
 }
-
-
 
 
 static async Task<int> RunPriceLiveTotal(string[] args)
@@ -402,89 +422,6 @@ static string FormatFairOdds(double odds)
     return odds.ToString("0.###", CultureInfo.InvariantCulture);
 }
 
-
-static async Task<int> RunBacktestTimingModel(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-
-    var options = new TimingBacktestOptions
-    {
-        League = parsed.String("league", string.Empty),
-        MaxModelMinute = parsed.Int("max-model-minute", 90),
-        MinTrainingSnapshots = parsed.Int("min-training-snapshots", 20),
-        IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
-        WalkForward = parsed.Bool("walk-forward", false),
-        UseCurrentSeasonVolumeCalibration = parsed.Bool("use-current-season-volume-calibration", false),
-        UseScoreStateCurrentSeasonVolumeCalibration = parsed.Bool("use-score-state-volume-calibration", false),
-        PriorStrengthMatches = parsed.Int("prior-strength-matches", 100),
-        OutputPath = parsed.String("output", string.Empty)
-    };
-
-    AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
-    AddRequiredIntList(options.BacktestSeasonIds, parsed, "backtest-season-ids");
-    AddOptionalIntList(options.SnapshotMinutes, parsed, "minutes", clearExisting: true);
-    AddOptionalDoubleList(options.TestEmpiricalWeights, parsed, "test-empirical-weights", clearExisting: true);
-
-    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
-        AddRounds(options.Rounds, parsed);
-
-    IConfiguration configuration = new ConfigurationBuilder()
-        .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-        .Build();
-
-    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
-    var backtester = new TimingModelBacktester(dbContext, options);
-    TimingBacktestResult result = await backtester.RunAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("Timing model backtest done.");
-    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(options.League) ? "all" : options.League)}");
-    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
-    Console.WriteLine($"Backtest seasons: {string.Join(", ", result.BacktestSeasonIds)}");
-    Console.WriteLine($"Training matches checked: {result.TrainingMatchesChecked}");
-    Console.WriteLine($"Training reliable matches: {result.TrainingReliableMatches}");
-    Console.WriteLine($"Backtest matches checked: {result.BacktestMatchesChecked}");
-    Console.WriteLine($"Backtest reliable matches: {result.BacktestReliableMatches}");
-    Console.WriteLine($"Training snapshots: {result.TrainingSnapshots}");
-    Console.WriteLine($"Walk-forward: {result.WalkForward}");
-    Console.WriteLine($"Current-season volume calibration: {result.UseCurrentSeasonVolumeCalibration}");
-    Console.WriteLine($"Score-state current-season volume calibration: {result.UseScoreStateCurrentSeasonVolumeCalibration}");
-    if (result.UseCurrentSeasonVolumeCalibration || result.UseScoreStateCurrentSeasonVolumeCalibration)
-        Console.WriteLine($"Prior strength matches: {result.PriorStrengthMatches}");
-    Console.WriteLine($"Empirical weights tested: {string.Join(", ", result.TestedEmpiricalWeights.Select(x => x.ToString("0.##", CultureInfo.InvariantCulture)))}");
-    if (result.WalkForward)
-        Console.WriteLine($"Walk-forward prior-season snapshots added across rounds: {result.WalkForwardTrainingSnapshotsAdded}");
-    Console.WriteLine($"Backtest snapshots: {result.BacktestSnapshots}");
-    if (!string.IsNullOrWhiteSpace(result.OutputPath))
-        Console.WriteLine($"Prediction CSV: {result.OutputPath}");
-
-    PrintBacktestTable("Overall", result.OverallRows);
-    PrintBacktestTable("By minute", result.ByMinuteRows);
-    PrintBacktestTable("By score state", result.ByStateRows);
-    PrintBacktestTable("By minute and score state", result.ByMinuteAndStateRows);
-
-    if (result.Warnings.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings)
-            Console.WriteLine($"- {warning}");
-    }
-
-    return 0;
-}
-
-static void PrintBacktestTable(string title, IReadOnlyList<TimingBacktestSummaryRow> rows)
-{
-    Console.WriteLine();
-    Console.WriteLine(title + ":");
-    Console.WriteLine("Group                         N   PredRem   ActRem     Bias      MAE     RMSE");
-    foreach (TimingBacktestSummaryRow row in rows)
-    {
-        Console.WriteLine($"{row.Group,-28} {row.Count,4}  {row.AvgPredictedRemainingGoals,8:0.000}  {row.AvgActualRemainingGoals,7:0.000}  {row.Bias,7:0.000}  {row.MeanAbsoluteError,7:0.000}  {row.RootMeanSquaredError,7:0.000}");
-    }
-}
 
 static async Task<int> RunValidateDb(string[] args)
 {

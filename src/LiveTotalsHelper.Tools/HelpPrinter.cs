@@ -10,10 +10,9 @@ public static class HelpPrinter
         Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON only.");
         Console.WriteLine("  import-sofascore     Import saved SofaScore JSON into PostgreSQL and apply pending migrations.");
         Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
-        Console.WriteLine("  build-model-dataset   Export one row per live match snapshot with pre-match history and live-state features.");
-        Console.WriteLine("  fit-weibull           Fit a league-wide Weibull timing model from a goal-minute CSV.");
-        Console.WriteLine("  backtest-timing-model Backtest score-state timing model using explicit training and test seasons.");
-        Console.WriteLine("  price-live-total     Price live Over totals from starting odds, score state and fitted timing model.");
+        Console.WriteLine("  build-live-total-calibration-dataset  Build correction rows using the exact live-total pricing service.");
+        Console.WriteLine("  fit-weibull                           Fit a league-wide Weibull timing model from a goal-minute CSV.");
+        Console.WriteLine("  price-live-total                      Price live Over totals from starting odds, score state and fitted timing model.");
         Console.WriteLine();
         PrintDownloadSofaScore();
         Console.WriteLine();
@@ -21,11 +20,9 @@ public static class HelpPrinter
         Console.WriteLine();
         PrintValidateDb();
         Console.WriteLine();
-        PrintBuildModelDataset();
+        PrintBuildLiveTotalCalibrationDataset();
         Console.WriteLine();
         PrintFitWeibull();
-        Console.WriteLine();
-        PrintBacktestTimingModel();
         Console.WriteLine();
         PrintPriceLiveTotal();
     }
@@ -97,59 +94,52 @@ public static class HelpPrinter
     }
 
 
-    public static void PrintBuildModelDataset()
+    public static void PrintBuildLiveTotalCalibrationDataset()
     {
-        Console.WriteLine("Build live model dataset usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-model-dataset \\");
-        Console.WriteLine("    --league \"NPL NSW\" --season-ids 57783,88562 --from-round 1 --to-round 30 \\");
-        Console.WriteLine("    --from-minute 1 --to-minute 89 --minute-step 1 --history-matches 10 \\");
-        Console.WriteLine("    --output data/datasets/npl-nsw-live-model.csv");
+        Console.WriteLine("Build live total calibration dataset usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset \\");
+        Console.WriteLine("    --profile npl-nsw \\");
+        Console.WriteLine("    --season-ids 48254,57783,71036 \\");
+        Console.WriteLine("    --minutes 10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,85 \\");
+        Console.WriteLine("    --output data/datasets/npl-nsw-live-total-calibration.csv");
         Console.WriteLine();
-        Console.WriteLine("Build live model dataset arguments:");
-        Console.WriteLine("  --league             Optional league name or league slug filter.");
-        Console.WriteLine("  --season-id          Optional single SofaScore season id filter.");
-        Console.WriteLine("  --season-ids         Optional comma-separated season ids, e.g. 57783,88562. Can be used instead of --season-id.");
-        Console.WriteLine("  --round              Optional single round filter.");
-        Console.WriteLine("  --from-round         Optional first round filter.");
-        Console.WriteLine("  --to-round           Optional last round filter.");
-        Console.WriteLine("  --from-minute        First snapshot minute. Default: 1");
-        Console.WriteLine("  --to-minute          Last snapshot minute. Default: 89");
-        Console.WriteLine("  --minute-step        Snapshot interval in minutes. Default: 1");
-        Console.WriteLine("  --history-matches    Prior same-season matches per team for rolling pre-match features. Default: 10");
-        Console.WriteLine("  --min-previous-team-matches Minimum prior same-season matches required for both teams before a match is included. Default: 5");
-        Console.WriteLine("  --output             Output CSV path. Default: data/datasets/{league}-{season selection}-live-model.csv");
-        Console.WriteLine("  --max-model-minute   Maximum supported snapshot minute. Default: 90");
-        Console.WriteLine("  --include-unreliable true/false. Include matches where final score does not match goal events. Default: false");
-        Console.WriteLine("  --max-examples       Maximum warning examples printed. Default: 20");
+        Console.WriteLine("Arguments:");
+        Console.WriteLine("  --profile              Optional league profile key/name from league-profiles.json.");
+        Console.WriteLine("  --profiles-file        Optional profiles JSON path. Default: league-profiles.json.");
+        Console.WriteLine("  --model                Fitted timing model JSON. Required unless provided by profile.");
+        Console.WriteLine("  --league               Optional league filter. Default comes from profile when present.");
+        Console.WriteLine("  --season-id/--season-ids Optional SofaScore season filter.");
+        Console.WriteLine("  --minutes              Snapshot minutes. Default: 10,15,...,85.");
+        Console.WriteLine("  --empirical-weight     Optional override. Default comes from profile, otherwise 0.80.");
+        Console.WriteLine("  --output               Output CSV path. Default: data/datasets/<league>-<seasons>-live-total-calibration.csv.");
         Console.WriteLine();
-        Console.WriteLine("Output is one row per snapshot. It includes live score/card/goal-recency state, rolling prior same-season team features from goals/xG/shots/shots on goal/corners/possession/red cards, and remaining-goal targets.");
-        Console.WriteLine("Matches are skipped until both teams have at least --min-previous-team-matches earlier finished reliable matches in the same season.");
-        Console.WriteLine("Legacy alias: build-weibull-dataset currently routes to the same new builder.");
+        Console.WriteLine("No odds are required. Each row stores one historical live state, the same fitted timing-share components used by `price-live-total`, and the realised remaining goals.");
     }
-
 
     public static void PrintFitWeibull()
     {
         Console.WriteLine("Fit Weibull usage:");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-weibull \\");
-        Console.WriteLine("    --input data/weibull/npl-nsw-multi-season-goals.csv \\");
-        Console.WriteLine("    --league \"NPL NSW\" \\");
-        Console.WriteLine("    --output data/models/weibull/npl-nsw.json");
+        Console.WriteLine("    --league \"Norwegian 1st Division\" \\");
+        Console.WriteLine("    --season-ids 2022,2023,2024,2025 \\");
+        Console.WriteLine("    --group-by ScoreStateBefore \\");
+        Console.WriteLine("    --output data/models/weibull/norwegian-1st-division-2022-2025.json");
         Console.WriteLine();
         Console.WriteLine("Fit Weibull arguments:");
-        Console.WriteLine("  --input              Required input CSV produced by build-weibull-dataset.");
+        Console.WriteLine("  --league             Required league filter.");
+        Console.WriteLine("  --season-id/--season-ids Optional SofaScore season filter.");
+        Console.WriteLine("  --round/--from-round/--to-round Optional round filter.");
         Console.WriteLine("  --output             Output JSON model path. Default: data/models/weibull/{league}-{season selection}.json");
-        Console.WriteLine("  --league             Optional league name stored in output model metadata.");
         Console.WriteLine("  --max-minute         Normalize CDF/remaining share to this match minute. Default: 90");
-        Console.WriteLine("  --minute-column      CSV column to fit. Default: GoalMinuteForModel");
-        Console.WriteLine("  --group-by           Optional CSV column for state-aware fits, e.g. ScoreStateBefore, GoalTeamStateBefore, LeadingTeamBefore.");
+        Console.WriteLine("  --group-by           Optional DB-backed grouping. Currently supported: ScoreStateBefore.");
         Console.WriteLine("  --min-group-goals    Minimum goals required to fit a group model. Default: 30");
         Console.WriteLine("  --max-iterations     Maximum MLE iterations. Default: 100");
         Console.WriteLine("  --tolerance          MLE convergence tolerance. Default: 1e-9");
         Console.WriteLine("  --blend-weibull-weight Weight for blended model. Default: 0.30, so blend = 30% Weibull + 70% empirical.");
+        Console.WriteLine("  --include-unreliable true/false. Default: false.");
         Console.WriteLine();
-        Console.WriteLine("Output JSON stores three timing models: pure Weibull, empirical bucket curve, and blended Weibull+empirical model.");
-        Console.WriteLine("Use --group-by ScoreStateBefore after rebuilding the dataset to produce Level/OneGoalMargin/TwoGoalMargin/ThreePlusGoalMargin models.");
+        Console.WriteLine("The fitting sample is built directly from imported database matches and goal events; no input CSV is required.");
+        Console.WriteLine("Output JSON stores pure Weibull, empirical bucket, blended, and optional score-state group timing models.");
     }
 
     public static void PrintValidateDb()
@@ -170,41 +160,6 @@ public static class HelpPrinter
         Console.WriteLine("  --max-examples       Maximum examples printed per check. Default: 20");
         Console.WriteLine();
         Console.WriteLine("Validation checks include score vs goal events, goal timing ranges, score progression, future fixtures with details, missing model stats, duplicated incidents and red-card stat consistency.");
-    }
-
-
-    public static void PrintBacktestTimingModel()
-    {
-        Console.WriteLine("Backtest timing model usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- backtest-timing-model \\");
-        Console.WriteLine("    --league \"NPL New South Wales\" \\");
-        Console.WriteLine("    --training-season-ids 48254,57783 \\");
-        Console.WriteLine("    --backtest-season-ids 71036 \\");
-        Console.WriteLine("    --minutes 15,30,45,60,75 \\");
-        Console.WriteLine("    --walk-forward true \\");
-        Console.WriteLine("    --use-current-season-volume-calibration true \\");
-        Console.WriteLine("    --prior-strength-matches 100 \\");
-        Console.WriteLine("    --output data/backtests/npl-nsw-2023-2024-vs-2025.csv");
-        Console.WriteLine();
-        Console.WriteLine("Backtest timing model arguments:");
-        Console.WriteLine("  --league                 Optional league name or slug filter.");
-        Console.WriteLine("  --training-season-ids    Required comma-separated base training season ids, e.g. 48254,57783.");
-        Console.WriteLine("  --backtest-season-ids    Required comma-separated backtest season ids, e.g. 71036.");
-        Console.WriteLine("  --minutes                Snapshot minutes. Default: 15,30,45,60,75.");
-        Console.WriteLine("  --walk-forward           true/false. If true, each test round trains on base seasons plus earlier rounds from the tested season. Default: false.");
-        Console.WriteLine("  --use-current-season-volume-calibration true/false. Requires walk-forward. Applies shrunk current-season goals-per-match factor from prior rounds. Default: false.");
-        Console.WriteLine("  --use-score-state-volume-calibration true/false. Requires walk-forward. Applies score-state-specific current-season volume factors where enough data exists. Default: false.");
-        Console.WriteLine("  --test-empirical-weights Comma-separated empirical weights for blend testing. 1.0 = pure empirical, 0.0 = pure Weibull. Default: 1.0.");
-        Console.WriteLine("  --prior-strength-matches Prior strength for current-season volume shrinkage. Default: 100.");
-        Console.WriteLine("  --round                  Optional single test round filter. In walk-forward mode, earlier rounds from that season can still be used as prior data.");
-        Console.WriteLine("  --from-round             Optional first test round filter.");
-        Console.WriteLine("  --to-round               Optional last test round filter.");
-        Console.WriteLine("  --min-training-snapshots Minimum exact minute+state training snapshots before fallback. Default: 20.");
-        Console.WriteLine("  --max-model-minute       Cap goal minutes at this value. Default: 90.");
-        Console.WriteLine("  --include-unreliable     true/false. Include matches where final score does not match goal events. Default: false.");
-        Console.WriteLine("  --output                 Optional CSV path for per-snapshot predictions.");
-        Console.WriteLine();
-        Console.WriteLine("This is not a betting/odds backtest. It tests whether score-state timing estimates trained on selected seasons predict actual remaining goals in held-out seasons.");
     }
 
 

@@ -22,7 +22,7 @@ public sealed class WeibullFitOptions
 
 public sealed class WeibullFitResult
 {
-    public string InputPath { get; set; } = string.Empty;
+    public string InputSource { get; set; } = string.Empty;
     public string OutputPath { get; set; } = string.Empty;
     public string League { get; set; } = string.Empty;
     public List<int> SeasonIds { get; } = [];
@@ -145,6 +145,15 @@ public sealed class BlendedTimingModel
     public string CdfUsage { get; set; } = "elapsedShare = WeibullWeight * WeibullElapsedShare + EmpiricalWeight * EmpiricalElapsedShare.";
 }
 
+public sealed class WeibullGoalTimingRow
+{
+    public double Minute { get; set; }
+    public int SeasonId { get; set; }
+    public string MatchId { get; set; } = string.Empty;
+    public string League { get; set; } = string.Empty;
+    public string GroupValue { get; set; } = "All";
+}
+
 public sealed class WeibullModelFitter
 {
     private readonly WeibullFitOptions _options;
@@ -154,25 +163,14 @@ public sealed class WeibullModelFitter
         _options = options;
     }
 
-    public async Task<WeibullFitResult> FitAsync(CancellationToken cancellationToken)
+    public async Task<WeibullFitResult> FitAsync(IReadOnlyList<WeibullGoalTimingRow> parsedRows, string inputSource, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(_options.InputPath))
-            throw new ArgumentException("Missing required argument --input.");
-
-        if (!File.Exists(_options.InputPath))
-            throw new FileNotFoundException("Weibull dataset CSV was not found.", _options.InputPath);
-
         if (_options.MaxMinute <= 0)
             throw new ArgumentException("--max-minute must be greater than 0.");
 
         if (_options.BlendWeibullWeight < 0 || _options.BlendWeibullWeight > 1)
             throw new ArgumentException("--blend-weibull-weight must be between 0 and 1.");
 
-        List<Dictionary<string, string>> csvRows = await ReadCsvAsync(_options.InputPath, cancellationToken);
-        if (csvRows.Count == 0)
-            throw new ArgumentException("Input CSV has no data rows.");
-
-        List<GoalTimingInputRow> parsedRows = ParseRows(csvRows);
         if (parsedRows.Count < 5)
             throw new ArgumentException($"Not enough goal minutes to fit timing models. Found {parsedRows.Count}, need at least 5.");
 
@@ -185,7 +183,7 @@ public sealed class WeibullModelFitter
 
         var result = new WeibullFitResult
         {
-            InputPath = _options.InputPath,
+            InputSource = inputSource,
             OutputPath = outputPath,
             League = string.IsNullOrWhiteSpace(_options.League) ? detectedLeague : _options.League,
             GoalCount = all.GoalCount,
@@ -208,29 +206,22 @@ public sealed class WeibullModelFitter
         result.FitScores.AddRange(all.FitScores);
 
         if (all.ShapeK <= 1.0)
-            result.Warnings.Add($"Fitted shapeK={all.ShapeK.ToString("0.####", CultureInfo.InvariantCulture)}. k <= 1 means goal intensity is flat/decreasing over time; check if dataset has enough lower-league goals or if model minutes are wrong.");
+            result.Warnings.Add($"Fitted shapeK={all.ShapeK.ToString("0.####", CultureInfo.InvariantCulture)}. k <= 1 means goal intensity is flat/decreasing over time; check if the goal minutes are correct.");
 
         if (all.CdfAtMaxMinute < 0.85)
             result.Warnings.Add($"Weibull CDF at max minute is only {all.CdfAtMaxMinute:P1}. Live model will normalize by this value, but inspect the fit.");
 
         if (!string.IsNullOrWhiteSpace(_options.GroupByColumn))
         {
-            if (!csvRows[0].ContainsKey(_options.GroupByColumn))
+            foreach (IGrouping<string, WeibullGoalTimingRow> group in parsedRows.GroupBy(x => x.GroupValue).OrderBy(x => x.Key))
             {
-                result.Warnings.Add($"Group-by column '{_options.GroupByColumn}' was not found in the CSV. Only All model was fitted.");
-            }
-            else
-            {
-                foreach (IGrouping<string, GoalTimingInputRow> group in parsedRows.GroupBy(x => x.GroupValue).OrderBy(x => x.Key))
+                if (group.Count() < _options.MinGroupGoals)
                 {
-                    if (group.Count() < _options.MinGroupGoals)
-                    {
-                        result.Warnings.Add($"Skipped group '{group.Key}' because it has only {group.Count()} goals; minimum is {_options.MinGroupGoals}.");
-                        continue;
-                    }
-
-                    result.Groups.Add(FitGroup(group.Key, group.ToList(), edges));
+                    result.Warnings.Add($"Skipped group '{group.Key}' because it has only {group.Count()} goals; minimum is {_options.MinGroupGoals}.");
+                    continue;
                 }
+
+                result.Groups.Add(FitGroup(group.Key, group.ToList(), edges));
             }
         }
 
@@ -278,9 +269,9 @@ public sealed class WeibullModelFitter
         return result;
     }
 
-    private List<GoalTimingInputRow> ParseRows(List<Dictionary<string, string>> rows)
+    private List<WeibullGoalTimingRow> ParseRows(List<Dictionary<string, string>> rows)
     {
-        var parsed = new List<GoalTimingInputRow>();
+        var parsed = new List<WeibullGoalTimingRow>();
 
         foreach (Dictionary<string, string> row in rows)
         {
@@ -298,7 +289,7 @@ public sealed class WeibullModelFitter
             if (!string.IsNullOrWhiteSpace(_options.GroupByColumn) && row.TryGetValue(_options.GroupByColumn, out string? groupRaw) && !string.IsNullOrWhiteSpace(groupRaw))
                 groupValue = groupRaw.Trim();
 
-            parsed.Add(new GoalTimingInputRow
+            parsed.Add(new WeibullGoalTimingRow
             {
                 Minute = minute,
                 SeasonId = GetInt(row, "SofaScoreSeasonId"),
@@ -311,7 +302,7 @@ public sealed class WeibullModelFitter
         return parsed;
     }
 
-    private TimingModelGroupResult FitGroup(string groupName, IReadOnlyList<GoalTimingInputRow> rows, IReadOnlyList<int> edges)
+    private TimingModelGroupResult FitGroup(string groupName, IReadOnlyList<WeibullGoalTimingRow> rows, IReadOnlyList<int> edges)
     {
         List<double> minutes = rows.Select(x => x.Minute).ToList();
         List<EmpiricalTimingBucket> empiricalBuckets = BuildEmpiricalBuckets(minutes, edges);
@@ -695,15 +686,6 @@ public sealed class WeibullModelFitter
             records.Add(record);
 
         return records;
-    }
-
-    private sealed class GoalTimingInputRow
-    {
-        public double Minute { get; set; }
-        public int SeasonId { get; set; }
-        public string MatchId { get; set; } = string.Empty;
-        public string League { get; set; } = string.Empty;
-        public string GroupValue { get; set; } = "All";
     }
 
     private readonly record struct WeibullEstimate(double ShapeK, double ScaleLambda, double LogLikelihood);
