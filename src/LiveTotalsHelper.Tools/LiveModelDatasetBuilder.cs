@@ -17,6 +17,7 @@ public sealed class LiveModelDatasetOptions
     public int ToMinute { get; set; } = 89;
     public int MinuteStep { get; set; } = 1;
     public int HistoryMatches { get; set; } = 10;
+    public int MinPreviousTeamMatches { get; set; } = 5;
     public int MaxModelMinute { get; set; } = 90;
     public bool IncludeUnreliableMatches { get; set; }
     public int MaxExamples { get; set; } = 20;
@@ -28,6 +29,7 @@ public sealed class LiveModelDatasetResult
     public int FinishedMatches { get; set; }
     public int ReliableFinishedMatches { get; set; }
     public int UnreliableFinishedMatches { get; set; }
+    public int SkippedInsufficientHistoryMatches { get; set; }
     public int SnapshotRowsWritten { get; set; }
     public List<int> SeasonsIncluded { get; } = [];
     public string OutputPath { get; set; } = string.Empty;
@@ -78,8 +80,8 @@ public sealed class LiveModelDatasetBuilder
             return result;
         }
 
-        // Load all finished league matches up to the end of the selected period so historical features
-        // can use only matches played before each target match.
+        // Load league matches up to the end of the selected period so historical features
+        // can use only earlier matches from the same season as each target match.
         DateTimeOffset? maxSelectedStart = selectedMatches
             .Where(x => x.StartTimeUtc.HasValue)
             .Select(x => x.StartTimeUtc)
@@ -90,6 +92,8 @@ public sealed class LiveModelDatasetBuilder
             .Where(x => x.StartTimeUtc != null && x.StartTimeUtc <= maxSelectedStart.Value);
         if (!string.IsNullOrWhiteSpace(_options.League))
             historyMatchQuery = historyMatchQuery.Where(x => x.LeagueName == _options.League || x.LeagueSlug == _options.League);
+        if (requestedSeasonIds.Count > 0)
+            historyMatchQuery = historyMatchQuery.Where(x => requestedSeasonIds.Contains(x.SofaScoreSeasonId));
 
         List<MatchEntity> allLeagueMatches = await historyMatchQuery
             .OrderBy(x => x.StartTimeUtc)
@@ -121,7 +125,7 @@ public sealed class LiveModelDatasetBuilder
                 x => x.Key,
                 x => x.GroupBy(s => Normalize(s.Key)).ToDictionary(g => g.Key, g => g.First()));
 
-        var historyByTeam = new Dictionary<long, List<TeamHistoricalMatch>>();
+        var historyBySeasonAndTeam = new Dictionary<(int SeasonId, long TeamId), List<TeamHistoricalMatch>>();
         var rows = new List<LiveModelDatasetRow>();
         var unreliableExamples = new List<string>();
 
@@ -154,19 +158,26 @@ public sealed class LiveModelDatasetBuilder
 
                 if (reliable || _options.IncludeUnreliableMatches)
                 {
-                    TeamHistoryFeatures homeHistory = BuildHistoryFeatures(historyByTeam.GetValueOrDefault(match.HomeTeamSofaScoreId), _options.HistoryMatches);
-                    TeamHistoryFeatures awayHistory = BuildHistoryFeatures(historyByTeam.GetValueOrDefault(match.AwayTeamSofaScoreId), _options.HistoryMatches);
+                    TeamHistoryFeatures homeHistory = BuildHistoryFeatures(historyBySeasonAndTeam.GetValueOrDefault((match.SofaScoreSeasonId, match.HomeTeamSofaScoreId)), _options.HistoryMatches);
+                    TeamHistoryFeatures awayHistory = BuildHistoryFeatures(historyBySeasonAndTeam.GetValueOrDefault((match.SofaScoreSeasonId, match.AwayTeamSofaScoreId)), _options.HistoryMatches);
 
-                    foreach (int minute in SnapshotMinutes())
+                    if (homeHistory.MatchesUsed < _options.MinPreviousTeamMatches || awayHistory.MatchesUsed < _options.MinPreviousTeamMatches)
                     {
-                        rows.Add(BuildSnapshotRow(match, matchEvents, matchGoals, finalHome, finalAway, reliable, minute, homeHistory, awayHistory));
+                        result.SkippedInsufficientHistoryMatches++;
+                    }
+                    else
+                    {
+                        foreach (int minute in SnapshotMinutes())
+                        {
+                            rows.Add(BuildSnapshotRow(match, matchEvents, matchGoals, finalHome, finalAway, reliable, minute, homeHistory, awayHistory));
+                        }
                     }
                 }
             }
 
             if (reliable)
             {
-                AddHistoricalMatch(historyByTeam, match, statsByMatch.GetValueOrDefault(match.Id), finalHome, finalAway);
+                AddHistoricalMatch(historyBySeasonAndTeam, match, statsByMatch.GetValueOrDefault(match.Id), finalHome, finalAway);
             }
         }
 
@@ -291,7 +302,7 @@ public sealed class LiveModelDatasetBuilder
     }
 
     private static void AddHistoricalMatch(
-        IDictionary<long, List<TeamHistoricalMatch>> historyByTeam,
+        IDictionary<(int SeasonId, long TeamId), List<TeamHistoricalMatch>> historyBySeasonAndTeam,
         MatchEntity match,
         IReadOnlyDictionary<string, MatchTeamStatEntity>? stats,
         int finalHome,
@@ -337,10 +348,11 @@ public sealed class LiveModelDatasetBuilder
 
         void AddOne(long teamId, TeamHistoricalMatch item)
         {
-            if (!historyByTeam.TryGetValue(teamId, out List<TeamHistoricalMatch>? history))
+            var key = (match.SofaScoreSeasonId, teamId);
+            if (!historyBySeasonAndTeam.TryGetValue(key, out List<TeamHistoricalMatch>? history))
             {
                 history = [];
-                historyByTeam[teamId] = history;
+                historyBySeasonAndTeam[key] = history;
             }
             history.Add(item);
         }
@@ -452,6 +464,10 @@ public sealed class LiveModelDatasetBuilder
             throw new ArgumentException("--minute-step must be at least 1.");
         if (_options.HistoryMatches < 1)
             throw new ArgumentException("--history-matches must be at least 1.");
+        if (_options.MinPreviousTeamMatches < 0)
+            throw new ArgumentException("--min-previous-team-matches cannot be negative.");
+        if (_options.MinPreviousTeamMatches > _options.HistoryMatches)
+            throw new ArgumentException("--min-previous-team-matches cannot exceed --history-matches.");
     }
 
     private static string Normalize(string? value)

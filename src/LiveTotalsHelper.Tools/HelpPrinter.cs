@@ -115,13 +115,15 @@ public static class HelpPrinter
         Console.WriteLine("  --from-minute        First snapshot minute. Default: 1");
         Console.WriteLine("  --to-minute          Last snapshot minute. Default: 89");
         Console.WriteLine("  --minute-step        Snapshot interval in minutes. Default: 1");
-        Console.WriteLine("  --history-matches    Prior same-league matches per team for rolling pre-match features. Default: 10");
+        Console.WriteLine("  --history-matches    Prior same-season matches per team for rolling pre-match features. Default: 10");
+        Console.WriteLine("  --min-previous-team-matches Minimum prior same-season matches required for both teams before a match is included. Default: 5");
         Console.WriteLine("  --output             Output CSV path. Default: data/datasets/{league}-{season selection}-live-model.csv");
         Console.WriteLine("  --max-model-minute   Maximum supported snapshot minute. Default: 90");
         Console.WriteLine("  --include-unreliable true/false. Include matches where final score does not match goal events. Default: false");
         Console.WriteLine("  --max-examples       Maximum warning examples printed. Default: 20");
         Console.WriteLine();
-        Console.WriteLine("Output is one row per snapshot. It includes live score/card/goal-recency state, rolling prior team features from goals/xG/shots/shots on goal/corners/possession/red cards, and remaining-goal targets.");
+        Console.WriteLine("Output is one row per snapshot. It includes live score/card/goal-recency state, rolling prior same-season team features from goals/xG/shots/shots on goal/corners/possession/red cards, and remaining-goal targets.");
+        Console.WriteLine("Matches are skipped until both teams have at least --min-previous-team-matches earlier finished reliable matches in the same season.");
         Console.WriteLine("Legacy alias: build-weibull-dataset currently routes to the same new builder.");
     }
 

@@ -94,6 +94,7 @@ static async Task<int> RunBuildModelDataset(string[] args)
         ToMinute = parsed.Int("to-minute", 89),
         MinuteStep = parsed.Int("minute-step", 1),
         HistoryMatches = parsed.Int("history-matches", 10),
+        MinPreviousTeamMatches = parsed.Int("min-previous-team-matches", 5),
         MaxModelMinute = parsed.Int("max-model-minute", 90),
         IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
         MaxExamples = parsed.Int("max-examples", 20)
@@ -119,6 +120,7 @@ static async Task<int> RunBuildModelDataset(string[] args)
     Console.WriteLine($"Finished matches: {result.FinishedMatches}");
     Console.WriteLine($"Reliable finished matches: {result.ReliableFinishedMatches}");
     Console.WriteLine($"Unreliable finished matches: {result.UnreliableFinishedMatches}");
+    Console.WriteLine($"Skipped for insufficient same-season team history: {result.SkippedInsufficientHistoryMatches}");
     Console.WriteLine($"Seasons included: {(result.SeasonsIncluded.Count == 0 ? "none" : string.Join(", ", result.SeasonsIncluded))}");
     Console.WriteLine($"Snapshot rows written: {result.SnapshotRowsWritten}");
     Console.WriteLine($"Output: {result.OutputPath}");
