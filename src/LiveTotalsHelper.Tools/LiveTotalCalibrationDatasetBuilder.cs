@@ -17,6 +17,7 @@ public sealed class LiveTotalCalibrationDatasetOptions
     public string OutputPath { get; set; } = string.Empty;
     public double EmpiricalWeight { get; set; } = 0.80;
     public bool IncludeUnreliableMatches { get; set; }
+    public bool IncludeEventTriggers { get; set; } = true;
     public int MaxExamples { get; set; } = 20;
     public List<int> SnapshotMinutes { get; } = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85];
 }
@@ -27,7 +28,10 @@ public sealed class LiveTotalCalibrationDatasetResult
     public int FinishedMatches { get; set; }
     public int ReliableFinishedMatches { get; set; }
     public int UnreliableFinishedMatches { get; set; }
-    public int StatesWritten { get; set; }
+    public int FixedMinuteStatesWritten { get; set; }
+    public int AfterGoalStatesWritten { get; set; }
+    public int AfterRedCardStatesWritten { get; set; }
+    public int StatesWritten => FixedMinuteStatesWritten + AfterGoalStatesWritten + AfterRedCardStatesWritten;
     public List<int> SeasonsIncluded { get; } = [];
     public string OutputPath { get; set; } = string.Empty;
     public List<string> Warnings { get; } = [];
@@ -90,7 +94,12 @@ public sealed class LiveTotalCalibrationDatasetBuilder
 
             result.FinishedMatches++;
             List<MatchEventEntity> matchEvents = eventsByMatch.GetValueOrDefault(match.Id) ?? [];
-            List<MatchEventEntity> goals = matchEvents.Where(x => x.IncidentType == "goal").ToList();
+            List<MatchEventEntity> orderedEvents = matchEvents
+                .OrderBy(x => x.TimeSeconds ?? (x.Minute * 60))
+                .ThenBy(x => x.Id)
+                .ToList();
+            List<MatchEventEntity> goals = orderedEvents.Where(IsGoal).ToList();
+
             int finalHome = match.HomeScoreCurrent ?? 0;
             int finalAway = match.AwayScoreCurrent ?? 0;
             bool reliable = finalHome == goals.Count(x => x.IsHome) && finalAway == goals.Count(x => !x.IsHome);
@@ -112,63 +121,76 @@ public sealed class LiveTotalCalibrationDatasetBuilder
 
             foreach (int minute in _options.SnapshotMinutes.Distinct().OrderBy(x => x))
             {
-                List<MatchEventEntity> goalsBeforeMinute = goals.Where(x => GoalMinuteForModel(x) < minute).ToList();
-                int homeGoals = goalsBeforeMinute.Count(x => x.IsHome);
-                int awayGoals = goalsBeforeMinute.Count(x => !x.IsHome);
-                int currentTotal = homeGoals + awayGoals;
-                int homeRedCards = matchEvents.Count(x => IsRedCard(x) && x.IsHome && EventMinuteForModel(x) < minute);
-                int awayRedCards = matchEvents.Count(x => IsRedCard(x) && !x.IsHome && EventMinuteForModel(x) < minute);
-                int lastGoalMinute = goalsBeforeMinute.Count == 0 ? -1 : goalsBeforeMinute.Max(GoalMinuteForModel);
+                List<MatchEventEntity> eventsBeforeMinute = orderedEvents.Where(x => EventMinuteForModel(x) < minute).ToList();
+                MatchState state = BuildState(eventsBeforeMinute);
+                rows.Add(CreateRow(
+                    match,
+                    model,
+                    finalHome,
+                    finalAway,
+                    finalTotal,
+                    reliable,
+                    minute,
+                    LiveTotalStateTrigger.FixedMinute,
+                    triggerEventMinute: -1,
+                    triggerEventSide: string.Empty,
+                    state));
+                result.FixedMinuteStatesWritten++;
+            }
 
-                string scoreState = ScoreStateResolver.FromScore(homeGoals, awayGoals);
-                TimingModelSource source = ResolveTimingModel(model, scoreState);
-                TimingBlendResult timing = TimingShareCalculator.Calculate(new TimingBlendInput
-                {
-                    Minute = Math.Clamp(minute, 0, model.MaxMinute > 0 ? model.MaxMinute : 90),
-                    ShapeK = source.ShapeK,
-                    ScaleLambda = source.ScaleLambda,
-                    CdfAtMaxMinute = source.CdfAtMaxMinute,
-                    EmpiricalBuckets = MapBuckets(source.EmpiricalBuckets),
-                    EmpiricalWeight = _options.EmpiricalWeight
-                });
+            if (_options.IncludeEventTriggers)
+            {
+                var state = new MatchState();
 
-                rows.Add(new LiveTotalCalibrationDatasetRow
+                foreach (MatchEventEntity e in orderedEvents)
                 {
-                    LeagueName = match.LeagueName,
-                    LeagueSlug = match.LeagueSlug,
-                    SofaScoreSeasonId = match.SofaScoreSeasonId,
-                    SeasonName = match.SeasonName,
-                    SeasonYear = match.SeasonYear,
-                    RoundNumber = match.RoundNumber,
-                    MatchId = match.Id,
-                    SofaScoreEventId = match.SofaScoreEventId,
-                    StartTimeUtc = match.StartTimeUtc,
-                    HomeTeamName = match.HomeTeamName,
-                    AwayTeamName = match.AwayTeamName,
-                    Minute = minute,
-                    HomeGoals = homeGoals,
-                    AwayGoals = awayGoals,
-                    CurrentTotalGoals = currentTotal,
-                    GoalDifference = homeGoals - awayGoals,
-                    ScoreState = scoreState,
-                    DetailedScoreState = DetailedScoreState(homeGoals, awayGoals),
-                    HomeRedCards = homeRedCards,
-                    AwayRedCards = awayRedCards,
-                    LastGoalMinute = lastGoalMinute,
-                    HasRecentGoal = lastGoalMinute >= 0 && minute >= lastGoalMinute && minute - lastGoalMinute <= 2,
-                    SelectedTimingGroup = source.GroupName,
-                    TimingFallback = source.FallbackReason,
-                    EmpiricalWeight = timing.EmpiricalWeight,
-                    WeibullRemainingShare = timing.WeibullRemainingShare,
-                    EmpiricalRemainingShare = timing.EmpiricalRemainingShare,
-                    TimingRemainingShare = timing.BlendedRemainingShare,
-                    ActualFinalHomeGoals = finalHome,
-                    ActualFinalAwayGoals = finalAway,
-                    ActualFinalTotalGoals = finalTotal,
-                    ActualRemainingGoals = finalTotal - currentTotal,
-                    AnyFutureGoal = finalTotal > currentTotal,
-                    IsReliableMatch = reliable
-                });
+                    int minute = EventMinuteForModel(e);
+
+                    if (IsGoal(e))
+                    {
+                        if (e.IsHome)
+                            state.HomeGoals++;
+                        else
+                            state.AwayGoals++;
+
+                        state.LastGoalMinute = minute;
+
+                        rows.Add(CreateRow(
+                            match,
+                            model,
+                            finalHome,
+                            finalAway,
+                            finalTotal,
+                            reliable,
+                            minute,
+                            LiveTotalStateTrigger.AfterGoal,
+                            minute,
+                            e.IsHome ? "Home" : "Away",
+                            state.Clone()));
+                        result.AfterGoalStatesWritten++;
+                    }
+                    else if (IsRedCard(e))
+                    {
+                        if (e.IsHome)
+                            state.HomeRedCards++;
+                        else
+                            state.AwayRedCards++;
+
+                        rows.Add(CreateRow(
+                            match,
+                            model,
+                            finalHome,
+                            finalAway,
+                            finalTotal,
+                            reliable,
+                            minute,
+                            LiveTotalStateTrigger.AfterRedCard,
+                            minute,
+                            e.IsHome ? "Home" : "Away",
+                            state.Clone()));
+                        result.AfterRedCardStatesWritten++;
+                    }
+                }
             }
         }
 
@@ -179,8 +201,103 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
         await File.WriteAllTextAsync(outputPath, ToCsv(rows), Encoding.UTF8, cancellationToken);
         result.OutputPath = outputPath;
-        result.StatesWritten = rows.Count;
         return result;
+    }
+
+    private LiveTotalCalibrationDatasetRow CreateRow(
+        MatchEntity match,
+        WeibullModelFile model,
+        int finalHome,
+        int finalAway,
+        int finalTotal,
+        bool reliable,
+        int minute,
+        string stateTrigger,
+        int triggerEventMinute,
+        string triggerEventSide,
+        MatchState state)
+    {
+        int currentTotal = state.HomeGoals + state.AwayGoals;
+        int minutesSinceLastGoal = state.LastGoalMinute < 0 ? -1 : Math.Max(0, minute - state.LastGoalMinute);
+        string scoreState = ScoreStateResolver.FromScore(state.HomeGoals, state.AwayGoals);
+        TimingModelSource source = ResolveTimingModel(model, scoreState);
+        TimingBlendResult timing = TimingShareCalculator.Calculate(new TimingBlendInput
+        {
+            Minute = Math.Clamp(minute, 0, model.MaxMinute > 0 ? model.MaxMinute : 90),
+            ShapeK = source.ShapeK,
+            ScaleLambda = source.ScaleLambda,
+            CdfAtMaxMinute = source.CdfAtMaxMinute,
+            EmpiricalBuckets = MapBuckets(source.EmpiricalBuckets),
+            EmpiricalWeight = _options.EmpiricalWeight
+        });
+
+        return new LiveTotalCalibrationDatasetRow
+        {
+            LeagueName = match.LeagueName,
+            LeagueSlug = match.LeagueSlug,
+            SofaScoreSeasonId = match.SofaScoreSeasonId,
+            SeasonName = match.SeasonName,
+            SeasonYear = match.SeasonYear,
+            RoundNumber = match.RoundNumber,
+            MatchId = match.Id,
+            SofaScoreEventId = match.SofaScoreEventId,
+            StartTimeUtc = match.StartTimeUtc,
+            HomeTeamName = match.HomeTeamName,
+            AwayTeamName = match.AwayTeamName,
+            StateTrigger = stateTrigger,
+            TriggerEventMinute = triggerEventMinute,
+            TriggerEventSide = triggerEventSide,
+            Minute = minute,
+            HomeGoals = state.HomeGoals,
+            AwayGoals = state.AwayGoals,
+            CurrentTotalGoals = currentTotal,
+            GoalDifference = state.HomeGoals - state.AwayGoals,
+            ScoreState = scoreState,
+            DetailedScoreState = LiveTotalStateCorrectionResolver.DetailedScoreState(state.HomeGoals, state.AwayGoals),
+            HomeRedCards = state.HomeRedCards,
+            AwayRedCards = state.AwayRedCards,
+            RedCardDifference = state.HomeRedCards - state.AwayRedCards,
+            LastGoalMinute = state.LastGoalMinute,
+            MinutesSinceLastGoal = minutesSinceLastGoal,
+            HasRecentGoal = state.LastGoalMinute >= 0 && minutesSinceLastGoal <= 2,
+            SelectedTimingGroup = source.GroupName,
+            TimingFallback = source.FallbackReason,
+            EmpiricalWeight = timing.EmpiricalWeight,
+            WeibullRemainingShare = timing.WeibullRemainingShare,
+            EmpiricalRemainingShare = timing.EmpiricalRemainingShare,
+            TimingRemainingShare = timing.BlendedRemainingShare,
+            ActualFinalHomeGoals = finalHome,
+            ActualFinalAwayGoals = finalAway,
+            ActualFinalTotalGoals = finalTotal,
+            ActualRemainingGoals = finalTotal - currentTotal,
+            AnyFutureGoal = finalTotal > currentTotal,
+            IsReliableMatch = reliable
+        };
+    }
+
+    private static MatchState BuildState(IEnumerable<MatchEventEntity> events)
+    {
+        var state = new MatchState();
+        foreach (MatchEventEntity e in events)
+        {
+            int minute = EventMinuteForModel(e);
+            if (IsGoal(e))
+            {
+                if (e.IsHome)
+                    state.HomeGoals++;
+                else
+                    state.AwayGoals++;
+                state.LastGoalMinute = minute;
+            }
+            else if (IsRedCard(e))
+            {
+                if (e.IsHome)
+                    state.HomeRedCards++;
+                else
+                    state.AwayRedCards++;
+            }
+        }
+        return state;
     }
 
     private static async Task<WeibullModelFile> LoadModelAsync(string modelPath, CancellationToken cancellationToken)
@@ -223,7 +340,8 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         match.StatusDescription.Equals("Ended", StringComparison.OrdinalIgnoreCase) ||
         match.StatusDescription.Equals("Finished", StringComparison.OrdinalIgnoreCase);
 
-    private static int GoalMinuteForModel(MatchEventEntity e) => EventMinuteForModel(e);
+    private static bool IsGoal(MatchEventEntity e) =>
+        e.IncidentType.Equals("goal", StringComparison.OrdinalIgnoreCase);
 
     private static int EventMinuteForModel(MatchEventEntity e)
     {
@@ -235,20 +353,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
 
     private static bool IsRedCard(MatchEventEntity e) =>
         e.IncidentType.Equals("card", StringComparison.OrdinalIgnoreCase) &&
-        (e.IncidentClass?.Contains("red", StringComparison.OrdinalIgnoreCase) == true);
-
-    private static string DetailedScoreState(int homeGoals, int awayGoals)
-    {
-        if (homeGoals == 0 && awayGoals == 0) return "NilNil";
-        if (homeGoals == awayGoals) return "LevelWithGoals";
-        int margin = Math.Abs(homeGoals - awayGoals);
-        return margin switch
-        {
-            1 => "OneGoalMargin",
-            2 => "TwoGoalMargin",
-            _ => "ThreePlusGoalMargin"
-        };
-    }
+        e.IncidentClass.Contains("red", StringComparison.OrdinalIgnoreCase);
 
     private static TimingModelSource ResolveTimingModel(WeibullModelFile model, string scoreState)
     {
@@ -314,11 +419,30 @@ public sealed class LiveTotalCalibrationDatasetBuilder
     [
         "LeagueName", "LeagueSlug", "SofaScoreSeasonId", "SeasonName", "SeasonYear", "RoundNumber", "MatchId", "SofaScoreEventId", "StartTimeUtc",
         "HomeTeamName", "AwayTeamName",
+        "StateTrigger", "TriggerEventMinute", "TriggerEventSide",
         "Minute", "HomeGoals", "AwayGoals", "CurrentTotalGoals", "GoalDifference", "ScoreState", "DetailedScoreState",
-        "HomeRedCards", "AwayRedCards", "LastGoalMinute", "HasRecentGoal",
+        "HomeRedCards", "AwayRedCards", "RedCardDifference", "LastGoalMinute", "MinutesSinceLastGoal", "HasRecentGoal",
         "SelectedTimingGroup", "TimingFallback", "EmpiricalWeight", "WeibullRemainingShare", "EmpiricalRemainingShare", "TimingRemainingShare",
         "ActualFinalHomeGoals", "ActualFinalAwayGoals", "ActualFinalTotalGoals", "ActualRemainingGoals", "AnyFutureGoal", "IsReliableMatch"
     ];
+
+    private sealed class MatchState
+    {
+        public int HomeGoals { get; set; }
+        public int AwayGoals { get; set; }
+        public int HomeRedCards { get; set; }
+        public int AwayRedCards { get; set; }
+        public int LastGoalMinute { get; set; } = -1;
+
+        public MatchState Clone() => new()
+        {
+            HomeGoals = HomeGoals,
+            AwayGoals = AwayGoals,
+            HomeRedCards = HomeRedCards,
+            AwayRedCards = AwayRedCards,
+            LastGoalMinute = LastGoalMinute
+        };
+    }
 }
 
 internal sealed class LiveTotalCalibrationDatasetRow
@@ -334,6 +458,9 @@ internal sealed class LiveTotalCalibrationDatasetRow
     public DateTimeOffset? StartTimeUtc { get; set; }
     public string HomeTeamName { get; set; } = string.Empty;
     public string AwayTeamName { get; set; } = string.Empty;
+    public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
+    public int TriggerEventMinute { get; set; } = -1;
+    public string TriggerEventSide { get; set; } = string.Empty;
     public int Minute { get; set; }
     public int HomeGoals { get; set; }
     public int AwayGoals { get; set; }
@@ -343,7 +470,9 @@ internal sealed class LiveTotalCalibrationDatasetRow
     public string DetailedScoreState { get; set; } = string.Empty;
     public int HomeRedCards { get; set; }
     public int AwayRedCards { get; set; }
+    public int RedCardDifference { get; set; }
     public int LastGoalMinute { get; set; }
+    public int MinutesSinceLastGoal { get; set; }
     public bool HasRecentGoal { get; set; }
     public string SelectedTimingGroup { get; set; } = string.Empty;
     public string TimingFallback { get; set; } = string.Empty;
@@ -367,8 +496,9 @@ internal sealed class LiveTotalCalibrationDatasetRow
         [
             LeagueName, LeagueSlug, SofaScoreSeasonId.ToString(CultureInfo.InvariantCulture), SeasonName, SeasonYear, RoundNumber.ToString(CultureInfo.InvariantCulture), MatchId.ToString(CultureInfo.InvariantCulture), SofaScoreEventId.ToString(CultureInfo.InvariantCulture), StartTimeUtc?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
             HomeTeamName, AwayTeamName,
+            StateTrigger, TriggerEventMinute.ToString(CultureInfo.InvariantCulture), TriggerEventSide,
             Minute.ToString(CultureInfo.InvariantCulture), HomeGoals.ToString(CultureInfo.InvariantCulture), AwayGoals.ToString(CultureInfo.InvariantCulture), CurrentTotalGoals.ToString(CultureInfo.InvariantCulture), GoalDifference.ToString(CultureInfo.InvariantCulture), ScoreState, DetailedScoreState,
-            HomeRedCards.ToString(CultureInfo.InvariantCulture), AwayRedCards.ToString(CultureInfo.InvariantCulture), LastGoalMinute.ToString(CultureInfo.InvariantCulture), B(HasRecentGoal),
+            HomeRedCards.ToString(CultureInfo.InvariantCulture), AwayRedCards.ToString(CultureInfo.InvariantCulture), RedCardDifference.ToString(CultureInfo.InvariantCulture), LastGoalMinute.ToString(CultureInfo.InvariantCulture), MinutesSinceLastGoal.ToString(CultureInfo.InvariantCulture), B(HasRecentGoal),
             SelectedTimingGroup, TimingFallback, D(EmpiricalWeight), D(WeibullRemainingShare), D(EmpiricalRemainingShare), D(TimingRemainingShare),
             ActualFinalHomeGoals.ToString(CultureInfo.InvariantCulture), ActualFinalAwayGoals.ToString(CultureInfo.InvariantCulture), ActualFinalTotalGoals.ToString(CultureInfo.InvariantCulture), ActualRemainingGoals.ToString(CultureInfo.InvariantCulture), B(AnyFutureGoal), B(IsReliableMatch)
         ];

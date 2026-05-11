@@ -113,11 +113,12 @@ public static class HelpPrinter
         Console.WriteLine("  --model                Fitted timing model JSON. Required unless provided by profile.");
         Console.WriteLine("  --league               Optional league filter. Default comes from profile when present.");
         Console.WriteLine("  --season-id/--season-ids Optional SofaScore season filter.");
-        Console.WriteLine("  --minutes              Snapshot minutes. Default: 10,15,...,85.");
+        Console.WriteLine("  --minutes              Fixed snapshot minutes. Default: 10,15,...,85.");
+        Console.WriteLine("  --include-event-triggers true/false. Default: true; adds AfterGoal and AfterRedCard rows.");
         Console.WriteLine("  --empirical-weight     Optional override. Default comes from profile, otherwise 0.80.");
         Console.WriteLine("  --output               Output CSV path. Default: data/datasets/<league>-<seasons>-live-total-calibration.csv.");
         Console.WriteLine();
-        Console.WriteLine("No odds are required. Each row stores one historical live state, the same fitted timing-share components used by `price-live-total`, and the realised remaining goals.");
+        Console.WriteLine("No odds are required. Each row stores one historical live state with StateTrigger=FixedMinute, AfterGoal, or AfterRedCard, the fitted timing-share components used by `price-live-total`, and realised remaining goals.");
     }
 
     public static void PrintAnalyzeLiveTotalCalibration()
@@ -135,7 +136,7 @@ public static class HelpPrinter
         Console.WriteLine("  --training-season-ids   Optional comma-separated season ids used to estimate correction factors.");
         Console.WriteLine("  --test-season-ids       Optional comma-separated season ids used to evaluate correction factors.");
         Console.WriteLine();
-        Console.WriteLine("Without train/test ids, outputs all-data correction factors by minute band and detailed live score state.");
+        Console.WriteLine("Without train/test ids, outputs all-data correction factors by state trigger, minute band, and detailed live score state.");
         Console.WriteLine("With train/test ids, estimates factors on training seasons and applies them to held-out test seasons.");
     }
 
@@ -151,7 +152,7 @@ public static class HelpPrinter
         Console.WriteLine("  --input                 Required live-total calibration dataset CSV.");
         Console.WriteLine("  --training-season-ids   Required comma-separated seasons used to estimate factors.");
         Console.WriteLine("  --output                Output correction JSON path. Default: <input>-state-correction.json.");
-        Console.WriteLine("  --min-bucket-matches    Minimum distinct matches for a minute-band/state bucket. Default: 100.");
+        Console.WriteLine("  --min-bucket-matches    Minimum distinct matches for a trigger/minute-band/state bucket. Default: 100.");
         Console.WriteLine("  --min-state-matches     Minimum distinct matches for score-state fallback. Default: 200.");
         Console.WriteLine("  --min-factor            Lower clamp for factors. Default: 0.50.");
         Console.WriteLine("  --max-factor            Upper clamp for factors. Default: 2.50.");
@@ -229,7 +230,8 @@ public static class HelpPrinter
         Console.WriteLine("  --profiles-file      Optional profiles JSON path. Default: league-profiles.json copied beside the tool executable.");
         Console.WriteLine("  --model              Fitted timing model JSON. Required unless provided by profile.");
         Console.WriteLine("  --state-correction   Optional fitted live-total state-correction JSON. Can also come from profile.");
-        Console.WriteLine("                       Betting uses only exact usable minute-band/state buckets; sparse buckets are NO BET.");
+        Console.WriteLine("  --state-trigger      Optional: fixed-minute, after-goal, or after-red-card. Default: fixed-minute.");
+        Console.WriteLine("                       Betting uses only exact usable trigger/minute-band/state buckets; sparse buckets are NO BET.");
         Console.WriteLine("  --starting-line      Required starting/pre-match total line.");
         Console.WriteLine("  --starting-over      Required starting/pre-match over odds.");
         Console.WriteLine("  --starting-under     Required starting/pre-match under odds.");

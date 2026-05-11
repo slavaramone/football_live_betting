@@ -104,6 +104,7 @@ static async Task<int> RunBuildLiveTotalCalibrationDataset(string[] args)
         OutputPath = parsed.String("output", string.Empty),
         EmpiricalWeight = parsed.Double("empirical-weight", profile?.DefaultEmpiricalWeight ?? 0.80),
         IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
+        IncludeEventTriggers = parsed.Bool("include-event-triggers", true),
         MaxExamples = parsed.Int("max-examples", 20)
     };
 
@@ -130,6 +131,9 @@ static async Task<int> RunBuildLiveTotalCalibrationDataset(string[] args)
     Console.WriteLine($"Reliable finished matches: {result.ReliableFinishedMatches}");
     Console.WriteLine($"Unreliable finished matches: {result.UnreliableFinishedMatches}");
     Console.WriteLine($"States written: {result.StatesWritten}");
+    Console.WriteLine($"  Fixed minute: {result.FixedMinuteStatesWritten}");
+    Console.WriteLine($"  After goal: {result.AfterGoalStatesWritten}");
+    Console.WriteLine($"  After red card: {result.AfterRedCardStatesWritten}");
     Console.WriteLine($"Output: {result.OutputPath}");
     foreach (string warning in result.Warnings)
         Console.WriteLine($"Warning: {warning}");
@@ -163,10 +167,10 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
     {
         Console.WriteLine($"Train/test buckets written: {result.TrainTestBuckets.Count}");
         Console.WriteLine();
-        Console.WriteLine("MinuteBand  ScoreState            TrRows  TeRows  Factor  TestActual  TestBase  TestCorrected  BaseAbsErr  CorrAbsErr");
+        Console.WriteLine("Trigger       MinuteBand  ScoreState            TrRows  TeRows  Factor  TestActual  TestBase  TestCorrected  BaseAbsErr  CorrAbsErr");
         foreach (LiveTotalCalibrationTrainTestBucketResult bucket in result.TrainTestBuckets)
         {
-            Console.WriteLine($"{bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.TrainRows,6} {bucket.TestRows,6}  {F(bucket.CorrectionFactor),6}  {bucket.TestActualRemainingGoalsPerRow,10:0.###}  {bucket.TestBaselineRemainingGoalsPerRow,8:0.###}  {D(bucket.TestCorrectedRemainingGoalsPerRow),13}  {D(bucket.TestBaselineAbsErrorPerRow),10}  {D(bucket.TestCorrectedAbsErrorPerRow),10}");
+            Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.TrainRows,6} {bucket.TestRows,6}  {F(bucket.CorrectionFactor),6}  {bucket.TestActualRemainingGoalsPerRow,10:0.###}  {bucket.TestBaselineRemainingGoalsPerRow,8:0.###}  {D(bucket.TestCorrectedRemainingGoalsPerRow),13}  {D(bucket.TestBaselineAbsErrorPerRow),10}  {D(bucket.TestCorrectedAbsErrorPerRow),10}");
         }
 
         return 0;
@@ -174,10 +178,10 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
 
     Console.WriteLine($"Buckets written: {result.Buckets.Count}");
     Console.WriteLine();
-    Console.WriteLine("MinuteBand  ScoreState            Rows  Matches  ActualRem/Row  BaseRem/Row  TimingShare  Factor");
+    Console.WriteLine("Trigger       MinuteBand  ScoreState            Rows  Matches  ActualRem/Row  BaseRem/Row  TimingShare  Factor");
     foreach (LiveTotalCalibrationBucketResult bucket in result.Buckets)
     {
-        Console.WriteLine($"{bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.ActualRemainingGoalsPerRow,13:0.###}  {bucket.BaselineRemainingGoalsPerRow,11:0.###}  {P(bucket.AverageTimingRemainingShare),11}  {F(bucket.CorrectionFactor),7}");
+        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.ActualRemainingGoalsPerRow,13:0.###}  {bucket.BaselineRemainingGoalsPerRow,11:0.###}  {P(bucket.AverageTimingRemainingShare),11}  {F(bucket.CorrectionFactor),7}");
     }
 
     return 0;
@@ -217,15 +221,15 @@ static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
 
     Console.WriteLine();
     Console.WriteLine("Bucket factors:");
-    Console.WriteLine("Band    ScoreState            Rows  Matches  Raw    Used   Usable");
+    Console.WriteLine("Trigger       Band    ScoreState            Rows  Matches  Raw    Used   Usable");
     foreach (LiveTotalStateCorrectionBucket bucket in result.Buckets)
-        Console.WriteLine($"{bucket.MinuteBand,-7} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.RawFactor,5:0.###}  {bucket.Factor,5:0.###}  {bucket.IsUsable}");
+        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-7} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.RawFactor,5:0.###}  {bucket.Factor,5:0.###}  {bucket.IsUsable}");
 
     Console.WriteLine();
     Console.WriteLine("State fallback factors:");
-    Console.WriteLine("ScoreState            Rows  Matches  Raw    Used   Usable");
+    Console.WriteLine("Trigger       ScoreState            Rows  Matches  Raw    Used   Usable");
     foreach (LiveTotalStateCorrectionFallback fallback in result.StateFallbacks)
-        Console.WriteLine($"{fallback.DetailedScoreState,-20} {fallback.Rows,5}  {fallback.Matches,7}  {fallback.RawFactor,5:0.###}  {fallback.Factor,5:0.###}  {fallback.IsUsable}");
+        Console.WriteLine($"{fallback.StateTrigger,-13} {fallback.DetailedScoreState,-20} {fallback.Rows,5}  {fallback.Matches,7}  {fallback.RawFactor,5:0.###}  {fallback.Factor,5:0.###}  {fallback.IsUsable}");
 
     return 0;
 }
@@ -360,6 +364,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     {
         ModelPath = modelPath,
         StateCorrectionPath = parsed.String("state-correction", profile?.StateCorrectionPath ?? string.Empty),
+        StateTrigger = LiveTotalStateTrigger.Normalize(parsed.String("state-trigger", LiveTotalStateTrigger.FixedMinute)),
         StartingLine = parsed.RequiredDouble("starting-line"),
         StartingOverOdds = parsed.RequiredDouble("starting-over"),
         StartingUnderOdds = parsed.RequiredDouble("starting-under"),
@@ -459,7 +464,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     }
     Console.WriteLine($"Model: {result.ModelPath}");
     Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? (profile?.League ?? "unknown") : result.League)}");
-    Console.WriteLine($"Minute/score: {result.Minute}'  {result.HomeGoals}-{result.AwayGoals} ({result.ScoreState}; {result.DetailedScoreState})");
+    Console.WriteLine($"Minute/score: {result.Minute}'  {result.HomeGoals}-{result.AwayGoals} ({result.ScoreState}; {result.DetailedScoreState}; {result.StateTrigger})");
     Console.WriteLine($"Timing group: {result.SelectedTimingGroup}");
     if (!string.IsNullOrWhiteSpace(result.TimingFallback))
         Console.WriteLine($"Timing fallback: {result.TimingFallback}");

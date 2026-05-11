@@ -8,6 +8,7 @@ public sealed class LiveTotalPriceOptions
 {
     public string ModelPath { get; set; } = string.Empty;
     public string StateCorrectionPath { get; set; } = string.Empty;
+    public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public double StartingLine { get; set; }
     public double StartingOverOdds { get; set; }
     public double StartingUnderOdds { get; set; }
@@ -31,6 +32,7 @@ public sealed class LiveTotalPriceResult
 {
     public string ModelPath { get; set; } = string.Empty;
     public string StateCorrectionPath { get; set; } = string.Empty;
+    public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string League { get; set; } = string.Empty;
     public int Minute { get; set; }
     public int HomeGoals { get; set; }
@@ -138,6 +140,7 @@ public sealed class LiveTotalPricer
         {
             ModelPath = _options.ModelPath,
             StateCorrectionPath = _options.StateCorrectionPath,
+            StateTrigger = LiveTotalStateTrigger.Normalize(_options.StateTrigger),
             League = model.League,
             Minute = _options.Minute,
             HomeGoals = _options.HomeGoals,
@@ -210,7 +213,7 @@ public sealed class LiveTotalPricer
             {
                 overEdge = fairOverOdds > 0 && !double.IsInfinity(fairOverOdds) ? bookOverOdds / fairOverOdds - 1.0 : null;
                 overEv = probabilities.WinProbability * (bookOverOdds - 1.0) - probabilities.LossProbability;
-                overDecision = BuildSideDecision(overEdge, result.StateCorrectionSupported, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "OVER");
+                overDecision = BuildSideDecision(overEdge, result.StateCorrectionSupported, result.StateTrigger, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "OVER");
             }
 
             double? underEdge = null;
@@ -224,7 +227,7 @@ public sealed class LiveTotalPricer
             {
                 underEdge = fairUnderOdds > 0 && !double.IsInfinity(fairUnderOdds) ? bookUnderOdds / fairUnderOdds - 1.0 : null;
                 underEv = probabilities.LossProbability * (bookUnderOdds - 1.0) - probabilities.WinProbability;
-                underDecision = BuildSideDecision(underEdge, result.StateCorrectionSupported, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "UNDER");
+                underDecision = BuildSideDecision(underEdge, result.StateCorrectionSupported, result.StateTrigger, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "UNDER");
             }
 
             string decision = SelectBestDecision(overEdge, overDecision, underEdge, underDecision);
@@ -258,8 +261,9 @@ public sealed class LiveTotalPricer
         {
             return new LiveTotalStateCorrectionResolution
             {
+                StateTrigger = LiveTotalStateTrigger.Normalize(_options.StateTrigger),
                 DetailedScoreState = LiveTotalStateCorrectionResolver.DetailedScoreState(_options.HomeGoals, _options.AwayGoals),
-                MinuteBand = LiveTotalStateCorrectionResolver.MinuteBand(_options.Minute),
+                MinuteBand = LiveTotalStateCorrectionResolver.MinuteBand(_options.StateTrigger, _options.Minute),
                 Factor = 1.0,
                 IsSupported = true,
                 Source = "none/default 1.0"
@@ -275,16 +279,16 @@ public sealed class LiveTotalPricer
             PropertyNameCaseInsensitive = true
         }, cancellationToken) ?? throw new InvalidOperationException("Could not read state correction JSON.");
 
-        return LiveTotalStateCorrectionResolver.Resolve(correction, _options.Minute, _options.HomeGoals, _options.AwayGoals);
+        return LiveTotalStateCorrectionResolver.Resolve(correction, _options.StateTrigger, _options.Minute, _options.HomeGoals, _options.AwayGoals);
     }
 
-    private string BuildSideDecision(double? edge, bool stateCorrectionSupported, bool hasRecentGoal, bool hasRedCard, string side)
+    private string BuildSideDecision(double? edge, bool stateCorrectionSupported, string stateTrigger, bool hasRecentGoal, bool hasRedCard, string side)
     {
         if (!edge.HasValue)
             return "NO ODDS";
         if (!stateCorrectionSupported)
             return "NO BET - unsupported sparse state bucket";
-        if (hasRecentGoal)
+        if (hasRecentGoal && !LiveTotalStateTrigger.Normalize(stateTrigger).Equals(LiveTotalStateTrigger.AfterGoal, StringComparison.OrdinalIgnoreCase))
             return "WAIT";
         if (hasRedCard)
             return edge >= _options.EdgeThreshold ? "MANUAL REVIEW" : "NO BET";

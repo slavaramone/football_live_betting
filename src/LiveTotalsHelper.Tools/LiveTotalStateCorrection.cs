@@ -5,6 +5,36 @@ using System.Text.Json.Serialization;
 
 namespace LiveTotalsHelper.Tools;
 
+public static class LiveTotalStateTrigger
+{
+    public const string FixedMinute = "FixedMinute";
+    public const string AfterGoal = "AfterGoal";
+    public const string AfterRedCard = "AfterRedCard";
+
+    public static string Normalize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return FixedMinute;
+
+        if (value.Equals(FixedMinute, StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("fixed-minute", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("fixed", StringComparison.OrdinalIgnoreCase))
+            return FixedMinute;
+
+        if (value.Equals(AfterGoal, StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("after-goal", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("goal", StringComparison.OrdinalIgnoreCase))
+            return AfterGoal;
+
+        if (value.Equals(AfterRedCard, StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("after-red-card", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("red-card", StringComparison.OrdinalIgnoreCase))
+            return AfterRedCard;
+
+        throw new ArgumentException($"Unknown state trigger '{value}'. Use fixed-minute, after-goal, or after-red-card.");
+    }
+}
+
 public sealed class LiveTotalStateCorrectionFitOptions
 {
     public string InputPath { get; set; } = string.Empty;
@@ -47,6 +77,7 @@ public sealed class LiveTotalStateCorrectionFile
 
 public sealed class LiveTotalStateCorrectionBucket
 {
+    public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string MinuteBand { get; set; } = string.Empty;
     public string DetailedScoreState { get; set; } = string.Empty;
     public int Rows { get; set; }
@@ -61,6 +92,7 @@ public sealed class LiveTotalStateCorrectionBucket
 
 public sealed class LiveTotalStateCorrectionFallback
 {
+    public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string DetailedScoreState { get; set; } = string.Empty;
     public int Rows { get; set; }
     public int Matches { get; set; }
@@ -74,6 +106,7 @@ public sealed class LiveTotalStateCorrectionFallback
 
 public sealed class LiveTotalStateCorrectionResolution
 {
+    public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string DetailedScoreState { get; set; } = string.Empty;
     public string MinuteBand { get; set; } = string.Empty;
     public double Factor { get; set; } = 1.0;
@@ -96,25 +129,46 @@ public static class LiveTotalStateCorrectionResolver
         };
     }
 
-    public static string MinuteBand(int minute) => minute switch
+    public static string MinuteBand(string stateTrigger, int minute)
     {
-        >= 10 and <= 20 => "10-20",
-        >= 25 and <= 35 => "25-35",
-        >= 40 and <= 50 => "40-50",
-        >= 55 and <= 65 => "55-65",
-        >= 70 and <= 85 => "70-85",
-        _ => string.Empty
-    };
+        stateTrigger = LiveTotalStateTrigger.Normalize(stateTrigger);
+        if (stateTrigger.Equals(LiveTotalStateTrigger.FixedMinute, StringComparison.OrdinalIgnoreCase))
+        {
+            return minute switch
+            {
+                >= 10 and <= 20 => "10-20",
+                >= 25 and <= 35 => "25-35",
+                >= 40 and <= 50 => "40-50",
+                >= 55 and <= 65 => "55-65",
+                >= 70 and <= 85 => "70-85",
+                _ => string.Empty
+            };
+        }
 
-    public static LiveTotalStateCorrectionResolution Resolve(LiveTotalStateCorrectionFile model, int minute, int homeGoals, int awayGoals)
+        return minute switch
+        {
+            >= 1 and <= 20 => "1-20",
+            >= 21 and <= 35 => "21-35",
+            >= 36 and <= 50 => "36-50",
+            >= 51 and <= 65 => "51-65",
+            >= 66 and <= 90 => "66-90",
+            _ => string.Empty
+        };
+    }
+
+    public static string MinuteBand(int minute) => MinuteBand(LiveTotalStateTrigger.FixedMinute, minute);
+
+    public static LiveTotalStateCorrectionResolution Resolve(LiveTotalStateCorrectionFile model, string stateTrigger, int minute, int homeGoals, int awayGoals)
     {
+        stateTrigger = LiveTotalStateTrigger.Normalize(stateTrigger);
         string detailedScoreState = DetailedScoreState(homeGoals, awayGoals);
-        string minuteBand = MinuteBand(minute);
+        string minuteBand = MinuteBand(stateTrigger, minute);
 
         if (!string.IsNullOrWhiteSpace(minuteBand))
         {
             LiveTotalStateCorrectionBucket? bucket = model.Buckets.FirstOrDefault(x =>
                 x.IsUsable &&
+                LiveTotalStateTrigger.Normalize(x.StateTrigger).Equals(stateTrigger, StringComparison.OrdinalIgnoreCase) &&
                 x.MinuteBand.Equals(minuteBand, StringComparison.OrdinalIgnoreCase) &&
                 x.DetailedScoreState.Equals(detailedScoreState, StringComparison.OrdinalIgnoreCase));
 
@@ -122,24 +176,26 @@ public static class LiveTotalStateCorrectionResolver
             {
                 return new LiveTotalStateCorrectionResolution
                 {
+                    StateTrigger = stateTrigger,
                     DetailedScoreState = detailedScoreState,
                     MinuteBand = minuteBand,
                     Factor = bucket.Factor,
                     IsSupported = true,
-                    Source = $"bucket {minuteBand}/{detailedScoreState}"
+                    Source = $"bucket {stateTrigger}/{minuteBand}/{detailedScoreState}"
                 };
             }
         }
 
         return new LiveTotalStateCorrectionResolution
         {
+            StateTrigger = stateTrigger,
             DetailedScoreState = detailedScoreState,
             MinuteBand = minuteBand,
             Factor = 1.0,
             IsSupported = false,
             Source = string.IsNullOrWhiteSpace(minuteBand)
-                ? "unsupported - minute is outside fixed betting bands"
-                : $"unsupported sparse bucket {minuteBand}/{detailedScoreState}"
+                ? $"unsupported - {stateTrigger} minute is outside betting bands"
+                : $"unsupported sparse bucket {stateTrigger}/{minuteBand}/{detailedScoreState}"
         };
     }
 }
@@ -224,10 +280,11 @@ public sealed class LiveTotalStateCorrectionFitter
     private List<LiveTotalStateCorrectionBucket> BuildBuckets(IReadOnlyCollection<InputRow> trainingRows, double leagueAverageFinalGoals)
     {
         return trainingRows
-            .Select(x => new { Row = x, MinuteBand = LiveTotalStateCorrectionResolver.MinuteBand(x.Minute) })
+            .Select(x => new { Row = x, MinuteBand = LiveTotalStateCorrectionResolver.MinuteBand(x.StateTrigger, x.Minute) })
             .Where(x => !string.IsNullOrWhiteSpace(x.MinuteBand))
-            .GroupBy(x => new { x.MinuteBand, x.Row.DetailedScoreState })
-            .OrderBy(x => MinuteBandOrder(x.Key.MinuteBand))
+            .GroupBy(x => new { x.Row.StateTrigger, x.MinuteBand, x.Row.DetailedScoreState })
+            .OrderBy(x => TriggerOrder(x.Key.StateTrigger))
+            .ThenBy(x => MinuteBandOrder(x.Key.MinuteBand))
             .ThenBy(x => ScoreStateIndex(x.Key.DetailedScoreState))
             .Select(group =>
             {
@@ -239,6 +296,7 @@ public sealed class LiveTotalStateCorrectionFitter
                 double raw = baseline > 0 ? actual / baseline : 1.0;
                 return new LiveTotalStateCorrectionBucket
                 {
+                    StateTrigger = group.Key.StateTrigger,
                     MinuteBand = group.Key.MinuteBand,
                     DetailedScoreState = group.Key.DetailedScoreState,
                     Rows = bucketRows.Count,
@@ -257,8 +315,9 @@ public sealed class LiveTotalStateCorrectionFitter
     private List<LiveTotalStateCorrectionFallback> BuildStateFallbacks(IReadOnlyCollection<InputRow> trainingRows, double leagueAverageFinalGoals)
     {
         return trainingRows
-            .GroupBy(x => x.DetailedScoreState)
-            .OrderBy(x => ScoreStateIndex(x.Key))
+            .GroupBy(x => new { x.StateTrigger, x.DetailedScoreState })
+            .OrderBy(x => TriggerOrder(x.Key.StateTrigger))
+            .ThenBy(x => ScoreStateIndex(x.Key.DetailedScoreState))
             .Select(group =>
             {
                 List<InputRow> stateRows = group.ToList();
@@ -269,7 +328,8 @@ public sealed class LiveTotalStateCorrectionFitter
                 double raw = baseline > 0 ? actual / baseline : 1.0;
                 return new LiveTotalStateCorrectionFallback
                 {
-                    DetailedScoreState = group.Key,
+                    StateTrigger = group.Key.StateTrigger,
+                    DetailedScoreState = group.Key.DetailedScoreState,
                     Rows = stateRows.Count,
                     Matches = matches,
                     ActualRemainingGoalsPerRow = actual,
@@ -311,12 +371,25 @@ public sealed class LiveTotalStateCorrectionFitter
 
     private double ClampFactor(double factor) => Math.Clamp(factor, _options.MinFactor, _options.MaxFactor);
 
+    private static int TriggerOrder(string stateTrigger) => LiveTotalStateTrigger.Normalize(stateTrigger) switch
+    {
+        LiveTotalStateTrigger.FixedMinute => 1,
+        LiveTotalStateTrigger.AfterGoal => 2,
+        LiveTotalStateTrigger.AfterRedCard => 3,
+        _ => 99
+    };
+
     private static int MinuteBandOrder(string band) => band switch
     {
+        "1-20" => 1,
         "10-20" => 1,
+        "21-35" => 2,
         "25-35" => 2,
+        "36-50" => 3,
         "40-50" => 3,
+        "51-65" => 4,
         "55-65" => 4,
+        "66-90" => 5,
         "70-85" => 5,
         _ => 99
     };
@@ -364,6 +437,9 @@ public sealed class LiveTotalStateCorrectionFitter
 
             rows.Add(new InputRow
             {
+                StateTrigger = index.ContainsKey("StateTrigger")
+                    ? LiveTotalStateTrigger.Normalize(GetString(record, index, "StateTrigger"))
+                    : LiveTotalStateTrigger.FixedMinute,
                 LeagueName = GetString(record, index, "LeagueName"),
                 SofaScoreSeasonId = seasonId,
                 MatchId = matchId,
@@ -464,6 +540,7 @@ public sealed class LiveTotalStateCorrectionFitter
 
     private sealed class InputRow
     {
+        public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
         public string LeagueName { get; set; } = string.Empty;
         public int SofaScoreSeasonId { get; set; }
         public int MatchId { get; set; }
