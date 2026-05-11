@@ -27,6 +27,7 @@ public sealed class LiveTotalCalibrationBucketResult
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string MinuteBand { get; set; } = string.Empty;
     public string DetailedScoreState { get; set; } = string.Empty;
+    public string GoalChangeType { get; set; } = string.Empty;
     public int Rows { get; set; }
     public int Matches { get; set; }
     public double LeagueAverageFinalGoals { get; set; }
@@ -43,6 +44,7 @@ public sealed class LiveTotalCalibrationTrainTestBucketResult
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string MinuteBand { get; set; } = string.Empty;
     public string DetailedScoreState { get; set; } = string.Empty;
+    public string GoalChangeType { get; set; } = string.Empty;
 
     public int TrainRows { get; set; }
     public int TrainMatches { get; set; }
@@ -128,24 +130,25 @@ public sealed class LiveTotalCalibrationAnalyzer
             .Where(x => _options.TestSeasonIds.Contains(x.Row.SofaScoreSeasonId))
             .ToList();
 
-        Dictionary<(string StateTrigger, string MinuteBand, string DetailedScoreState), LiveTotalCalibrationBucketResult> trainBuckets = BuildBucketResults(
+        Dictionary<(string StateTrigger, string MinuteBand, string DetailedScoreState, string GoalChangeType), LiveTotalCalibrationBucketResult> trainBuckets = BuildBucketResults(
                 train.Select(x => x.Row).ToList(),
                 train)
-            .ToDictionary(x => (x.StateTrigger, x.MinuteBand, x.DetailedScoreState));
+            .ToDictionary(x => (x.StateTrigger, x.MinuteBand, x.DetailedScoreState, x.GoalChangeType));
 
-        Dictionary<(string StateTrigger, string MinuteBand, string DetailedScoreState), LiveTotalCalibrationBucketResult> testBuckets = BuildBucketResults(
+        Dictionary<(string StateTrigger, string MinuteBand, string DetailedScoreState, string GoalChangeType), LiveTotalCalibrationBucketResult> testBuckets = BuildBucketResults(
                 test.Select(x => x.Row).ToList(),
                 test)
-            .ToDictionary(x => (x.StateTrigger, x.MinuteBand, x.DetailedScoreState));
+            .ToDictionary(x => (x.StateTrigger, x.MinuteBand, x.DetailedScoreState, x.GoalChangeType));
 
         var keys = trainBuckets.Keys
             .Union(testBuckets.Keys)
             .OrderBy(x => TriggerOrder(x.StateTrigger))
             .ThenBy(x => MinuteBandOrder(x.MinuteBand))
             .ThenBy(x => ScoreStateIndex(x.DetailedScoreState))
+            .ThenBy(x => GoalChangeTypeOrder(x.GoalChangeType))
             .ToList();
 
-        foreach ((string StateTrigger, string MinuteBand, string DetailedScoreState) key in keys)
+        foreach ((string StateTrigger, string MinuteBand, string DetailedScoreState, string GoalChangeType) key in keys)
         {
             trainBuckets.TryGetValue(key, out LiveTotalCalibrationBucketResult? tr);
             testBuckets.TryGetValue(key, out LiveTotalCalibrationBucketResult? te);
@@ -167,6 +170,7 @@ public sealed class LiveTotalCalibrationAnalyzer
                 StateTrigger = key.StateTrigger,
                 MinuteBand = key.MinuteBand,
                 DetailedScoreState = key.DetailedScoreState,
+                GoalChangeType = key.GoalChangeType,
 
                 TrainRows = tr?.Rows ?? 0,
                 TrainMatches = tr?.Matches ?? 0,
@@ -202,10 +206,11 @@ public sealed class LiveTotalCalibrationAnalyzer
         var result = new List<LiveTotalCalibrationBucketResult>();
 
         foreach (var group in rowsWithBands
-            .GroupBy(x => new { x.Row.StateTrigger, x.MinuteBand, x.Row.DetailedScoreState })
+            .GroupBy(x => new { x.Row.StateTrigger, x.MinuteBand, x.Row.DetailedScoreState, GoalChangeType = CorrectionGoalChangeType(x.Row.StateTrigger, x.Row.GoalChangeType) })
             .OrderBy(x => TriggerOrder(x.Key.StateTrigger))
             .ThenBy(x => MinuteBandOrder(x.Key.MinuteBand))
-            .ThenBy(x => ScoreStateIndex(x.Key.DetailedScoreState)))
+            .ThenBy(x => ScoreStateIndex(x.Key.DetailedScoreState))
+            .ThenBy(x => GoalChangeTypeOrder(x.Key.GoalChangeType)))
         {
             List<LiveTotalCalibrationInputRow> bucketRows = group.Select(x => x.Row).ToList();
             double totalFinalGoals = bucketRows.Sum(x => x.ActualFinalTotalGoals);
@@ -222,6 +227,7 @@ public sealed class LiveTotalCalibrationAnalyzer
                 StateTrigger = group.Key.StateTrigger,
                 MinuteBand = group.Key.MinuteBand,
                 DetailedScoreState = group.Key.DetailedScoreState,
+                GoalChangeType = group.Key.GoalChangeType,
                 Rows = bucketRows.Count,
                 Matches = bucketRows.Select(x => x.MatchId).Distinct().Count(),
                 LeagueAverageFinalGoals = leagueAverageFinalGoals,
@@ -236,6 +242,22 @@ public sealed class LiveTotalCalibrationAnalyzer
 
         return result;
     }
+
+    private static string CorrectionGoalChangeType(string stateTrigger, string goalChangeType)
+    {
+        return LiveTotalStateTrigger.Normalize(stateTrigger).Equals(LiveTotalStateTrigger.AfterGoal, StringComparison.OrdinalIgnoreCase)
+            ? LiveTotalGoalChangeClassifier.Normalize(goalChangeType)
+            : LiveTotalGoalChangeClassifier.None;
+    }
+
+    private static int GoalChangeTypeOrder(string value) => LiveTotalGoalChangeClassifier.Normalize(value) switch
+    {
+        LiveTotalGoalChangeClassifier.GoAheadGoal => 1,
+        LiveTotalGoalChangeClassifier.Equalizer => 2,
+        LiveTotalGoalChangeClassifier.MarginIncrease => 3,
+        LiveTotalGoalChangeClassifier.MarginDecrease => 4,
+        _ => 99
+    };
 
     private void ValidateOptions()
     {
@@ -334,6 +356,9 @@ public sealed class LiveTotalCalibrationAnalyzer
                 MatchId = matchId,
                 Minute = minute,
                 DetailedScoreState = detailedScoreState,
+                GoalChangeType = index.ContainsKey("GoalChangeType")
+                    ? LiveTotalGoalChangeClassifier.Normalize(GetString(record, index, "GoalChangeType"))
+                    : LiveTotalGoalChangeClassifier.None,
                 TimingRemainingShare = timingRemainingShare,
                 ActualFinalTotalGoals = actualFinalTotalGoals,
                 ActualRemainingGoals = actualRemainingGoals
@@ -371,13 +396,14 @@ public sealed class LiveTotalCalibrationAnalyzer
     private static string ToCsv(IReadOnlyCollection<LiveTotalCalibrationBucketResult> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("StateTrigger,MinuteBand,DetailedScoreState,Rows,Matches,LeagueAverageFinalGoals,TotalFinalGoals,ActualRemainingGoals,ActualRemainingGoalsPerRow,AverageTimingRemainingShare,BaselineRemainingGoalsPerRow,CorrectionFactor");
+        sb.AppendLine("StateTrigger,MinuteBand,DetailedScoreState,GoalChangeType,Rows,Matches,LeagueAverageFinalGoals,TotalFinalGoals,ActualRemainingGoals,ActualRemainingGoalsPerRow,AverageTimingRemainingShare,BaselineRemainingGoalsPerRow,CorrectionFactor");
         foreach (LiveTotalCalibrationBucketResult row in rows)
         {
             sb.AppendLine(string.Join(',',
                 EscapeCsv(row.StateTrigger),
                 EscapeCsv(row.MinuteBand),
                 EscapeCsv(row.DetailedScoreState),
+                EscapeCsv(row.GoalChangeType),
                 row.Rows.ToString(CultureInfo.InvariantCulture),
                 row.Matches.ToString(CultureInfo.InvariantCulture),
                 D(row.LeagueAverageFinalGoals),
@@ -394,13 +420,14 @@ public sealed class LiveTotalCalibrationAnalyzer
     private static string ToTrainTestCsv(IReadOnlyCollection<LiveTotalCalibrationTrainTestBucketResult> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("StateTrigger,MinuteBand,DetailedScoreState,TrainRows,TrainMatches,TrainLeagueAverageFinalGoals,TrainActualRemainingGoalsPerRow,TrainAverageTimingRemainingShare,TrainBaselineRemainingGoalsPerRow,CorrectionFactor,TestRows,TestMatches,TestLeagueAverageFinalGoals,TestActualRemainingGoalsPerRow,TestAverageTimingRemainingShare,TestBaselineRemainingGoalsPerRow,TestCorrectedRemainingGoalsPerRow,TestBaselineSignedErrorPerRow,TestCorrectedSignedErrorPerRow,TestBaselineAbsErrorPerRow,TestCorrectedAbsErrorPerRow");
+        sb.AppendLine("StateTrigger,MinuteBand,DetailedScoreState,GoalChangeType,TrainRows,TrainMatches,TrainLeagueAverageFinalGoals,TrainActualRemainingGoalsPerRow,TrainAverageTimingRemainingShare,TrainBaselineRemainingGoalsPerRow,CorrectionFactor,TestRows,TestMatches,TestLeagueAverageFinalGoals,TestActualRemainingGoalsPerRow,TestAverageTimingRemainingShare,TestBaselineRemainingGoalsPerRow,TestCorrectedRemainingGoalsPerRow,TestBaselineSignedErrorPerRow,TestCorrectedSignedErrorPerRow,TestBaselineAbsErrorPerRow,TestCorrectedAbsErrorPerRow");
         foreach (LiveTotalCalibrationTrainTestBucketResult row in rows)
         {
             sb.AppendLine(string.Join(',',
                 EscapeCsv(row.StateTrigger),
                 EscapeCsv(row.MinuteBand),
                 EscapeCsv(row.DetailedScoreState),
+                EscapeCsv(row.GoalChangeType),
                 row.TrainRows.ToString(CultureInfo.InvariantCulture),
                 row.TrainMatches.ToString(CultureInfo.InvariantCulture),
                 D(row.TrainLeagueAverageFinalGoals),
@@ -504,6 +531,7 @@ public sealed class LiveTotalCalibrationAnalyzer
         public int MatchId { get; set; }
         public int Minute { get; set; }
         public string DetailedScoreState { get; set; } = string.Empty;
+        public string GoalChangeType { get; set; } = string.Empty;
         public double TimingRemainingShare { get; set; }
         public double ActualFinalTotalGoals { get; set; }
         public double ActualRemainingGoals { get; set; }

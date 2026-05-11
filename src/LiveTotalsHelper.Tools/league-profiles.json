@@ -43,6 +43,7 @@
             80,
             85
         ],
+        "afterGoalMinBucketMatches": 60,
         "stateCorrectionMinBucketMatches": 100,
         "stateCorrectionMinFactor": 0.5,
         "stateCorrectionMaxFactor": 2.5,
@@ -98,6 +99,8 @@
       "includeUnreliableMatches": false,
       "includeEventTriggers": true,
       "snapshotMinutes": [ 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85 ],
+
+      "afterGoalMinBucketMatches": 60,
 
       "stateCorrectionMinBucketMatches": 100,
       "stateCorrectionMinFactor": 0.50,

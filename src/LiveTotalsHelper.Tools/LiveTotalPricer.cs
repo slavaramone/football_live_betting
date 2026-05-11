@@ -15,6 +15,9 @@ public sealed class LiveTotalPriceOptions
     public int Minute { get; set; }
     public int HomeGoals { get; set; }
     public int AwayGoals { get; set; }
+    public int ScoreBeforeHome { get; set; } = -1;
+    public int ScoreBeforeAway { get; set; } = -1;
+    public string GoalChangeType { get; set; } = string.Empty;
     public double EmpiricalWeight { get; set; } = 0.80;
     public double EdgeThreshold { get; set; } = 0.10;
     public int HomeRedCards { get; set; }
@@ -40,6 +43,7 @@ public sealed class LiveTotalPriceResult
     public int CurrentGoals => HomeGoals + AwayGoals;
     public string ScoreState { get; set; } = string.Empty;
     public string DetailedScoreState { get; set; } = string.Empty;
+    public string GoalChangeType { get; set; } = string.Empty;
     public string SelectedTimingGroup { get; set; } = string.Empty;
     public string TimingFallback { get; set; } = string.Empty;
     public double StartingLine { get; set; }
@@ -138,6 +142,7 @@ public sealed class LiveTotalPricer
             AwayGoals = _options.AwayGoals,
             ScoreState = timing.ScoreState,
             DetailedScoreState = stateCorrection.DetailedScoreState,
+            GoalChangeType = stateCorrection.GoalChangeType,
             SelectedTimingGroup = timing.SelectedTimingGroup,
             TimingFallback = timing.TimingFallback,
             StartingLine = _options.StartingLine,
@@ -246,6 +251,27 @@ public sealed class LiveTotalPricer
         return result;
     }
 
+    private string ResolveGoalChangeType()
+    {
+        string stateTrigger = LiveTotalStateTrigger.Normalize(_options.StateTrigger);
+        if (!stateTrigger.Equals(LiveTotalStateTrigger.AfterGoal, StringComparison.OrdinalIgnoreCase))
+            return LiveTotalGoalChangeClassifier.None;
+
+        if (!string.IsNullOrWhiteSpace(_options.GoalChangeType))
+            return LiveTotalGoalChangeClassifier.Normalize(_options.GoalChangeType);
+
+        if (_options.ScoreBeforeHome >= 0 && _options.ScoreBeforeAway >= 0)
+        {
+            return LiveTotalGoalChangeClassifier.Classify(
+                _options.ScoreBeforeHome,
+                _options.ScoreBeforeAway,
+                _options.HomeGoals,
+                _options.AwayGoals);
+        }
+
+        return LiveTotalGoalChangeClassifier.None;
+    }
+
     private async Task<LiveTotalStateCorrectionResolution> ResolveStateCorrectionAsync(CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_options.StateCorrectionPath))
@@ -255,6 +281,7 @@ public sealed class LiveTotalPricer
                 StateTrigger = LiveTotalStateTrigger.Normalize(_options.StateTrigger),
                 DetailedScoreState = LiveTotalStateCorrectionResolver.DetailedScoreState(_options.HomeGoals, _options.AwayGoals),
                 MinuteBand = LiveTotalStateCorrectionResolver.MinuteBand(_options.StateTrigger, _options.Minute),
+                GoalChangeType = ResolveGoalChangeType(),
                 Factor = 1.0,
                 IsSupported = true,
                 Source = "none/default 1.0"
@@ -270,7 +297,7 @@ public sealed class LiveTotalPricer
             PropertyNameCaseInsensitive = true
         }, cancellationToken) ?? throw new InvalidOperationException("Could not read state correction JSON.");
 
-        return LiveTotalStateCorrectionResolver.Resolve(correction, _options.StateTrigger, _options.Minute, _options.HomeGoals, _options.AwayGoals);
+        return LiveTotalStateCorrectionResolver.Resolve(correction, _options.StateTrigger, _options.Minute, _options.HomeGoals, _options.AwayGoals, ResolveGoalChangeType());
     }
 
     private string BuildSideDecision(double? edge, bool stateCorrectionSupported, string stateTrigger, bool hasRecentGoal, bool hasRedCard, string side)
@@ -327,6 +354,10 @@ public sealed class LiveTotalPricer
             throw new ArgumentException("--minute must be >= 0.");
         if (_options.HomeGoals < 0 || _options.AwayGoals < 0)
             throw new ArgumentException("--home-goals and --away-goals must be >= 0.");
+        if (LiveTotalStateTrigger.Normalize(_options.StateTrigger).Equals(LiveTotalStateTrigger.AfterGoal, StringComparison.OrdinalIgnoreCase) &&
+            string.IsNullOrWhiteSpace(_options.GoalChangeType) &&
+            (_options.ScoreBeforeHome < 0 || _options.ScoreBeforeAway < 0))
+            throw new ArgumentException("--state-trigger after-goal requires either --goal-change-type or --score-before-home and --score-before-away.");
         if (_options.EmpiricalWeight < 0 || _options.EmpiricalWeight > 1)
             throw new ArgumentException("--empirical-weight must be between 0 and 1.");
         if (_options.EdgeThreshold < 0)

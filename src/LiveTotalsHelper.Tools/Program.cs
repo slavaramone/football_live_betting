@@ -198,10 +198,10 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
     {
         Console.WriteLine($"Train/test buckets written: {result.TrainTestBuckets.Count}");
         Console.WriteLine();
-        Console.WriteLine("Trigger       MinuteBand  ScoreState            TrRows  TeRows  Factor  TestActual  TestBase  TestCorrected  BaseAbsErr  CorrAbsErr");
+        Console.WriteLine("Trigger       MinuteBand  ScoreState            GoalChange       TrRows  TeRows  Factor  TestActual  TestBase  TestCorrected  BaseAbsErr  CorrAbsErr");
         foreach (LiveTotalCalibrationTrainTestBucketResult bucket in result.TrainTestBuckets)
         {
-            Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.TrainRows,6} {bucket.TestRows,6}  {F(bucket.CorrectionFactor),6}  {bucket.TestActualRemainingGoalsPerRow,10:0.###}  {bucket.TestBaselineRemainingGoalsPerRow,8:0.###}  {D(bucket.TestCorrectedRemainingGoalsPerRow),13}  {D(bucket.TestBaselineAbsErrorPerRow),10}  {D(bucket.TestCorrectedAbsErrorPerRow),10}");
+            Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {(string.IsNullOrWhiteSpace(bucket.GoalChangeType) ? "-" : bucket.GoalChangeType),-16} {bucket.TrainRows,6} {bucket.TestRows,6}  {F(bucket.CorrectionFactor),6}  {bucket.TestActualRemainingGoalsPerRow,10:0.###}  {bucket.TestBaselineRemainingGoalsPerRow,8:0.###}  {D(bucket.TestCorrectedRemainingGoalsPerRow),13}  {D(bucket.TestBaselineAbsErrorPerRow),10}  {D(bucket.TestCorrectedAbsErrorPerRow),10}");
         }
 
         return 0;
@@ -209,10 +209,10 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
 
     Console.WriteLine($"Buckets written: {result.Buckets.Count}");
     Console.WriteLine();
-    Console.WriteLine("Trigger       MinuteBand  ScoreState            Rows  Matches  ActualRem/Row  BaseRem/Row  TimingShare  Factor");
+    Console.WriteLine("Trigger       MinuteBand  ScoreState            GoalChange       Rows  Matches  ActualRem/Row  BaseRem/Row  TimingShare  Factor");
     foreach (LiveTotalCalibrationBucketResult bucket in result.Buckets)
     {
-        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.ActualRemainingGoalsPerRow,13:0.###}  {bucket.BaselineRemainingGoalsPerRow,11:0.###}  {P(bucket.AverageTimingRemainingShare),11}  {F(bucket.CorrectionFactor),7}");
+        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {(string.IsNullOrWhiteSpace(bucket.GoalChangeType) ? "-" : bucket.GoalChangeType),-16} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.ActualRemainingGoalsPerRow,13:0.###}  {bucket.BaselineRemainingGoalsPerRow,11:0.###}  {P(bucket.AverageTimingRemainingShare),11}  {F(bucket.CorrectionFactor),7}");
     }
 
     return 0;
@@ -240,6 +240,7 @@ static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
         InputPath = parsed.String("input", defaultInput),
         OutputPath = parsed.String("output", defaultOutput),
         MinBucketMatches = parsed.Int("min-bucket-matches", profile?.StateCorrectionMinBucketMatches ?? 100),
+        AfterGoalMinBucketMatches = parsed.Int("after-goal-min-bucket-matches", profile?.AfterGoalMinBucketMatches ?? 60),
         MinFactor = parsed.Double("min-factor", profile?.StateCorrectionMinFactor ?? 0.50),
         MaxFactor = parsed.Double("max-factor", profile?.StateCorrectionMaxFactor ?? 2.50)
     };
@@ -265,12 +266,13 @@ static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
     Console.WriteLine($"Rows used: {result.TrainingRowsUsed}");
     Console.WriteLine($"Matches used: {result.TrainingMatchesUsed}");
     Console.WriteLine($"League average final goals: {result.LeagueAverageFinalGoals:0.###}");
+    Console.WriteLine($"Min bucket matches: fixed/red-card {options.MinBucketMatches}, after-goal {options.AfterGoalMinBucketMatches}");
 
     Console.WriteLine();
     Console.WriteLine("Bucket factors:");
-    Console.WriteLine("Trigger       Band    ScoreState            Rows  Matches  Raw    Used   Usable");
+    Console.WriteLine("Trigger       Band    ScoreState            GoalChange       Rows  Matches  Raw    Used   Usable");
     foreach (LiveTotalStateCorrectionBucket bucket in result.Buckets)
-        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-7} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.RawFactor,5:0.###}  {bucket.Factor,5:0.###}  {bucket.IsUsable}");
+        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-7} {bucket.DetailedScoreState,-20} {(string.IsNullOrWhiteSpace(bucket.GoalChangeType) ? "-" : bucket.GoalChangeType),-16} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.RawFactor,5:0.###}  {bucket.Factor,5:0.###}  {bucket.IsUsable}");
 
     return 0;
 }
@@ -476,6 +478,9 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         Minute = parsed.RequiredInt("minute"),
         HomeGoals = parsed.RequiredInt("home-goals"),
         AwayGoals = parsed.RequiredInt("away-goals"),
+        ScoreBeforeHome = parsed.Int("score-before-home", -1),
+        ScoreBeforeAway = parsed.Int("score-before-away", -1),
+        GoalChangeType = parsed.String("goal-change-type", string.Empty),
         EmpiricalWeight = parsed.Double("empirical-weight", profile?.DefaultEmpiricalWeight ?? 0.80),
         EdgeThreshold = parsed.Double("edge-threshold", profile?.EdgeThreshold ?? 0.10),
         HomeRedCards = parsed.Int("home-red-cards", parsed.Int("home-reds", 0)),
@@ -571,6 +576,8 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     Console.WriteLine($"Model: {result.ModelPath}");
     Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? (profile?.League ?? "unknown") : result.League)}");
     Console.WriteLine($"Minute/score: {result.Minute}'  {result.HomeGoals}-{result.AwayGoals} ({result.ScoreState}; {result.DetailedScoreState}; {result.StateTrigger})");
+    if (LiveTotalStateTrigger.Normalize(result.StateTrigger).Equals(LiveTotalStateTrigger.AfterGoal, StringComparison.OrdinalIgnoreCase))
+        Console.WriteLine($"Goal change type: {(string.IsNullOrWhiteSpace(result.GoalChangeType) ? "none" : result.GoalChangeType)}");
     Console.WriteLine($"Timing group: {result.SelectedTimingGroup}");
     if (!string.IsNullOrWhiteSpace(result.TimingFallback))
         Console.WriteLine($"Timing fallback: {result.TimingFallback}");

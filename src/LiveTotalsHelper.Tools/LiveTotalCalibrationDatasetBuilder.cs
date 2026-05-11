@@ -133,6 +133,9 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                     LiveTotalStateTrigger.FixedMinute,
                     triggerEventMinute: -1,
                     triggerEventSide: string.Empty,
+                    scoreBeforeHome: state.HomeGoals,
+                    scoreBeforeAway: state.AwayGoals,
+                    goalChangeType: LiveTotalGoalChangeClassifier.None,
                     state));
                 result.FixedMinuteStatesWritten++;
             }
@@ -147,10 +150,19 @@ public sealed class LiveTotalCalibrationDatasetBuilder
 
                     if (IsGoal(e))
                     {
+                        int scoreBeforeHome = state.HomeGoals;
+                        int scoreBeforeAway = state.AwayGoals;
+
                         if (e.IsHome)
                             state.HomeGoals++;
                         else
                             state.AwayGoals++;
+
+                        string goalChangeType = LiveTotalGoalChangeClassifier.Classify(
+                            scoreBeforeHome,
+                            scoreBeforeAway,
+                            state.HomeGoals,
+                            state.AwayGoals);
 
                         state.LastGoalMinute = minute;
 
@@ -165,6 +177,9 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                             LiveTotalStateTrigger.AfterGoal,
                             minute,
                             e.IsHome ? "Home" : "Away",
+                            scoreBeforeHome,
+                            scoreBeforeAway,
+                            goalChangeType,
                             state.Clone()));
                         result.AfterGoalStatesWritten++;
                     }
@@ -186,6 +201,9 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                             LiveTotalStateTrigger.AfterRedCard,
                             minute,
                             e.IsHome ? "Home" : "Away",
+                            state.HomeGoals,
+                            state.AwayGoals,
+                            LiveTotalGoalChangeClassifier.None,
                             state.Clone()));
                         result.AfterRedCardStatesWritten++;
                     }
@@ -215,6 +233,9 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         string stateTrigger,
         int triggerEventMinute,
         string triggerEventSide,
+        int scoreBeforeHome,
+        int scoreBeforeAway,
+        string goalChangeType,
         MatchState state)
     {
         int currentTotal = state.HomeGoals + state.AwayGoals;
@@ -242,6 +263,9 @@ public sealed class LiveTotalCalibrationDatasetBuilder
             StateTrigger = stateTrigger,
             TriggerEventMinute = triggerEventMinute,
             TriggerEventSide = triggerEventSide,
+            ScoreBeforeHome = scoreBeforeHome,
+            ScoreBeforeAway = scoreBeforeAway,
+            GoalChangeType = LiveTotalGoalChangeClassifier.Normalize(goalChangeType),
             Minute = minute,
             HomeGoals = state.HomeGoals,
             AwayGoals = state.AwayGoals,
@@ -370,7 +394,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
     [
         "LeagueName", "LeagueSlug", "SofaScoreSeasonId", "SeasonName", "SeasonYear", "RoundNumber", "MatchId", "SofaScoreEventId", "StartTimeUtc",
         "HomeTeamName", "AwayTeamName",
-        "StateTrigger", "TriggerEventMinute", "TriggerEventSide",
+        "StateTrigger", "TriggerEventMinute", "TriggerEventSide", "ScoreBeforeHome", "ScoreBeforeAway", "GoalChangeType",
         "Minute", "HomeGoals", "AwayGoals", "CurrentTotalGoals", "GoalDifference", "ScoreState", "DetailedScoreState",
         "HomeRedCards", "AwayRedCards", "RedCardDifference", "LastGoalMinute", "MinutesSinceLastGoal", "HasRecentGoal",
         "SelectedTimingGroup", "TimingFallback", "EmpiricalWeight", "WeibullRemainingShare", "EmpiricalRemainingShare", "TimingRemainingShare",
@@ -412,6 +436,9 @@ internal sealed class LiveTotalCalibrationDatasetRow
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public int TriggerEventMinute { get; set; } = -1;
     public string TriggerEventSide { get; set; } = string.Empty;
+    public int ScoreBeforeHome { get; set; }
+    public int ScoreBeforeAway { get; set; }
+    public string GoalChangeType { get; set; } = string.Empty;
     public int Minute { get; set; }
     public int HomeGoals { get; set; }
     public int AwayGoals { get; set; }
@@ -447,7 +474,7 @@ internal sealed class LiveTotalCalibrationDatasetRow
         [
             LeagueName, LeagueSlug, SofaScoreSeasonId.ToString(CultureInfo.InvariantCulture), SeasonName, SeasonYear, RoundNumber.ToString(CultureInfo.InvariantCulture), MatchId.ToString(CultureInfo.InvariantCulture), SofaScoreEventId.ToString(CultureInfo.InvariantCulture), StartTimeUtc?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
             HomeTeamName, AwayTeamName,
-            StateTrigger, TriggerEventMinute.ToString(CultureInfo.InvariantCulture), TriggerEventSide,
+            StateTrigger, TriggerEventMinute.ToString(CultureInfo.InvariantCulture), TriggerEventSide, ScoreBeforeHome.ToString(CultureInfo.InvariantCulture), ScoreBeforeAway.ToString(CultureInfo.InvariantCulture), GoalChangeType,
             Minute.ToString(CultureInfo.InvariantCulture), HomeGoals.ToString(CultureInfo.InvariantCulture), AwayGoals.ToString(CultureInfo.InvariantCulture), CurrentTotalGoals.ToString(CultureInfo.InvariantCulture), GoalDifference.ToString(CultureInfo.InvariantCulture), ScoreState, DetailedScoreState,
             HomeRedCards.ToString(CultureInfo.InvariantCulture), AwayRedCards.ToString(CultureInfo.InvariantCulture), RedCardDifference.ToString(CultureInfo.InvariantCulture), LastGoalMinute.ToString(CultureInfo.InvariantCulture), MinutesSinceLastGoal.ToString(CultureInfo.InvariantCulture), B(HasRecentGoal),
             SelectedTimingGroup, TimingFallback, D(EmpiricalWeight), D(WeibullRemainingShare), D(EmpiricalRemainingShare), D(TimingRemainingShare),

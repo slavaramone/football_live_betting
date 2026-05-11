@@ -68,7 +68,8 @@ public sealed class LiveTotalModelEvaluator
                 row.StateTrigger,
                 row.Minute,
                 row.HomeGoals,
-                row.AwayGoals);
+                row.AwayGoals,
+                row.GoalChangeType);
 
             if (!resolved.IsSupported)
                 continue;
@@ -193,6 +194,9 @@ public sealed class LiveTotalModelEvaluator
                 Minute = minute,
                 HomeGoals = homeGoals,
                 AwayGoals = awayGoals,
+                GoalChangeType = index.ContainsKey("GoalChangeType")
+                    ? LiveTotalGoalChangeClassifier.Normalize(GetString(record, index, "GoalChangeType"))
+                    : LiveTotalGoalChangeClassifier.None,
                 TimingRemainingShare = timingRemainingShare,
                 ActualRemainingGoals = actualRemainingGoals
             });
@@ -333,6 +337,7 @@ public sealed class LiveTotalModelEvaluator
         public int Minute { get; set; }
         public int HomeGoals { get; set; }
         public int AwayGoals { get; set; }
+        public string GoalChangeType { get; set; } = string.Empty;
         public double TimingRemainingShare { get; set; }
         public double ActualRemainingGoals { get; set; }
     }
