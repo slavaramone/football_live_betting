@@ -158,15 +158,15 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
     Console.WriteLine($"Output: {result.OutputPath}");
 
     Console.WriteLine();
-    Console.WriteLine("MinuteBand  ScoreState            Rows  Matches  ActualShare  TimingShare  Factor   RemGoals/Row");
+    Console.WriteLine("MinuteBand  ScoreState            Rows  Matches  ActualRem/Row  BaseRem/Row  TimingShare  Factor");
     foreach (LiveTotalCalibrationBucketResult bucket in result.Buckets)
     {
-        Console.WriteLine($"{bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {P(bucket.ActualRemainingShare),11}  {P(bucket.AverageTimingRemainingShare),11}  {F(bucket.CorrectionFactor),7}  {bucket.ActualRemainingGoalsPerRow,12:0.###}");
+        Console.WriteLine($"{bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.ActualRemainingGoalsPerRow,13:0.###}  {bucket.BaselineRemainingGoalsPerRow,11:0.###}  {P(bucket.AverageTimingRemainingShare),11}  {F(bucket.CorrectionFactor),7}");
     }
 
     return 0;
 
-    static string P(double? value) => value.HasValue ? value.Value.ToString("P1", CultureInfo.InvariantCulture) : "n/a";
+    static string P(double value) => value.ToString("P1", CultureInfo.InvariantCulture);
     static string F(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
 }
 

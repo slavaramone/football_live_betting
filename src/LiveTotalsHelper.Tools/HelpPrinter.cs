@@ -129,7 +129,7 @@ public static class HelpPrinter
         Console.WriteLine("  --input               Required live-total calibration dataset CSV.");
         Console.WriteLine("  --output              Output bucket report CSV. Default: <input>-analysis.csv.");
         Console.WriteLine();
-        Console.WriteLine("Outputs actual remaining-goal share, average timing remaining share, and correction factor by minute band and detailed live score state.");
+        Console.WriteLine("Outputs actual remaining goals per row, baseline remaining goals per row, and correction factor by minute band and detailed live score state.");
     }
 
     public static void PrintFitWeibull()

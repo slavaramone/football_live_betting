@@ -24,12 +24,13 @@ public sealed class LiveTotalCalibrationBucketResult
     public string DetailedScoreState { get; set; } = string.Empty;
     public int Rows { get; set; }
     public int Matches { get; set; }
+    public double LeagueAverageFinalGoals { get; set; }
     public double TotalFinalGoals { get; set; }
     public double ActualRemainingGoals { get; set; }
-    public double? ActualRemainingShare { get; set; }
-    public double AverageTimingRemainingShare { get; set; }
-    public double? CorrectionFactor { get; set; }
     public double ActualRemainingGoalsPerRow { get; set; }
+    public double AverageTimingRemainingShare { get; set; }
+    public double BaselineRemainingGoalsPerRow { get; set; }
+    public double? CorrectionFactor { get; set; }
 }
 
 public sealed class LiveTotalCalibrationAnalyzer
@@ -68,6 +69,12 @@ public sealed class LiveTotalCalibrationAnalyzer
             RowsAnalyzed = analyzedRows.Count
         };
 
+        double leagueAverageFinalGoals = rows
+            .GroupBy(x => x.MatchId)
+            .Select(x => x.First().ActualFinalTotalGoals)
+            .DefaultIfEmpty(0.0)
+            .Average();
+
         foreach (var group in analyzedRows
             .GroupBy(x => new { x.MinuteBand, x.Row.DetailedScoreState })
             .OrderBy(x => MinuteBandOrder(x.Key.MinuteBand))
@@ -76,10 +83,11 @@ public sealed class LiveTotalCalibrationAnalyzer
             List<LiveTotalCalibrationInputRow> bucketRows = group.Select(x => x.Row).ToList();
             double totalFinalGoals = bucketRows.Sum(x => x.ActualFinalTotalGoals);
             double actualRemainingGoals = bucketRows.Sum(x => x.ActualRemainingGoals);
-            double? actualRemainingShare = totalFinalGoals > 0 ? actualRemainingGoals / totalFinalGoals : null;
+            double actualRemainingGoalsPerRow = actualRemainingGoals / bucketRows.Count;
             double averageTimingRemainingShare = bucketRows.Average(x => x.TimingRemainingShare);
-            double? correctionFactor = actualRemainingShare.HasValue && averageTimingRemainingShare > 0
-                ? actualRemainingShare.Value / averageTimingRemainingShare
+            double baselineRemainingGoalsPerRow = leagueAverageFinalGoals * averageTimingRemainingShare;
+            double? correctionFactor = baselineRemainingGoalsPerRow > 0
+                ? actualRemainingGoalsPerRow / baselineRemainingGoalsPerRow
                 : null;
 
             result.Buckets.Add(new LiveTotalCalibrationBucketResult
@@ -88,12 +96,13 @@ public sealed class LiveTotalCalibrationAnalyzer
                 DetailedScoreState = group.Key.DetailedScoreState,
                 Rows = bucketRows.Count,
                 Matches = bucketRows.Select(x => x.MatchId).Distinct().Count(),
+                LeagueAverageFinalGoals = leagueAverageFinalGoals,
                 TotalFinalGoals = totalFinalGoals,
                 ActualRemainingGoals = actualRemainingGoals,
-                ActualRemainingShare = actualRemainingShare,
+                ActualRemainingGoalsPerRow = actualRemainingGoalsPerRow,
                 AverageTimingRemainingShare = averageTimingRemainingShare,
-                CorrectionFactor = correctionFactor,
-                ActualRemainingGoalsPerRow = actualRemainingGoals / bucketRows.Count
+                BaselineRemainingGoalsPerRow = baselineRemainingGoalsPerRow,
+                CorrectionFactor = correctionFactor
             });
         }
 
@@ -224,7 +233,7 @@ public sealed class LiveTotalCalibrationAnalyzer
     private static string ToCsv(IReadOnlyCollection<LiveTotalCalibrationBucketResult> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("MinuteBand,DetailedScoreState,Rows,Matches,TotalFinalGoals,ActualRemainingGoals,ActualRemainingShare,AverageTimingRemainingShare,CorrectionFactor,ActualRemainingGoalsPerRow");
+        sb.AppendLine("MinuteBand,DetailedScoreState,Rows,Matches,LeagueAverageFinalGoals,TotalFinalGoals,ActualRemainingGoals,ActualRemainingGoalsPerRow,AverageTimingRemainingShare,BaselineRemainingGoalsPerRow,CorrectionFactor");
         foreach (LiveTotalCalibrationBucketResult row in rows)
         {
             sb.AppendLine(string.Join(',',
@@ -232,12 +241,13 @@ public sealed class LiveTotalCalibrationAnalyzer
                 EscapeCsv(row.DetailedScoreState),
                 row.Rows.ToString(CultureInfo.InvariantCulture),
                 row.Matches.ToString(CultureInfo.InvariantCulture),
+                D(row.LeagueAverageFinalGoals),
                 D(row.TotalFinalGoals),
                 D(row.ActualRemainingGoals),
-                D(row.ActualRemainingShare),
+                D(row.ActualRemainingGoalsPerRow),
                 D(row.AverageTimingRemainingShare),
-                D(row.CorrectionFactor),
-                D(row.ActualRemainingGoalsPerRow)));
+                D(row.BaselineRemainingGoalsPerRow),
+                D(row.CorrectionFactor)));
         }
         return sb.ToString();
     }
