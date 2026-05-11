@@ -23,8 +23,6 @@ public sealed class LiveTotalPriceOptions
     public int RecentGoalMinutes { get; set; } = 2;
     public double VolumeFactor { get; set; } = 1.0;
     public string VolumeFactorSource { get; set; } = "manual/default";
-    public double TeamVolumeFactor { get; set; } = 1.0;
-    public string TeamVolumeFactorSource { get; set; } = "none/default 1.0";
     public List<double> TargetLines { get; } = [1.5, 2.0, 2.5, 3.0];
     public Dictionary<double, double> LiveOverOddsByLine { get; } = new();
     public Dictionary<double, double> LiveUnderOddsByLine { get; } = new();
@@ -61,9 +59,6 @@ public sealed class LiveTotalPriceResult
     public double RemainingXgBeforeVolume { get; set; }
     public double VolumeFactor { get; set; } = 1.0;
     public string VolumeFactorSource { get; set; } = string.Empty;
-    public double RemainingXgBeforeTeamVolume { get; set; }
-    public double TeamVolumeFactor { get; set; } = 1.0;
-    public string TeamVolumeFactorSource { get; set; } = string.Empty;
     public double RemainingXg { get; set; }
     public int HomeRedCards { get; set; }
     public int AwayRedCards { get; set; }
@@ -130,9 +125,7 @@ public sealed class LiveTotalPricer
         LiveTotalStateCorrectionResolution stateCorrection = await ResolveStateCorrectionAsync(cancellationToken);
         double remainingXgBeforeVolume = remainingXgBeforeStateCorrection * stateCorrection.Factor;
         double volumeFactor = Math.Clamp(_options.VolumeFactor, 0.20, 2.50);
-        double remainingXgBeforeTeamVolume = remainingXgBeforeVolume * volumeFactor;
-        double teamVolumeFactor = Math.Clamp(_options.TeamVolumeFactor, 0.50, 1.50);
-        double remainingXg = remainingXgBeforeTeamVolume * teamVolumeFactor;
+        double remainingXg = remainingXgBeforeVolume * volumeFactor;
 
         var result = new LiveTotalPriceResult
         {
@@ -163,9 +156,6 @@ public sealed class LiveTotalPricer
             RemainingXgBeforeVolume = remainingXgBeforeVolume,
             VolumeFactor = volumeFactor,
             VolumeFactorSource = _options.VolumeFactorSource,
-            RemainingXgBeforeTeamVolume = remainingXgBeforeTeamVolume,
-            TeamVolumeFactor = teamVolumeFactor,
-            TeamVolumeFactorSource = _options.TeamVolumeFactorSource,
             RemainingXg = remainingXg,
             HomeRedCards = _options.HomeRedCards,
             AwayRedCards = _options.AwayRedCards,
@@ -343,8 +333,6 @@ public sealed class LiveTotalPricer
             throw new ArgumentException("--edge-threshold must be >= 0.");
         if (_options.VolumeFactor <= 0)
             throw new ArgumentException("--volume-factor must be greater than 0.");
-        if (_options.TeamVolumeFactor <= 0)
-            throw new ArgumentException("--team-volume-factor must be greater than 0.");
     }
 
     public static double NormalizeLineKey(double line) => Math.Round(line, 2);

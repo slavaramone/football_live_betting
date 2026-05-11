@@ -106,7 +106,6 @@ static async Task<int> RunBuildLiveTotalCalibrationDataset(string[] args)
         EmpiricalWeight = parsed.Double("empirical-weight", profile?.DefaultEmpiricalWeight ?? 0.80),
         IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
         IncludeEventTriggers = parsed.Bool("include-event-triggers", true),
-        TeamVolumePriorMatches = parsed.Int("team-volume-prior-matches", 20),
         MaxExamples = parsed.Int("max-examples", 20)
     };
 
@@ -202,7 +201,6 @@ static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
         InputPath = parsed.RequiredString("input"),
         OutputPath = parsed.String("output", string.Empty),
         MinBucketMatches = parsed.Int("min-bucket-matches", 100),
-        MinStateMatches = parsed.Int("min-state-matches", 200),
         MinFactor = parsed.Double("min-factor", 0.50),
         MaxFactor = parsed.Double("max-factor", 2.50)
     };
@@ -227,12 +225,6 @@ static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
     foreach (LiveTotalStateCorrectionBucket bucket in result.Buckets)
         Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-7} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.RawFactor,5:0.###}  {bucket.Factor,5:0.###}  {bucket.IsUsable}");
 
-    Console.WriteLine();
-    Console.WriteLine("State fallback factors:");
-    Console.WriteLine("Trigger       ScoreState            Rows  Matches  Raw    Used   Usable");
-    foreach (LiveTotalStateCorrectionFallback fallback in result.StateFallbacks)
-        Console.WriteLine($"{fallback.StateTrigger,-13} {fallback.DetailedScoreState,-20} {fallback.Rows,5}  {fallback.Matches,7}  {fallback.RawFactor,5:0.###}  {fallback.Factor,5:0.###}  {fallback.IsUsable}");
-
     return 0;
 }
 
@@ -244,8 +236,7 @@ static async Task<int> RunEvaluateLiveTotalModel(string[] args)
     {
         InputPath = parsed.RequiredString("input"),
         StateCorrectionPath = parsed.RequiredString("state-correction"),
-        OutputPath = parsed.String("output", string.Empty),
-        RequireTeamVolumeHistory = parsed.Bool("require-team-volume-history", false)
+        OutputPath = parsed.String("output", string.Empty)
     };
     AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
 
@@ -262,10 +253,10 @@ static async Task<int> RunEvaluateLiveTotalModel(string[] args)
     Console.WriteLine($"Output: {result.OutputPath}");
 
     Console.WriteLine();
-    Console.WriteLine("Trigger        Rows  Matches  BaseMAE  StateMAE  State+TeamMAE  BaseBias  StateBias  State+TeamBias");
+    Console.WriteLine("Trigger        Rows  Matches  BaseMAE  StateMAE  BaseBias  StateBias");
     foreach (LiveTotalModelEvaluationSummary summary in result.Summaries)
     {
-        Console.WriteLine($"{summary.StateTrigger,-13} {summary.Rows,5}  {summary.Matches,7}  {summary.BaselineMae,7:0.###}  {summary.StateCorrectedMae,8:0.###}  {summary.StatePlusTeamMae,13:0.###}  {summary.BaselineBias,8:0.###}  {summary.StateCorrectedBias,9:0.###}  {summary.StatePlusTeamBias,14:0.###}");
+        Console.WriteLine($"{summary.StateTrigger,-13} {summary.Rows,5}  {summary.Matches,7}  {summary.BaselineMae,7:0.###}  {summary.StateCorrectedMae,8:0.###}  {summary.BaselineBias,8:0.###}  {summary.StateCorrectedBias,9:0.###}");
     }
 
     return 0;
@@ -415,9 +406,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         LastGoalMinute = parsed.Int("last-goal-minute", -1),
         RecentGoalMinutes = parsed.Int("recent-goal-minutes", 2),
         VolumeFactor = parsed.Double("volume-factor", 1.0),
-        VolumeFactorSource = parsed.Has("volume-factor") ? "manual --volume-factor" : "none/default 1.0",
-        TeamVolumeFactor = parsed.Double("team-volume-factor", 1.0),
-        TeamVolumeFactorSource = parsed.Has("team-volume-factor") ? "manual --team-volume-factor" : "none/default 1.0"
+        VolumeFactorSource = parsed.Has("volume-factor") ? "manual --volume-factor" : "none/default 1.0"
     };
 
     bool explicitTargetLines = parsed.Has("target-lines");
@@ -483,52 +472,6 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         options.VolumeFactorSource = seasonVolume.Source;
     }
 
-    bool useTeamVolume = !parsed.Has("team-volume-factor") && parsed.Bool("use-team-volume", profile?.UseTeamVolume ?? false);
-    TeamVolumeFactorResult? teamVolume = null;
-    if (useTeamVolume)
-    {
-        string league = parsed.String("league", profile?.League ?? string.Empty);
-        int teamVolumeSeasonId = parsed.Has("team-volume-season-id")
-            ? parsed.RequiredInt("team-volume-season-id")
-            : parsed.Has("current-season-id")
-                ? parsed.RequiredInt("current-season-id")
-                : profile?.CurrentSeasonId ?? 0;
-        int beforeRound = parsed.Has("before-round")
-            ? parsed.RequiredInt("before-round")
-            : profile?.DefaultBeforeRound ?? 0;
-        long homeTeamId = parsed.RequiredLong("home-team-id");
-        long awayTeamId = parsed.RequiredLong("away-team-id");
-        int priorMatches = parsed.Int("team-volume-prior-matches", profile?.TeamVolumePriorMatches ?? 20);
-
-        if (string.IsNullOrWhiteSpace(league))
-            throw new ArgumentException("Team volume requires --league or a profile with league set.");
-        if (teamVolumeSeasonId <= 0)
-            throw new ArgumentException("Team volume requires --team-volume-season-id, --current-season-id, or a profile with currentSeasonId set.");
-        if (beforeRound <= 0)
-            throw new ArgumentException("Team volume requires --before-round. It should be the next/current round, so only earlier completed rounds are used.");
-
-        var teamVolumeOptions = new TeamVolumeFactorOptions
-        {
-            League = league,
-            SeasonId = teamVolumeSeasonId,
-            BeforeRound = beforeRound,
-            HomeTeamId = homeTeamId,
-            AwayTeamId = awayTeamId,
-            PriorStrengthMatches = priorMatches
-        };
-
-        IConfiguration configuration = new ConfigurationBuilder()
-            .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-            .Build();
-
-        await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
-        var teamVolumeCalculator = new TeamVolumeFactorCalculator(dbContext);
-        teamVolume = await teamVolumeCalculator.CalculateAsync(teamVolumeOptions, CancellationToken.None);
-        options.TeamVolumeFactor = teamVolume.Factor;
-        options.TeamVolumeFactorSource = teamVolume.Source;
-    }
-
     AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
     AddLiveOverOdds(options.LiveOverOddsByLine, parsed);
     AddLiveUnderOdds(options.LiveUnderOddsByLine, parsed);
@@ -573,17 +516,6 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         Console.WriteLine($"Volume raw factor: {seasonVolume.RawFactor:0.###}, shrink weight: {seasonVolume.Weight:P1}");
         if (!string.IsNullOrWhiteSpace(seasonVolume.Warning))
             result.Warnings.Add(seasonVolume.Warning);
-    }
-    Console.WriteLine($"Remaining xG before team volume: {result.RemainingXgBeforeTeamVolume:0.###}");
-    Console.WriteLine($"Team volume active: {useTeamVolume}");
-    Console.WriteLine($"Team volume factor: {result.TeamVolumeFactor:0.###} ({result.TeamVolumeFactorSource})");
-    if (teamVolume is not null)
-    {
-        Console.WriteLine($"Team volume league: {teamVolume.LeagueMatches} prior matches, {teamVolume.LeagueGoalsPerMatch:0.###} GPM");
-        Console.WriteLine($"Team volume home: {teamVolume.HomeMatches} prior matches, {teamVolume.HomeGoalsPerMatch:0.###} GPM, factor {teamVolume.HomeFactor:0.###}");
-        Console.WriteLine($"Team volume away: {teamVolume.AwayMatches} prior matches, {teamVolume.AwayGoalsPerMatch:0.###} GPM, factor {teamVolume.AwayFactor:0.###}");
-        if (!string.IsNullOrWhiteSpace(teamVolume.Warning))
-            result.Warnings.Add(teamVolume.Warning);
     }
     Console.WriteLine($"Expected remaining goals: {result.RemainingXg:0.###}");
 

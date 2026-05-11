@@ -10,7 +10,6 @@ public sealed class LiveTotalModelEvaluationOptions
     public string StateCorrectionPath { get; set; } = string.Empty;
     public string OutputPath { get; set; } = string.Empty;
     public List<int> TestSeasonIds { get; } = [];
-    public bool RequireTeamVolumeHistory { get; set; }
 }
 
 public sealed class LiveTotalModelEvaluationResult
@@ -31,14 +30,10 @@ public sealed class LiveTotalModelEvaluationSummary
     public int Matches { get; set; }
     public double BaselineMae { get; set; }
     public double StateCorrectedMae { get; set; }
-    public double StatePlusTeamMae { get; set; }
     public double BaselineBias { get; set; }
     public double StateCorrectedBias { get; set; }
-    public double StatePlusTeamBias { get; set; }
     public double BaselineRmse { get; set; }
     public double StateCorrectedRmse { get; set; }
-    public double StatePlusTeamRmse { get; set; }
-    public double AverageTeamVolumeFactor { get; set; }
 }
 
 public sealed class LiveTotalModelEvaluator
@@ -78,19 +73,13 @@ public sealed class LiveTotalModelEvaluator
             if (!resolved.IsSupported)
                 continue;
 
-            if (_options.RequireTeamVolumeHistory && (row.HomePreviousMatches <= 0 || row.AwayPreviousMatches <= 0))
-                continue;
-
             double baseline = correction.LeagueAverageFinalGoals * row.TimingRemainingShare;
             double stateCorrected = baseline * resolved.Factor;
-            double statePlusTeam = stateCorrected * row.MatchTeamVolumeFactor;
-
             observations.Add(new Observation
             {
                 Row = row,
                 Baseline = baseline,
-                StateCorrected = stateCorrected,
-                StatePlusTeam = statePlusTeam
+                StateCorrected = stateCorrected
             });
         }
 
@@ -129,14 +118,10 @@ public sealed class LiveTotalModelEvaluator
             Matches = rows.Select(x => x.Row.MatchId).Distinct().Count(),
             BaselineMae = rows.Average(x => Math.Abs(x.Baseline - x.Row.ActualRemainingGoals)),
             StateCorrectedMae = rows.Average(x => Math.Abs(x.StateCorrected - x.Row.ActualRemainingGoals)),
-            StatePlusTeamMae = rows.Average(x => Math.Abs(x.StatePlusTeam - x.Row.ActualRemainingGoals)),
             BaselineBias = rows.Average(x => x.Baseline - x.Row.ActualRemainingGoals),
             StateCorrectedBias = rows.Average(x => x.StateCorrected - x.Row.ActualRemainingGoals),
-            StatePlusTeamBias = rows.Average(x => x.StatePlusTeam - x.Row.ActualRemainingGoals),
             BaselineRmse = Math.Sqrt(rows.Average(x => Squared(x.Baseline - x.Row.ActualRemainingGoals))),
-            StateCorrectedRmse = Math.Sqrt(rows.Average(x => Squared(x.StateCorrected - x.Row.ActualRemainingGoals))),
-            StatePlusTeamRmse = Math.Sqrt(rows.Average(x => Squared(x.StatePlusTeam - x.Row.ActualRemainingGoals))),
-            AverageTeamVolumeFactor = rows.Average(x => x.Row.MatchTeamVolumeFactor)
+            StateCorrectedRmse = Math.Sqrt(rows.Average(x => Squared(x.StateCorrected - x.Row.ActualRemainingGoals)))
         };
     }
 
@@ -178,7 +163,7 @@ public sealed class LiveTotalModelEvaluator
         foreach (string required in new[]
         {
             "SofaScoreSeasonId", "MatchId", "StateTrigger", "Minute", "HomeGoals", "AwayGoals",
-            "TimingRemainingShare", "ActualRemainingGoals", "HomePreviousMatches", "AwayPreviousMatches", "MatchTeamVolumeFactor"
+            "TimingRemainingShare", "ActualRemainingGoals"
         })
         {
             if (!index.ContainsKey(required))
@@ -197,10 +182,7 @@ public sealed class LiveTotalModelEvaluator
                 !TryGetInt(record, index, "HomeGoals", out int homeGoals) ||
                 !TryGetInt(record, index, "AwayGoals", out int awayGoals) ||
                 !TryGetDouble(record, index, "TimingRemainingShare", out double timingRemainingShare) ||
-                !TryGetDouble(record, index, "ActualRemainingGoals", out double actualRemainingGoals) ||
-                !TryGetInt(record, index, "HomePreviousMatches", out int homePreviousMatches) ||
-                !TryGetInt(record, index, "AwayPreviousMatches", out int awayPreviousMatches) ||
-                !TryGetDouble(record, index, "MatchTeamVolumeFactor", out double matchTeamVolumeFactor))
+                !TryGetDouble(record, index, "ActualRemainingGoals", out double actualRemainingGoals))
                 continue;
 
             rows.Add(new InputRow
@@ -212,10 +194,7 @@ public sealed class LiveTotalModelEvaluator
                 HomeGoals = homeGoals,
                 AwayGoals = awayGoals,
                 TimingRemainingShare = timingRemainingShare,
-                ActualRemainingGoals = actualRemainingGoals,
-                HomePreviousMatches = homePreviousMatches,
-                AwayPreviousMatches = awayPreviousMatches,
-                MatchTeamVolumeFactor = matchTeamVolumeFactor
+                ActualRemainingGoals = actualRemainingGoals
             });
         }
 
@@ -225,7 +204,7 @@ public sealed class LiveTotalModelEvaluator
     private static string ToCsv(IReadOnlyCollection<LiveTotalModelEvaluationSummary> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("StateTrigger,Rows,Matches,BaselineMae,StateCorrectedMae,StatePlusTeamMae,BaselineBias,StateCorrectedBias,StatePlusTeamBias,BaselineRmse,StateCorrectedRmse,StatePlusTeamRmse,AverageTeamVolumeFactor");
+        sb.AppendLine("StateTrigger,Rows,Matches,BaselineMae,StateCorrectedMae,BaselineBias,StateCorrectedBias,BaselineRmse,StateCorrectedRmse");
         foreach (LiveTotalModelEvaluationSummary row in rows)
         {
             sb.AppendLine(string.Join(',',
@@ -234,14 +213,10 @@ public sealed class LiveTotalModelEvaluator
                 row.Matches.ToString(CultureInfo.InvariantCulture),
                 D(row.BaselineMae),
                 D(row.StateCorrectedMae),
-                D(row.StatePlusTeamMae),
                 D(row.BaselineBias),
                 D(row.StateCorrectedBias),
-                D(row.StatePlusTeamBias),
                 D(row.BaselineRmse),
-                D(row.StateCorrectedRmse),
-                D(row.StatePlusTeamRmse),
-                D(row.AverageTeamVolumeFactor)));
+                D(row.StateCorrectedRmse)));
         }
 
         return sb.ToString();
@@ -360,9 +335,6 @@ public sealed class LiveTotalModelEvaluator
         public int AwayGoals { get; set; }
         public double TimingRemainingShare { get; set; }
         public double ActualRemainingGoals { get; set; }
-        public int HomePreviousMatches { get; set; }
-        public int AwayPreviousMatches { get; set; }
-        public double MatchTeamVolumeFactor { get; set; } = 1.0;
     }
 
     private sealed class Observation
@@ -370,6 +342,5 @@ public sealed class LiveTotalModelEvaluator
         public InputRow Row { get; set; } = new();
         public double Baseline { get; set; }
         public double StateCorrected { get; set; }
-        public double StatePlusTeam { get; set; }
     }
 }

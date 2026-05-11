@@ -18,7 +18,6 @@ public sealed class LiveTotalCalibrationDatasetOptions
     public double EmpiricalWeight { get; set; } = 0.80;
     public bool IncludeUnreliableMatches { get; set; }
     public bool IncludeEventTriggers { get; set; } = true;
-    public int TeamVolumePriorMatches { get; set; } = 20;
     public int MaxExamples { get; set; } = 20;
     public List<int> SnapshotMinutes { get; } = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85];
 }
@@ -86,7 +85,6 @@ public sealed class LiveTotalCalibrationDatasetBuilder
 
         var rows = new List<LiveTotalCalibrationDatasetRow>();
         var unreliableExamples = new List<string>();
-        var teamVolumeHistories = new Dictionary<int, SeasonTeamVolumeHistory>();
 
         foreach (MatchEntity match in matches)
         {
@@ -105,11 +103,6 @@ public sealed class LiveTotalCalibrationDatasetBuilder
             int finalHome = match.HomeScoreCurrent ?? 0;
             int finalAway = match.AwayScoreCurrent ?? 0;
             int finalTotal = finalHome + finalAway;
-            SeasonTeamVolumeHistory teamVolumeHistory = GetOrCreateTeamVolumeHistory(teamVolumeHistories, match.SofaScoreSeasonId);
-            TeamVolumeFactorResult teamVolume = teamVolumeHistory.Calculate(
-                match.HomeTeamSofaScoreId,
-                match.AwayTeamSofaScoreId,
-                _options.TeamVolumePriorMatches);
             bool reliable = finalHome == goals.Count(x => x.IsHome) && finalAway == goals.Count(x => !x.IsHome);
 
             if (reliable)
@@ -122,10 +115,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                 if (unreliableExamples.Count < _options.MaxExamples)
                     unreliableExamples.Add($"event {match.SofaScoreEventId}: final {finalHome}-{finalAway}, goal events {goals.Count(x => x.IsHome)}-{goals.Count(x => !x.IsHome)}");
                 if (!_options.IncludeUnreliableMatches)
-                {
-                    teamVolumeHistory.Add(match, finalTotal);
                     continue;
-                }
             }
 
             foreach (int minute in _options.SnapshotMinutes.Distinct().OrderBy(x => x))
@@ -143,8 +133,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                     LiveTotalStateTrigger.FixedMinute,
                     triggerEventMinute: -1,
                     triggerEventSide: string.Empty,
-                    state,
-                    teamVolume));
+                    state));
                 result.FixedMinuteStatesWritten++;
             }
 
@@ -176,8 +165,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                             LiveTotalStateTrigger.AfterGoal,
                             minute,
                             e.IsHome ? "Home" : "Away",
-                            state.Clone(),
-                            teamVolume));
+                            state.Clone()));
                         result.AfterGoalStatesWritten++;
                     }
                     else if (IsRedCard(e))
@@ -198,14 +186,12 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                             LiveTotalStateTrigger.AfterRedCard,
                             minute,
                             e.IsHome ? "Home" : "Away",
-                            state.Clone(),
-                            teamVolume));
+                            state.Clone()));
                         result.AfterRedCardStatesWritten++;
                     }
                 }
             }
 
-            teamVolumeHistory.Add(match, finalTotal);
         }
 
         if (unreliableExamples.Count > 0)
@@ -229,8 +215,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         string stateTrigger,
         int triggerEventMinute,
         string triggerEventSide,
-        MatchState state,
-        TeamVolumeFactorResult teamVolume)
+        MatchState state)
     {
         int currentTotal = state.HomeGoals + state.AwayGoals;
         int minutesSinceLastGoal = state.LastGoalMinute < 0 ? -1 : Math.Max(0, minute - state.LastGoalMinute);
@@ -252,20 +237,8 @@ public sealed class LiveTotalCalibrationDatasetBuilder
             MatchId = match.Id,
             SofaScoreEventId = match.SofaScoreEventId,
             StartTimeUtc = match.StartTimeUtc,
-            HomeTeamSofaScoreId = match.HomeTeamSofaScoreId,
-            AwayTeamSofaScoreId = match.AwayTeamSofaScoreId,
             HomeTeamName = match.HomeTeamName,
             AwayTeamName = match.AwayTeamName,
-            TeamVolumePriorMatches = _options.TeamVolumePriorMatches,
-            LeaguePreviousMatches = teamVolume.LeagueMatches,
-            HomePreviousMatches = teamVolume.HomeMatches,
-            AwayPreviousMatches = teamVolume.AwayMatches,
-            LeaguePreviousGoalsPerMatch = teamVolume.LeagueGoalsPerMatch,
-            HomePreviousGoalsPerMatch = teamVolume.HomeGoalsPerMatch,
-            AwayPreviousGoalsPerMatch = teamVolume.AwayGoalsPerMatch,
-            HomeTeamVolumeFactor = teamVolume.HomeFactor,
-            AwayTeamVolumeFactor = teamVolume.AwayFactor,
-            MatchTeamVolumeFactor = teamVolume.Factor,
             StateTrigger = stateTrigger,
             TriggerEventMinute = triggerEventMinute,
             TriggerEventSide = triggerEventSide,
@@ -343,8 +316,6 @@ public sealed class LiveTotalCalibrationDatasetBuilder
             throw new ArgumentException("At least one snapshot minute is required.");
         if (_options.SnapshotMinutes.Any(x => x < 0 || x > 90))
             throw new ArgumentException("Snapshot minutes must be between 0 and 90.");
-        if (_options.TeamVolumePriorMatches < 0)
-            throw new ArgumentException("--team-volume-prior-matches must be >= 0.");
     }
 
     private string ResolveOutputPath()
@@ -398,73 +369,13 @@ public sealed class LiveTotalCalibrationDatasetBuilder
     private static readonly string[] Header =
     [
         "LeagueName", "LeagueSlug", "SofaScoreSeasonId", "SeasonName", "SeasonYear", "RoundNumber", "MatchId", "SofaScoreEventId", "StartTimeUtc",
-        "HomeTeamSofaScoreId", "AwayTeamSofaScoreId", "HomeTeamName", "AwayTeamName",
-        "TeamVolumePriorMatches", "LeaguePreviousMatches", "HomePreviousMatches", "AwayPreviousMatches",
-        "LeaguePreviousGoalsPerMatch", "HomePreviousGoalsPerMatch", "AwayPreviousGoalsPerMatch", "HomeTeamVolumeFactor", "AwayTeamVolumeFactor", "MatchTeamVolumeFactor",
+        "HomeTeamName", "AwayTeamName",
         "StateTrigger", "TriggerEventMinute", "TriggerEventSide",
         "Minute", "HomeGoals", "AwayGoals", "CurrentTotalGoals", "GoalDifference", "ScoreState", "DetailedScoreState",
         "HomeRedCards", "AwayRedCards", "RedCardDifference", "LastGoalMinute", "MinutesSinceLastGoal", "HasRecentGoal",
         "SelectedTimingGroup", "TimingFallback", "EmpiricalWeight", "WeibullRemainingShare", "EmpiricalRemainingShare", "TimingRemainingShare",
         "ActualFinalHomeGoals", "ActualFinalAwayGoals", "ActualFinalTotalGoals", "ActualRemainingGoals", "AnyFutureGoal", "IsReliableMatch"
     ];
-
-    private static SeasonTeamVolumeHistory GetOrCreateTeamVolumeHistory(Dictionary<int, SeasonTeamVolumeHistory> histories, int seasonId)
-    {
-        if (!histories.TryGetValue(seasonId, out SeasonTeamVolumeHistory? history))
-        {
-            history = new SeasonTeamVolumeHistory();
-            histories[seasonId] = history;
-        }
-
-        return history;
-    }
-
-    private sealed class SeasonTeamVolumeHistory
-    {
-        private int _leagueGoals;
-        private int _leagueMatches;
-        private readonly Dictionary<long, TeamHistory> _teams = [];
-
-        public TeamVolumeFactorResult Calculate(long homeTeamId, long awayTeamId, int priorStrengthMatches)
-        {
-            TeamHistory home = _teams.GetValueOrDefault(homeTeamId) ?? new TeamHistory();
-            TeamHistory away = _teams.GetValueOrDefault(awayTeamId) ?? new TeamHistory();
-            return TeamVolumeFactorMath.Calculate(
-                _leagueGoals,
-                _leagueMatches,
-                home.Goals,
-                home.Matches,
-                away.Goals,
-                away.Matches,
-                priorStrengthMatches);
-        }
-
-        public void Add(MatchEntity match, int finalTotal)
-        {
-            _leagueGoals += finalTotal;
-            _leagueMatches++;
-            AddTeam(match.HomeTeamSofaScoreId, finalTotal);
-            AddTeam(match.AwayTeamSofaScoreId, finalTotal);
-        }
-
-        private void AddTeam(long teamId, int finalTotal)
-        {
-            if (!_teams.TryGetValue(teamId, out TeamHistory? history))
-            {
-                history = new TeamHistory();
-                _teams[teamId] = history;
-            }
-
-            history.Goals += finalTotal;
-            history.Matches++;
-        }
-
-        private sealed class TeamHistory
-        {
-            public int Goals { get; set; }
-            public int Matches { get; set; }
-        }
-    }
 
     private sealed class MatchState
     {
@@ -496,20 +407,8 @@ internal sealed class LiveTotalCalibrationDatasetRow
     public int MatchId { get; set; }
     public long SofaScoreEventId { get; set; }
     public DateTimeOffset? StartTimeUtc { get; set; }
-    public long HomeTeamSofaScoreId { get; set; }
-    public long AwayTeamSofaScoreId { get; set; }
     public string HomeTeamName { get; set; } = string.Empty;
     public string AwayTeamName { get; set; } = string.Empty;
-    public int TeamVolumePriorMatches { get; set; }
-    public int LeaguePreviousMatches { get; set; }
-    public int HomePreviousMatches { get; set; }
-    public int AwayPreviousMatches { get; set; }
-    public double LeaguePreviousGoalsPerMatch { get; set; }
-    public double HomePreviousGoalsPerMatch { get; set; }
-    public double AwayPreviousGoalsPerMatch { get; set; }
-    public double HomeTeamVolumeFactor { get; set; } = 1.0;
-    public double AwayTeamVolumeFactor { get; set; } = 1.0;
-    public double MatchTeamVolumeFactor { get; set; } = 1.0;
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public int TriggerEventMinute { get; set; } = -1;
     public string TriggerEventSide { get; set; } = string.Empty;
@@ -547,9 +446,7 @@ internal sealed class LiveTotalCalibrationDatasetRow
         return
         [
             LeagueName, LeagueSlug, SofaScoreSeasonId.ToString(CultureInfo.InvariantCulture), SeasonName, SeasonYear, RoundNumber.ToString(CultureInfo.InvariantCulture), MatchId.ToString(CultureInfo.InvariantCulture), SofaScoreEventId.ToString(CultureInfo.InvariantCulture), StartTimeUtc?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
-            HomeTeamSofaScoreId.ToString(CultureInfo.InvariantCulture), AwayTeamSofaScoreId.ToString(CultureInfo.InvariantCulture), HomeTeamName, AwayTeamName,
-            TeamVolumePriorMatches.ToString(CultureInfo.InvariantCulture), LeaguePreviousMatches.ToString(CultureInfo.InvariantCulture), HomePreviousMatches.ToString(CultureInfo.InvariantCulture), AwayPreviousMatches.ToString(CultureInfo.InvariantCulture),
-            D(LeaguePreviousGoalsPerMatch), D(HomePreviousGoalsPerMatch), D(AwayPreviousGoalsPerMatch), D(HomeTeamVolumeFactor), D(AwayTeamVolumeFactor), D(MatchTeamVolumeFactor),
+            HomeTeamName, AwayTeamName,
             StateTrigger, TriggerEventMinute.ToString(CultureInfo.InvariantCulture), TriggerEventSide,
             Minute.ToString(CultureInfo.InvariantCulture), HomeGoals.ToString(CultureInfo.InvariantCulture), AwayGoals.ToString(CultureInfo.InvariantCulture), CurrentTotalGoals.ToString(CultureInfo.InvariantCulture), GoalDifference.ToString(CultureInfo.InvariantCulture), ScoreState, DetailedScoreState,
             HomeRedCards.ToString(CultureInfo.InvariantCulture), AwayRedCards.ToString(CultureInfo.InvariantCulture), RedCardDifference.ToString(CultureInfo.InvariantCulture), LastGoalMinute.ToString(CultureInfo.InvariantCulture), MinutesSinceLastGoal.ToString(CultureInfo.InvariantCulture), B(HasRecentGoal),

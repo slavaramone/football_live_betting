@@ -18,8 +18,6 @@ public sealed class LeagueProfile
     public int CurrentSeasonId { get; set; }
     public int? DefaultBeforeRound { get; set; }
     public bool UseCurrentSeasonVolume { get; set; } = true;
-    public bool UseTeamVolume { get; set; }
-    public int TeamVolumePriorMatches { get; set; } = 20;
     public double DefaultEmpiricalWeight { get; set; } = 0.80;
     public double EdgeThreshold { get; set; } = 0.10;
     public int PriorStrengthMatches { get; set; } = 100;

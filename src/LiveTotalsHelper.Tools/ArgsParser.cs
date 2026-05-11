@@ -50,26 +50,6 @@ public sealed class ParsedArgs
             : throw new ArgumentException($"Argument --{key} must be an integer.");
     }
 
-    public long RequiredLong(string name)
-    {
-        string value = RequiredString(name);
-        return long.TryParse(value, out long parsed)
-            ? parsed
-            : throw new ArgumentException($"Argument --{Normalize(name)} must be an integer.");
-    }
-
-    public long Long(string name, long defaultValue)
-    {
-        string key = Normalize(name);
-        if (!_values.TryGetValue(key, out string? value) || string.IsNullOrWhiteSpace(value))
-            return defaultValue;
-
-        return long.TryParse(value, out long parsed)
-            ? parsed
-            : throw new ArgumentException($"Argument --{key} must be an integer.");
-    }
-
-
     public double RequiredDouble(string name)
     {
         string value = RequiredString(name);

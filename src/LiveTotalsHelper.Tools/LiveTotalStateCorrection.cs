@@ -41,7 +41,6 @@ public sealed class LiveTotalStateCorrectionFitOptions
     public string OutputPath { get; set; } = string.Empty;
     public List<int> TrainingSeasonIds { get; } = [];
     public int MinBucketMatches { get; set; } = 100;
-    public int MinStateMatches { get; set; } = 200;
     public double MinFactor { get; set; } = 0.50;
     public double MaxFactor { get; set; } = 2.50;
 }
@@ -57,7 +56,6 @@ public sealed class LiveTotalStateCorrectionFitResult
     public double LeagueAverageFinalGoals { get; set; }
     public List<int> TrainingSeasonIds { get; } = [];
     public List<LiveTotalStateCorrectionBucket> Buckets { get; } = [];
-    public List<LiveTotalStateCorrectionFallback> StateFallbacks { get; } = [];
 }
 
 public sealed class LiveTotalStateCorrectionFile
@@ -68,31 +66,15 @@ public sealed class LiveTotalStateCorrectionFile
     public List<int> TrainingSeasonIds { get; set; } = [];
     public double LeagueAverageFinalGoals { get; set; }
     public int MinBucketMatches { get; set; }
-    public int MinStateMatches { get; set; }
     public double MinFactor { get; set; }
     public double MaxFactor { get; set; }
     public List<LiveTotalStateCorrectionBucket> Buckets { get; set; } = [];
-    public List<LiveTotalStateCorrectionFallback> StateFallbacks { get; set; } = [];
 }
 
 public sealed class LiveTotalStateCorrectionBucket
 {
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string MinuteBand { get; set; } = string.Empty;
-    public string DetailedScoreState { get; set; } = string.Empty;
-    public int Rows { get; set; }
-    public int Matches { get; set; }
-    public double ActualRemainingGoalsPerRow { get; set; }
-    public double AverageTimingRemainingShare { get; set; }
-    public double BaselineRemainingGoalsPerRow { get; set; }
-    public double RawFactor { get; set; }
-    public double Factor { get; set; }
-    public bool IsUsable { get; set; }
-}
-
-public sealed class LiveTotalStateCorrectionFallback
-{
-    public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string DetailedScoreState { get; set; } = string.Empty;
     public int Rows { get; set; }
     public int Matches { get; set; }
@@ -251,7 +233,6 @@ public sealed class LiveTotalStateCorrectionFitter
         result.TrainingSeasonIds.AddRange(_options.TrainingSeasonIds.OrderBy(x => x));
 
         result.Buckets.AddRange(BuildBuckets(trainingRows, leagueAverageFinalGoals));
-        result.StateFallbacks.AddRange(BuildStateFallbacks(trainingRows, leagueAverageFinalGoals));
 
         var modelFile = new LiveTotalStateCorrectionFile
         {
@@ -260,11 +241,9 @@ public sealed class LiveTotalStateCorrectionFitter
             TrainingSeasonIds = result.TrainingSeasonIds.ToList(),
             LeagueAverageFinalGoals = result.LeagueAverageFinalGoals,
             MinBucketMatches = _options.MinBucketMatches,
-            MinStateMatches = _options.MinStateMatches,
             MinFactor = _options.MinFactor,
             MaxFactor = _options.MaxFactor,
-            Buckets = result.Buckets.ToList(),
-            StateFallbacks = result.StateFallbacks.ToList()
+            Buckets = result.Buckets.ToList()
         };
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
@@ -312,37 +291,6 @@ public sealed class LiveTotalStateCorrectionFitter
             .ToList();
     }
 
-    private List<LiveTotalStateCorrectionFallback> BuildStateFallbacks(IReadOnlyCollection<InputRow> trainingRows, double leagueAverageFinalGoals)
-    {
-        return trainingRows
-            .GroupBy(x => new { x.StateTrigger, x.DetailedScoreState })
-            .OrderBy(x => TriggerOrder(x.Key.StateTrigger))
-            .ThenBy(x => ScoreStateIndex(x.Key.DetailedScoreState))
-            .Select(group =>
-            {
-                List<InputRow> stateRows = group.ToList();
-                int matches = stateRows.Select(x => x.MatchId).Distinct().Count();
-                double actual = stateRows.Average(x => x.ActualRemainingGoals);
-                double avgTiming = stateRows.Average(x => x.TimingRemainingShare);
-                double baseline = leagueAverageFinalGoals * avgTiming;
-                double raw = baseline > 0 ? actual / baseline : 1.0;
-                return new LiveTotalStateCorrectionFallback
-                {
-                    StateTrigger = group.Key.StateTrigger,
-                    DetailedScoreState = group.Key.DetailedScoreState,
-                    Rows = stateRows.Count,
-                    Matches = matches,
-                    ActualRemainingGoalsPerRow = actual,
-                    AverageTimingRemainingShare = avgTiming,
-                    BaselineRemainingGoalsPerRow = baseline,
-                    RawFactor = raw,
-                    Factor = ClampFactor(raw),
-                    IsUsable = matches >= _options.MinStateMatches && baseline > 0
-                };
-            })
-            .ToList();
-    }
-
     private void ValidateOptions()
     {
         if (string.IsNullOrWhiteSpace(_options.InputPath))
@@ -353,8 +301,6 @@ public sealed class LiveTotalStateCorrectionFitter
             throw new ArgumentException("Missing required argument --training-season-ids.");
         if (_options.MinBucketMatches < 1)
             throw new ArgumentException("--min-bucket-matches must be >= 1.");
-        if (_options.MinStateMatches < 1)
-            throw new ArgumentException("--min-state-matches must be >= 1.");
         if (_options.MinFactor <= 0 || _options.MaxFactor <= 0 || _options.MinFactor > _options.MaxFactor)
             throw new ArgumentException("--min-factor and --max-factor must be positive and min <= max.");
     }
