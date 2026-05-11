@@ -23,6 +23,7 @@ try
         "import-sofascore" => await RunImportSofaScore(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
+        "analyze-live-total-calibration" => await RunAnalyzeLiveTotalCalibration(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
         "price-live-total" => await RunPriceLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
@@ -133,6 +134,40 @@ static async Task<int> RunBuildLiveTotalCalibrationDataset(string[] args)
         Console.WriteLine($"Warning: {warning}");
 
     return 0;
+}
+
+static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    var options = new LiveTotalCalibrationAnalysisOptions
+    {
+        InputPath = parsed.RequiredString("input"),
+        OutputPath = parsed.String("output", string.Empty)
+    };
+
+    var analyzer = new LiveTotalCalibrationAnalyzer(options);
+    LiveTotalCalibrationAnalysisResult result = await analyzer.AnalyzeAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Live total calibration analysis done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"Rows read: {result.RowsRead}");
+    Console.WriteLine($"Rows analyzed: {result.RowsAnalyzed}");
+    Console.WriteLine($"Buckets written: {result.Buckets.Count}");
+    Console.WriteLine($"Output: {result.OutputPath}");
+
+    Console.WriteLine();
+    Console.WriteLine("MinuteBand  ScoreState            Rows  Matches  ActualShare  TimingShare  Factor   RemGoals/Row");
+    foreach (LiveTotalCalibrationBucketResult bucket in result.Buckets)
+    {
+        Console.WriteLine($"{bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {P(bucket.ActualRemainingShare),11}  {P(bucket.AverageTimingRemainingShare),11}  {F(bucket.CorrectionFactor),7}  {bucket.ActualRemainingGoalsPerRow,12:0.###}");
+    }
+
+    return 0;
+
+    static string P(double? value) => value.HasValue ? value.Value.ToString("P1", CultureInfo.InvariantCulture) : "n/a";
+    static string F(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
 }
 
 static async Task<int> RunFitWeibull(string[] args)

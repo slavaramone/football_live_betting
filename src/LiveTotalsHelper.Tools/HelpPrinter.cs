@@ -22,6 +22,8 @@ public static class HelpPrinter
         Console.WriteLine();
         PrintBuildLiveTotalCalibrationDataset();
         Console.WriteLine();
+        PrintAnalyzeLiveTotalCalibration();
+        Console.WriteLine();
         PrintFitWeibull();
         Console.WriteLine();
         PrintPriceLiveTotal();
@@ -114,6 +116,20 @@ public static class HelpPrinter
         Console.WriteLine("  --output               Output CSV path. Default: data/datasets/<league>-<seasons>-live-total-calibration.csv.");
         Console.WriteLine();
         Console.WriteLine("No odds are required. Each row stores one historical live state, the same fitted timing-share components used by `price-live-total`, and the realised remaining goals.");
+    }
+
+    public static void PrintAnalyzeLiveTotalCalibration()
+    {
+        Console.WriteLine("Analyze live total calibration usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration \\");
+        Console.WriteLine("    --input data/datasets/norwegian-1st-division-live-total-calibration.csv \\");
+        Console.WriteLine("    --output data/reports/norwegian-1st-division-live-total-calibration-analysis.csv");
+        Console.WriteLine();
+        Console.WriteLine("Arguments:");
+        Console.WriteLine("  --input               Required live-total calibration dataset CSV.");
+        Console.WriteLine("  --output              Output bucket report CSV. Default: <input>-analysis.csv.");
+        Console.WriteLine();
+        Console.WriteLine("Outputs actual remaining-goal share, average timing remaining share, and correction factor by minute band and detailed live score state.");
     }
 
     public static void PrintFitWeibull()
