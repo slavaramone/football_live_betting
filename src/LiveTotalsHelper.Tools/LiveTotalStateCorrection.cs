@@ -77,7 +77,8 @@ public sealed class LiveTotalStateCorrectionResolution
     public string DetailedScoreState { get; set; } = string.Empty;
     public string MinuteBand { get; set; } = string.Empty;
     public double Factor { get; set; } = 1.0;
-    public string Source { get; set; } = "none/default 1.0";
+    public bool IsSupported { get; set; }
+    public string Source { get; set; } = "unsupported - no exact usable bucket";
 }
 
 public static class LiveTotalStateCorrectionResolver
@@ -124,24 +125,10 @@ public static class LiveTotalStateCorrectionResolver
                     DetailedScoreState = detailedScoreState,
                     MinuteBand = minuteBand,
                     Factor = bucket.Factor,
+                    IsSupported = true,
                     Source = $"bucket {minuteBand}/{detailedScoreState}"
                 };
             }
-        }
-
-        LiveTotalStateCorrectionFallback? fallback = model.StateFallbacks.FirstOrDefault(x =>
-            x.IsUsable &&
-            x.DetailedScoreState.Equals(detailedScoreState, StringComparison.OrdinalIgnoreCase));
-
-        if (fallback is not null)
-        {
-            return new LiveTotalStateCorrectionResolution
-            {
-                DetailedScoreState = detailedScoreState,
-                MinuteBand = minuteBand,
-                Factor = fallback.Factor,
-                Source = $"state fallback {detailedScoreState}"
-            };
         }
 
         return new LiveTotalStateCorrectionResolution
@@ -149,7 +136,10 @@ public static class LiveTotalStateCorrectionResolver
             DetailedScoreState = detailedScoreState,
             MinuteBand = minuteBand,
             Factor = 1.0,
-            Source = "none/default 1.0"
+            IsSupported = false,
+            Source = string.IsNullOrWhiteSpace(minuteBand)
+                ? "unsupported - minute is outside fixed betting bands"
+                : $"unsupported sparse bucket {minuteBand}/{detailedScoreState}"
         };
     }
 }

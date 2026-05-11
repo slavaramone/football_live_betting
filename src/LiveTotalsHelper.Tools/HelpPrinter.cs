@@ -229,6 +229,7 @@ public static class HelpPrinter
         Console.WriteLine("  --profiles-file      Optional profiles JSON path. Default: league-profiles.json copied beside the tool executable.");
         Console.WriteLine("  --model              Fitted timing model JSON. Required unless provided by profile.");
         Console.WriteLine("  --state-correction   Optional fitted live-total state-correction JSON. Can also come from profile.");
+        Console.WriteLine("                       Betting uses only exact usable minute-band/state buckets; sparse buckets are NO BET.");
         Console.WriteLine("  --starting-line      Required starting/pre-match total line.");
         Console.WriteLine("  --starting-over      Required starting/pre-match over odds.");
         Console.WriteLine("  --starting-under     Required starting/pre-match under odds.");

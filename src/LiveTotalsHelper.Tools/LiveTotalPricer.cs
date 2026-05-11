@@ -52,6 +52,7 @@ public sealed class LiveTotalPriceResult
     public double TimingRemainingShare { get; set; }
     public double RemainingXgBeforeStateCorrection { get; set; }
     public double StateCorrectionFactor { get; set; } = 1.0;
+    public bool StateCorrectionSupported { get; set; } = true;
     public string StateCorrectionSource { get; set; } = "none/default 1.0";
     public double RemainingXgBeforeVolume { get; set; }
     public double VolumeFactor { get; set; } = 1.0;
@@ -156,6 +157,7 @@ public sealed class LiveTotalPricer
             TimingRemainingShare = remainingShare,
             RemainingXgBeforeStateCorrection = remainingXgBeforeStateCorrection,
             StateCorrectionFactor = stateCorrection.Factor,
+            StateCorrectionSupported = stateCorrection.IsSupported,
             StateCorrectionSource = stateCorrection.Source,
             RemainingXgBeforeVolume = remainingXgBeforeVolume,
             VolumeFactor = volumeFactor,
@@ -208,7 +210,7 @@ public sealed class LiveTotalPricer
             {
                 overEdge = fairOverOdds > 0 && !double.IsInfinity(fairOverOdds) ? bookOverOdds / fairOverOdds - 1.0 : null;
                 overEv = probabilities.WinProbability * (bookOverOdds - 1.0) - probabilities.LossProbability;
-                overDecision = BuildSideDecision(overEdge, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "OVER");
+                overDecision = BuildSideDecision(overEdge, result.StateCorrectionSupported, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "OVER");
             }
 
             double? underEdge = null;
@@ -222,7 +224,7 @@ public sealed class LiveTotalPricer
             {
                 underEdge = fairUnderOdds > 0 && !double.IsInfinity(fairUnderOdds) ? bookUnderOdds / fairUnderOdds - 1.0 : null;
                 underEv = probabilities.LossProbability * (bookUnderOdds - 1.0) - probabilities.WinProbability;
-                underDecision = BuildSideDecision(underEdge, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "UNDER");
+                underDecision = BuildSideDecision(underEdge, result.StateCorrectionSupported, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "UNDER");
             }
 
             string decision = SelectBestDecision(overEdge, overDecision, underEdge, underDecision);
@@ -259,6 +261,7 @@ public sealed class LiveTotalPricer
                 DetailedScoreState = LiveTotalStateCorrectionResolver.DetailedScoreState(_options.HomeGoals, _options.AwayGoals),
                 MinuteBand = LiveTotalStateCorrectionResolver.MinuteBand(_options.Minute),
                 Factor = 1.0,
+                IsSupported = true,
                 Source = "none/default 1.0"
             };
         }
@@ -275,10 +278,12 @@ public sealed class LiveTotalPricer
         return LiveTotalStateCorrectionResolver.Resolve(correction, _options.Minute, _options.HomeGoals, _options.AwayGoals);
     }
 
-    private string BuildSideDecision(double? edge, bool hasRecentGoal, bool hasRedCard, string side)
+    private string BuildSideDecision(double? edge, bool stateCorrectionSupported, bool hasRecentGoal, bool hasRedCard, string side)
     {
         if (!edge.HasValue)
             return "NO ODDS";
+        if (!stateCorrectionSupported)
+            return "NO BET - unsupported sparse state bucket";
         if (hasRecentGoal)
             return "WAIT";
         if (hasRedCard)
@@ -305,6 +310,8 @@ public sealed class LiveTotalPricer
         if (overAction) return overDecision;
         if (underAction) return underDecision;
         if (overDecision == "WAIT" || underDecision == "WAIT") return "WAIT";
+        if (overDecision == "NO BET - unsupported sparse state bucket" || underDecision == "NO BET - unsupported sparse state bucket")
+            return "NO BET - unsupported sparse state bucket";
         if (overDecision == "NO ODDS" && underDecision == "NO ODDS") return "NO ODDS";
         return "NO BET";
     }
