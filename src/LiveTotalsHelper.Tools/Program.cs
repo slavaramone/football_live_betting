@@ -85,34 +85,45 @@ static async Task<int> RunDownloadSofaScore(string[] args)
 static async Task<int> RunBuildLiveTotalCalibrationDataset(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
-
-    LeagueProfile? profile = null;
-    string profilesFile = parsed.String("profiles-file", "league-profiles.json");
-    if (parsed.Has("profile"))
-    {
-        LeagueProfileStore profileStore = await LeagueProfileStore.LoadAsync(profilesFile, CancellationToken.None);
-        profile = profileStore.FindRequired(parsed.RequiredString("profile"));
-    }
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
 
     string modelPath = parsed.Has("model")
         ? parsed.RequiredString("model")
-        : profile?.ModelPath ?? throw new ArgumentException("Missing required argument --model, or provide --profile with modelPath in league-profiles.json.");
+        : GetRequiredProfilePath(profile, validationMode ? p => p.ValidationModelPath : p => p.ModelPath, "model", validationMode);
+
+    string defaultOutput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
 
     var options = new LiveTotalCalibrationDatasetOptions
     {
         League = parsed.String("league", profile?.League ?? string.Empty),
         ModelPath = modelPath,
-        OutputPath = parsed.String("output", string.Empty),
+        OutputPath = parsed.String("output", defaultOutput),
         EmpiricalWeight = parsed.Double("empirical-weight", profile?.DefaultEmpiricalWeight ?? 0.80),
-        IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
-        IncludeEventTriggers = parsed.Bool("include-event-triggers", true),
+        IncludeUnreliableMatches = parsed.Bool("include-unreliable", profile?.IncludeUnreliableMatches ?? false),
+        IncludeEventTriggers = parsed.Bool("include-event-triggers", profile?.IncludeEventTriggers ?? true),
         MaxExamples = parsed.Int("max-examples", 20)
     };
 
     AddSeasonIds(options.SeasonIds, parsed);
+    if (options.SeasonIds.Count == 0 && profile is not null)
+        AddProfileSeasonIds(options.SeasonIds, validationMode
+            ? profile.ValidationTrainingSeasonIds.Concat(profile.ValidationTestSeasonIds)
+            : profile.TrainingSeasonIds);
+
     if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
         AddRounds(options.Rounds, parsed);
-    AddOptionalIntList(options.SnapshotMinutes, parsed, "minutes", clearExisting: true);
+
+    if (parsed.Has("minutes"))
+        AddOptionalIntList(options.SnapshotMinutes, parsed, "minutes", clearExisting: true);
+    else if (profile?.SnapshotMinutes is { Count: > 0 })
+    {
+        options.SnapshotMinutes.Clear();
+        foreach (int minute in profile.SnapshotMinutes)
+            options.SnapshotMinutes.Add(minute);
+    }
 
     IConfiguration configuration = new ConfigurationBuilder()
         .SetBasePath(AppContext.BaseDirectory)
@@ -145,14 +156,33 @@ static async Task<int> RunBuildLiveTotalCalibrationDataset(string[] args)
 static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+    string defaultOutput = validationMode
+        ? profile?.ValidationCalibrationAnalysisPath ?? string.Empty
+        : profile?.CalibrationAnalysisPath ?? string.Empty;
 
     var options = new LiveTotalCalibrationAnalysisOptions
     {
-        InputPath = parsed.RequiredString("input"),
-        OutputPath = parsed.String("output", string.Empty)
+        InputPath = parsed.String("input", defaultInput),
+        OutputPath = parsed.String("output", defaultOutput)
     };
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
+
     AddOptionalIntList(options.TrainingSeasonIds, parsed, "training-season-ids", clearExisting: true);
     AddOptionalIntList(options.TestSeasonIds, parsed, "test-season-ids", clearExisting: true);
+    if (validationMode && profile is not null)
+    {
+        if (options.TrainingSeasonIds.Count == 0)
+            AddProfileSeasonIds(options.TrainingSeasonIds, profile.ValidationTrainingSeasonIds);
+        if (options.TestSeasonIds.Count == 0)
+            AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
+    }
 
     var analyzer = new LiveTotalCalibrationAnalyzer(options);
     LiveTotalCalibrationAnalysisResult result = await analyzer.AnalyzeAsync(CancellationToken.None);
@@ -195,16 +225,33 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
 static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+    string defaultOutput = validationMode
+        ? profile?.ValidationStateCorrectionPath ?? string.Empty
+        : profile?.StateCorrectionPath ?? string.Empty;
 
     var options = new LiveTotalStateCorrectionFitOptions
     {
-        InputPath = parsed.RequiredString("input"),
-        OutputPath = parsed.String("output", string.Empty),
-        MinBucketMatches = parsed.Int("min-bucket-matches", 100),
-        MinFactor = parsed.Double("min-factor", 0.50),
-        MaxFactor = parsed.Double("max-factor", 2.50)
+        InputPath = parsed.String("input", defaultInput),
+        OutputPath = parsed.String("output", defaultOutput),
+        MinBucketMatches = parsed.Int("min-bucket-matches", profile?.StateCorrectionMinBucketMatches ?? 100),
+        MinFactor = parsed.Double("min-factor", profile?.StateCorrectionMinFactor ?? 0.50),
+        MaxFactor = parsed.Double("max-factor", profile?.StateCorrectionMaxFactor ?? 2.50)
     };
-    AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
+
+    if (parsed.Has("training-season-ids"))
+        AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
+    else if (profile is not null)
+        AddProfileSeasonIds(options.TrainingSeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
+    if (options.TrainingSeasonIds.Count == 0)
+        throw new ArgumentException("Missing required argument --training-season-ids, or provide --profile with training season ids.");
 
     var fitter = new LiveTotalStateCorrectionFitter(options);
     LiveTotalStateCorrectionFitResult result = await fitter.FitAsync(CancellationToken.None);
@@ -231,14 +278,36 @@ static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
 static async Task<int> RunEvaluateLiveTotalModel(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+    string defaultStateCorrection = validationMode
+        ? profile?.ValidationStateCorrectionPath ?? string.Empty
+        : profile?.StateCorrectionPath ?? string.Empty;
+    string defaultOutput = validationMode
+        ? profile?.ValidationModelEvaluationPath ?? string.Empty
+        : profile?.ModelEvaluationPath ?? string.Empty;
 
     var options = new LiveTotalModelEvaluationOptions
     {
-        InputPath = parsed.RequiredString("input"),
-        StateCorrectionPath = parsed.RequiredString("state-correction"),
-        OutputPath = parsed.String("output", string.Empty)
+        InputPath = parsed.String("input", defaultInput),
+        StateCorrectionPath = parsed.String("state-correction", defaultStateCorrection),
+        OutputPath = parsed.String("output", defaultOutput)
     };
-    AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
+    if (string.IsNullOrWhiteSpace(options.StateCorrectionPath))
+        throw new ArgumentException("Missing required argument --state-correction, or provide --profile with a state correction path.");
+
+    if (parsed.Has("test-season-ids"))
+        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
+    else if (profile is not null && validationMode)
+        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
+    if (options.TestSeasonIds.Count == 0)
+        throw new ArgumentException("Missing required argument --test-season-ids, or use --validation true with a profile validation split.");
 
     var evaluator = new LiveTotalModelEvaluator(options);
     LiveTotalModelEvaluationResult result = await evaluator.EvaluateAsync(CancellationToken.None);
@@ -265,17 +334,23 @@ static async Task<int> RunEvaluateLiveTotalModel(string[] args)
 static async Task<int> RunFitWeibull(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultOutput = validationMode
+        ? profile?.ValidationModelPath ?? string.Empty
+        : profile?.ModelPath ?? string.Empty;
 
     var options = new WeibullFitOptions
     {
-        OutputPath = parsed.String("output", string.Empty),
-        League = parsed.String("league", string.Empty),
-        MaxMinute = parsed.Int("max-minute", 90),
-        GroupByColumn = parsed.String("group-by", string.Empty),
-        MinGroupGoals = parsed.Int("min-group-goals", 30),
-        MaxIterations = parsed.Int("max-iterations", 100),
-        Tolerance = parsed.Double("tolerance", 1e-9),
-        BlendWeibullWeight = parsed.Double("blend-weibull-weight", 0.30)
+        OutputPath = parsed.String("output", defaultOutput),
+        League = parsed.String("league", profile?.League ?? string.Empty),
+        MaxMinute = parsed.Int("max-minute", profile?.MaxMinute ?? 90),
+        GroupByColumn = parsed.String("group-by", profile?.GroupByColumn ?? string.Empty),
+        MinGroupGoals = parsed.Int("min-group-goals", profile?.MinGroupGoals ?? 30),
+        MaxIterations = parsed.Int("max-iterations", profile?.MaxIterations ?? 100),
+        Tolerance = parsed.Double("tolerance", profile?.Tolerance ?? 1e-9),
+        BlendWeibullWeight = parsed.Double("blend-weibull-weight", profile?.BlendWeibullWeight ?? 0.30)
     };
 
     var sampleOptions = new WeibullDbSampleOptions
@@ -283,10 +358,12 @@ static async Task<int> RunFitWeibull(string[] args)
         League = options.League,
         GroupByColumn = options.GroupByColumn,
         MaxMinute = options.MaxMinute,
-        IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
+        IncludeUnreliableMatches = parsed.Bool("include-unreliable", profile?.IncludeUnreliableMatches ?? false),
         MaxExamples = parsed.Int("max-examples", 20)
     };
     AddSeasonIds(sampleOptions.SeasonIds, parsed);
+    if (sampleOptions.SeasonIds.Count == 0 && profile is not null)
+        AddProfileSeasonIds(sampleOptions.SeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
     if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
         AddRounds(sampleOptions.Rounds, parsed);
 
@@ -1020,6 +1097,35 @@ static void AddLiveUnderOddsForLine(IDictionary<double, double> target, ParsedAr
             throw new ArgumentException($"Argument --{name} must be greater than 1.0.");
 
         target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
+    }
+}
+
+static async Task<LeagueProfile?> LoadOptionalProfileAsync(ParsedArgs parsed)
+{
+    if (!parsed.Has("profile"))
+        return null;
+
+    string profilesFile = parsed.String("profiles-file", "league-profiles.json");
+    LeagueProfileStore profileStore = await LeagueProfileStore.LoadAsync(profilesFile, CancellationToken.None);
+    return profileStore.FindRequired(parsed.RequiredString("profile"));
+}
+
+static string GetRequiredProfilePath(LeagueProfile? profile, Func<LeagueProfile, string> selector, string argumentName, bool validationMode)
+{
+    string value = profile is null ? string.Empty : selector(profile);
+    if (!string.IsNullOrWhiteSpace(value))
+        return value;
+
+    string suffix = validationMode ? " validation" : string.Empty;
+    throw new ArgumentException($"Missing required argument --{argumentName}, or provide --profile with{suffix} {argumentName} path set.");
+}
+
+static void AddProfileSeasonIds(ICollection<int> target, IEnumerable<int> seasonIds)
+{
+    foreach (int seasonId in seasonIds.Where(x => x > 0).Distinct().OrderBy(x => x))
+    {
+        if (!target.Contains(seasonId))
+            target.Add(seasonId);
     }
 }
 

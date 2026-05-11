@@ -36,7 +36,7 @@
       "stateCorrectionMaxFactor": 2.50,
 
       "baseSeasonIds": [ 40406, 47730, 57284, 69956 ],
-      "currentSeasonId": 87925,
+      "currentSeasonId": 0,
       "defaultBeforeRound": null,
       "useCurrentSeasonVolume": true,
       "defaultEmpiricalWeight": 0.80,

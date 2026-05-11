@@ -106,104 +106,66 @@ public static class HelpPrinter
     public static void PrintBuildLiveTotalCalibrationDataset()
     {
         Console.WriteLine("Build live total calibration dataset usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset \\");
-        Console.WriteLine("    --profile npl-nsw \\");
-        Console.WriteLine("    --season-ids 48254,57783,71036 \\");
-        Console.WriteLine("    --minutes 10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,85 \\");
-        Console.WriteLine("    --output data/datasets/npl-nsw-live-total-calibration.csv");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset --profile allsvenskan");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset --profile allsvenskan --validation true");
         Console.WriteLine();
-        Console.WriteLine("Arguments:");
-        Console.WriteLine("  --profile              Optional league profile key/name from league-profiles.json.");
-        Console.WriteLine("  --profiles-file        Optional profiles JSON path. Default: league-profiles.json.");
-        Console.WriteLine("  --model                Fitted timing model JSON. Required unless provided by profile.");
-        Console.WriteLine("  --league               Optional league filter. Default comes from profile when present.");
-        Console.WriteLine("  --season-id/--season-ids Optional SofaScore season filter.");
-        Console.WriteLine("  --minutes              Fixed snapshot minutes. Default: 10,15,...,85.");
-        Console.WriteLine("  --include-event-triggers true/false. Default: true; adds AfterGoal and AfterRedCard rows.");
-        Console.WriteLine("  --empirical-weight     Optional override. Default comes from profile, otherwise 0.80.");
-        Console.WriteLine("  --output               Output CSV path. Default: data/datasets/<league>-<seasons>-live-total-calibration.csv.");
+        Console.WriteLine("Profile defaults:");
+        Console.WriteLine("  production: league, modelPath, calibrationDatasetPath, trainingSeasonIds, snapshotMinutes, includeEventTriggers");
+        Console.WriteLine("  validation: validationModelPath, validationCalibrationDatasetPath, validationTrainingSeasonIds + validationTestSeasonIds");
         Console.WriteLine();
+        Console.WriteLine("Overrides remain available: --model, --league, --season-id/--season-ids, --minutes, --include-event-triggers, --empirical-weight, --output.");
     }
 
+    
     public static void PrintAnalyzeLiveTotalCalibration()
     {
         Console.WriteLine("Analyze live total calibration usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration \\");
-        Console.WriteLine("    --input data/datasets/norwegian-1st-division-live-total-calibration.csv \\");
-        Console.WriteLine("    --training-season-ids 40407,47820,57356 \\");
-        Console.WriteLine("    --test-season-ids 70186 \\");
-        Console.WriteLine("    --output data/reports/norwegian-1st-division-live-total-calibration-train-test.csv");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration --profile allsvenskan");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration --profile allsvenskan --validation true");
         Console.WriteLine();
-        Console.WriteLine("Arguments:");
-        Console.WriteLine("  --input                 Required live-total calibration dataset CSV.");
-        Console.WriteLine("  --output                Output bucket report CSV. Default: <input>-analysis.csv.");
-        Console.WriteLine("  --training-season-ids   Optional comma-separated season ids used to estimate correction factors.");
-        Console.WriteLine("  --test-season-ids       Optional comma-separated season ids used to evaluate correction factors.");
-        Console.WriteLine();
-        Console.WriteLine("Without train/test ids, outputs all-data correction factors by state trigger, minute band, and detailed live score state.");
-        Console.WriteLine("With train/test ids, estimates factors on training seasons and applies them to held-out test seasons.");
+        Console.WriteLine("Production mode uses profile calibrationDatasetPath and writes calibrationAnalysisPath.");
+        Console.WriteLine("Validation mode uses profile validation dataset/analysis paths and profile validation train/test seasons.");
+        Console.WriteLine("Overrides remain available: --input, --output, --training-season-ids, --test-season-ids.");
     }
 
+    
     public static void PrintFitLiveTotalStateCorrection()
     {
         Console.WriteLine("Fit live total state correction usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction \\");
-        Console.WriteLine("    --input data/datasets/norwegian-1st-division-live-total-calibration.csv \\");
-        Console.WriteLine("    --training-season-ids 40407,47820,57356 \\");
-        Console.WriteLine("    --output data/models/live-total-state-correction/norwegian-1st-division-2022-2024.json");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction --profile allsvenskan");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction --profile allsvenskan --validation true");
         Console.WriteLine();
-        Console.WriteLine("Arguments:");
-        Console.WriteLine("  --input                 Required live-total calibration dataset CSV.");
-        Console.WriteLine("  --training-season-ids   Required comma-separated seasons used to estimate factors.");
-        Console.WriteLine("  --output                Output correction JSON path. Default: <input>-state-correction.json.");
-        Console.WriteLine("  --min-bucket-matches    Minimum distinct matches for a trigger/minute-band/state bucket. Default: 100.");
-        Console.WriteLine("  --min-factor            Lower clamp for factors. Default: 0.50.");
-        Console.WriteLine("  --max-factor            Upper clamp for factors. Default: 2.50.");
+        Console.WriteLine("Production mode uses profile calibrationDatasetPath, stateCorrectionPath, trainingSeasonIds.");
+        Console.WriteLine("Validation mode uses profile validation dataset/path and validationTrainingSeasonIds.");
+        Console.WriteLine("Overrides remain available: --input, --training-season-ids, --output, --min-bucket-matches, --min-factor, --max-factor.");
     }
 
+    
     public static void PrintEvaluateLiveTotalModel()
     {
         Console.WriteLine("Evaluate live total model usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-model \\");
-        Console.WriteLine("    --input data/datasets/allsvenskan-live-total-calibration.csv \\");
-        Console.WriteLine("    --state-correction data/models/live-total-state-correction/allsvenskan-2022-2024.json \\");
-        Console.WriteLine("    --test-season-ids 69956 \\");
-        Console.WriteLine("    --output data/reports/allsvenskan-live-total-model-evaluation.csv");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-model --profile allsvenskan --validation true");
         Console.WriteLine();
-        Console.WriteLine("Arguments:");
-        Console.WriteLine("  --input                       Required latest calibration dataset CSV.");
-        Console.WriteLine("  --state-correction            Required fitted state-correction JSON trained on earlier seasons.");
-        Console.WriteLine("  --test-season-ids             Required held-out season ids.");
-        Console.WriteLine("  --output                      Output CSV path. Default: <input>-model-evaluation.csv.");
-        Console.WriteLine();
+        Console.WriteLine("Validation mode uses profile validationCalibrationDatasetPath, validationStateCorrectionPath, validationTestSeasonIds, validationModelEvaluationPath.");
+        Console.WriteLine("Overrides remain available: --input, --state-correction, --test-season-ids, --output.");
     }
 
+    
     public static void PrintFitWeibull()
     {
         Console.WriteLine("Fit Weibull usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-weibull \\");
-        Console.WriteLine("    --league \"Norwegian 1st Division\" \\");
-        Console.WriteLine("    --season-ids 2022,2023,2024,2025 \\");
-        Console.WriteLine("    --group-by ScoreStateBefore \\");
-        Console.WriteLine("    --output data/models/weibull/norwegian-1st-division-2022-2025.json");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-weibull --profile allsvenskan");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-weibull --profile allsvenskan --validation true");
         Console.WriteLine();
-        Console.WriteLine("Fit Weibull arguments:");
-        Console.WriteLine("  --league             Required league filter.");
-        Console.WriteLine("  --season-id/--season-ids Optional SofaScore season filter.");
-        Console.WriteLine("  --round/--from-round/--to-round Optional round filter.");
-        Console.WriteLine("  --output             Output JSON model path. Default: data/models/weibull/{league}-{season selection}.json");
-        Console.WriteLine("  --max-minute         Normalize CDF/remaining share to this match minute. Default: 90");
-        Console.WriteLine("  --group-by           Optional DB-backed grouping. Currently supported: ScoreStateBefore.");
-        Console.WriteLine("  --min-group-goals    Minimum goals required to fit a group model. Default: 30");
-        Console.WriteLine("  --max-iterations     Maximum MLE iterations. Default: 100");
-        Console.WriteLine("  --tolerance          MLE convergence tolerance. Default: 1e-9");
-        Console.WriteLine("  --blend-weibull-weight Weight for blended model. Default: 0.30, so blend = 30% Weibull + 70% empirical.");
-        Console.WriteLine("  --include-unreliable true/false. Default: false.");
+        Console.WriteLine("Profile defaults:");
+        Console.WriteLine("  production: league, modelPath, trainingSeasonIds, maxMinute, groupByColumn, minGroupGoals, blendWeibullWeight");
+        Console.WriteLine("  validation: validationModelPath, validationTrainingSeasonIds");
         Console.WriteLine();
+        Console.WriteLine("Overrides remain available: --league, --season-id/--season-ids, --output, --max-minute, --group-by, --min-group-goals, --max-iterations, --tolerance, --blend-weibull-weight, --include-unreliable.");
         Console.WriteLine("The fitting sample is built directly from imported database matches and goal events; no input CSV is required.");
-        Console.WriteLine("Output JSON stores pure Weibull, empirical bucket, blended, and optional score-state group timing models.");
     }
 
+    
     public static void PrintValidateDb()
     {
         Console.WriteLine("Validate DB usage:");
@@ -229,27 +191,17 @@ public static class HelpPrinter
     {
         Console.WriteLine("Price live total usage:");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- price-live-total \\");
-        Console.WriteLine("    --profile npl-nsw \\");
-        Console.WriteLine("    --starting-line 2.5 --starting-over 1.85 --starting-under 1.95 \\");
-        Console.WriteLine("    --minute 60 --home-goals 1 --away-goals 0 --before-round 10 \\");
+        Console.WriteLine("    --profile allsvenskan \\");
+        Console.WriteLine("    --starting-line 2.5 --starting-over 1.90 --starting-under 1.90 \\");
+        Console.WriteLine("    --state-trigger fixed-minute --minute 60 --home-goals 1 --away-goals 0 \\");
+        Console.WriteLine("    --before-round 10 \\");
         Console.WriteLine("    --live-over-odds \"2.5=2.30,3.5=4.20\" --live-under-odds \"2.5=1.65,3.5=1.98\"");
         Console.WriteLine();
-        Console.WriteLine("Without profile:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- price-live-total \\");
-        Console.WriteLine("    --model data/models/weibull/npl-nsw-score-state.json \\");
-        Console.WriteLine("    --starting-line 2.5 --starting-over 1.85 --starting-under 1.95 \\");
-        Console.WriteLine("    --minute 60 --home-goals 1 --away-goals 0 \\");
-        Console.WriteLine("    --use-current-season-volume true --league \"NPL New South Wales\" \\");
-        Console.WriteLine("    --base-season-ids 48254,57783,71036 --current-season-id 88562 --before-round 10 \\");
-        Console.WriteLine("    --prior-strength-matches 100 \\");
-        Console.WriteLine("    --live-over-odds \"1.5=1.25,2.0=1.80,2.5=2.30,3.0=3.60,3.5=4.20\"");
-        Console.WriteLine("    --live-under-odds \"1.5=3.80,2.0=2.05,2.5=1.65,3.0=1.40,3.5=1.98\"");
+        Console.WriteLine("With a complete profile, live pricing only needs match-specific information:");
+        Console.WriteLine("  starting market, trigger, minute, score, current live odds, and usually --before-round unless defaultBeforeRound is kept current in the profile.");
         Console.WriteLine();
         Console.WriteLine("Price live total arguments:");
-        Console.WriteLine("  --profile            Optional league profile key/name from league-profiles.json, e.g. npl-nsw or wa-state-league-1.");
-        Console.WriteLine("  --profiles-file      Optional profiles JSON path. Default: league-profiles.json copied beside the tool executable.");
-        Console.WriteLine("  --model              Fitted timing model JSON. Required unless provided by profile.");
-        Console.WriteLine("  --state-correction   Optional fitted live-total state-correction JSON. Can also come from profile.");
+        Console.WriteLine("  --profile            League profile key/name from league-profiles.json.");
         Console.WriteLine("  --state-trigger      Optional: fixed-minute, after-goal, or after-red-card. Default: fixed-minute.");
         Console.WriteLine("                       Betting uses only exact usable trigger/minute-band/state buckets; sparse buckets are NO BET.");
         Console.WriteLine("  --starting-line      Required starting/pre-match total line.");
@@ -258,28 +210,13 @@ public static class HelpPrinter
         Console.WriteLine("  --minute             Required current match minute.");
         Console.WriteLine("  --home-goals         Required current home goals.");
         Console.WriteLine("  --away-goals         Required current away goals.");
-        Console.WriteLine("  --empirical-weight   Optional override. Default comes from profile, otherwise 0.80.");
-        Console.WriteLine("  --target-lines       Optional comma-separated target lines. Default comes from profile, otherwise 1.5,2.0,2.5,3.0.");
-        Console.WriteLine("  --live-over-X        Optional bookmaker live Over X odds. Examples: --live-over-3.5 4.20, --live-over-4.0 6.50.");
-        Console.WriteLine("  --live-under-X       Optional bookmaker live Under X odds. Examples: --live-under-3.5 1.98, --live-under-4.0 1.35.");
-        Console.WriteLine("                       Two-digit compact aliases also work: --live-over-35 / --live-under-35 for 3.5. Use decimal form for quarter lines like --live-over-4.25.");
-        Console.WriteLine("  --live-over-odds     Optional generic format: \"1.5=1.40,2.0=1.85,2.5=2.45,3.5=4.20\".");
-        Console.WriteLine("  --live-under-odds    Optional generic format: \"1.5=3.60,2.0=2.10,2.5=1.65,3.5=1.90\".");
-        Console.WriteLine("  --edge-threshold     Optional override. Default comes from profile, otherwise 0.10 = 10%.");
-        Console.WriteLine("  --volume-factor      Optional manual multiplier for remaining xG. Overrides automatic current-season volume.");
-        Console.WriteLine("  --use-current-season-volume true/false. Default comes from profile; without profile, auto-activates when --current-season-id and --base-season-ids are supplied.");
-        Console.WriteLine("  --home-team-id       Required for automatic team volume.");
-        Console.WriteLine("  --away-team-id       Required for automatic team volume.");
-        Console.WriteLine("  --league             Required for automatic volume if not provided by profile.");
-        Console.WriteLine("  --base-season-ids    Required for automatic volume if not provided by profile.");
-        Console.WriteLine("  --current-season-id  Required for automatic volume if not provided by profile.");
-        Console.WriteLine("  --before-round       Required for automatic volume. Uses current-season matches with RoundNumber < this.");
-        Console.WriteLine("  --prior-strength-matches Optional override. Default comes from profile, otherwise 100.");
-        Console.WriteLine("  --home-red-cards     Optional current home red cards. Red cards produce warning only.");
-        Console.WriteLine("  --away-red-cards     Optional current away red cards. Red cards produce warning only.");
-        Console.WriteLine("  --last-goal-minute   Optional latest goal minute. If within recent-goal-minutes, decision is WAIT.");
-        Console.WriteLine("  --recent-goal-minutes Optional cooldown threshold. Default: 2.");
+        Console.WriteLine("  --live-over-odds / --live-under-odds Optional bookmaker live odds, needed for edge/bet decisions.");
+        Console.WriteLine("  --before-round       Needed for current-season volume unless defaultBeforeRound is maintained in the profile.");
+        Console.WriteLine("  --home-red-cards / --away-red-cards Optional; red-card states remain warning/manual-review states.");
+        Console.WriteLine("  --last-goal-minute   Optional; fixed-minute checks shortly after a goal become WAIT.");
+        Console.WriteLine();
+        Console.WriteLine("All stable league/model settings should live in the profile: modelPath, stateCorrectionPath, league, seasons, empirical weight, target lines, current-season volume settings, thresholds.");
     }
 
-
+    
 }
