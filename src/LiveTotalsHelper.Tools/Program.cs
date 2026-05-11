@@ -325,9 +325,6 @@ static async Task<int> RunFitWeibull(string[] args)
         }
     }
 
-    if (!result.StateCorrectionSupported && !string.IsNullOrWhiteSpace(options.StateCorrectionPath))
-        result.Warnings.Add("Unsupported sparse state bucket - no betting decision will be allowed.");
-
     if (result.Warnings.Count > 0)
     {
         Console.WriteLine();
@@ -625,9 +622,6 @@ static async Task<int> RunImportSofaScore(string[] args)
     Console.WriteLine($"Statistics files imported: {result.StatisticsImported}");
     Console.WriteLine($"Warnings: {result.Warnings.Count}");
     Console.WriteLine($"Failures: {result.Failures.Count}");
-
-    if (!result.StateCorrectionSupported && !string.IsNullOrWhiteSpace(options.StateCorrectionPath))
-        result.Warnings.Add("Unsupported sparse state bucket - no betting decision will be allowed.");
 
     if (result.Warnings.Count > 0)
     {
@@ -1119,9 +1113,6 @@ static void PrintDownloadResult(SofaScoreDownloadResult result)
     Console.WriteLine($"Files skipped: {result.FilesSkipped}");
     Console.WriteLine($"Warnings: {result.Warnings.Count}");
     Console.WriteLine($"Failures: {result.Failures.Count}");
-
-    if (!result.StateCorrectionSupported && !string.IsNullOrWhiteSpace(options.StateCorrectionPath))
-        result.Warnings.Add("Unsupported sparse state bucket - no betting decision will be allowed.");
 
     if (result.Warnings.Count > 0)
     {
