@@ -24,6 +24,8 @@ public static class HelpPrinter
         Console.WriteLine();
         PrintAnalyzeLiveTotalCalibration();
         Console.WriteLine();
+        PrintFitLiveTotalStateCorrection();
+        Console.WriteLine();
         PrintFitWeibull();
         Console.WriteLine();
         PrintPriceLiveTotal();
@@ -137,6 +139,24 @@ public static class HelpPrinter
         Console.WriteLine("With train/test ids, estimates factors on training seasons and applies them to held-out test seasons.");
     }
 
+    public static void PrintFitLiveTotalStateCorrection()
+    {
+        Console.WriteLine("Fit live total state correction usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction \\");
+        Console.WriteLine("    --input data/datasets/norwegian-1st-division-live-total-calibration.csv \\");
+        Console.WriteLine("    --training-season-ids 40407,47820,57356 \\");
+        Console.WriteLine("    --output data/models/live-total-state-correction/norwegian-1st-division-2022-2024.json");
+        Console.WriteLine();
+        Console.WriteLine("Arguments:");
+        Console.WriteLine("  --input                 Required live-total calibration dataset CSV.");
+        Console.WriteLine("  --training-season-ids   Required comma-separated seasons used to estimate factors.");
+        Console.WriteLine("  --output                Output correction JSON path. Default: <input>-state-correction.json.");
+        Console.WriteLine("  --min-bucket-matches    Minimum distinct matches for a minute-band/state bucket. Default: 100.");
+        Console.WriteLine("  --min-state-matches     Minimum distinct matches for score-state fallback. Default: 200.");
+        Console.WriteLine("  --min-factor            Lower clamp for factors. Default: 0.50.");
+        Console.WriteLine("  --max-factor            Upper clamp for factors. Default: 2.50.");
+    }
+
     public static void PrintFitWeibull()
     {
         Console.WriteLine("Fit Weibull usage:");
@@ -208,6 +228,7 @@ public static class HelpPrinter
         Console.WriteLine("  --profile            Optional league profile key/name from league-profiles.json, e.g. npl-nsw or wa-state-league-1.");
         Console.WriteLine("  --profiles-file      Optional profiles JSON path. Default: league-profiles.json copied beside the tool executable.");
         Console.WriteLine("  --model              Fitted timing model JSON. Required unless provided by profile.");
+        Console.WriteLine("  --state-correction   Optional fitted live-total state-correction JSON. Can also come from profile.");
         Console.WriteLine("  --starting-line      Required starting/pre-match total line.");
         Console.WriteLine("  --starting-over      Required starting/pre-match over odds.");
         Console.WriteLine("  --starting-under     Required starting/pre-match under odds.");

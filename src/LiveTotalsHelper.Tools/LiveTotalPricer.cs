@@ -7,6 +7,7 @@ namespace LiveTotalsHelper.Tools;
 public sealed class LiveTotalPriceOptions
 {
     public string ModelPath { get; set; } = string.Empty;
+    public string StateCorrectionPath { get; set; } = string.Empty;
     public double StartingLine { get; set; }
     public double StartingOverOdds { get; set; }
     public double StartingUnderOdds { get; set; }
@@ -29,12 +30,14 @@ public sealed class LiveTotalPriceOptions
 public sealed class LiveTotalPriceResult
 {
     public string ModelPath { get; set; } = string.Empty;
+    public string StateCorrectionPath { get; set; } = string.Empty;
     public string League { get; set; } = string.Empty;
     public int Minute { get; set; }
     public int HomeGoals { get; set; }
     public int AwayGoals { get; set; }
     public int CurrentGoals => HomeGoals + AwayGoals;
     public string ScoreState { get; set; } = string.Empty;
+    public string DetailedScoreState { get; set; } = string.Empty;
     public string SelectedTimingGroup { get; set; } = string.Empty;
     public string TimingFallback { get; set; } = string.Empty;
     public double StartingLine { get; set; }
@@ -47,6 +50,9 @@ public sealed class LiveTotalPriceResult
     public double WeibullRemainingShare { get; set; }
     public double EmpiricalRemainingShare { get; set; }
     public double TimingRemainingShare { get; set; }
+    public double RemainingXgBeforeStateCorrection { get; set; }
+    public double StateCorrectionFactor { get; set; } = 1.0;
+    public string StateCorrectionSource { get; set; } = "none/default 1.0";
     public double RemainingXgBeforeVolume { get; set; }
     public double VolumeFactor { get; set; } = 1.0;
     public string VolumeFactorSource { get; set; } = string.Empty;
@@ -120,18 +126,23 @@ public sealed class LiveTotalPricer
         });
         double empiricalWeight = timing.EmpiricalWeight;
         double remainingShare = timing.BlendedRemainingShare;
-        double remainingXgBeforeVolume = startingTotalXg * remainingShare;
+        double remainingXgBeforeStateCorrection = startingTotalXg * remainingShare;
+
+        LiveTotalStateCorrectionResolution stateCorrection = await ResolveStateCorrectionAsync(cancellationToken);
+        double remainingXgBeforeVolume = remainingXgBeforeStateCorrection * stateCorrection.Factor;
         double volumeFactor = Math.Clamp(_options.VolumeFactor, 0.20, 2.50);
         double remainingXg = remainingXgBeforeVolume * volumeFactor;
 
         var result = new LiveTotalPriceResult
         {
             ModelPath = _options.ModelPath,
+            StateCorrectionPath = _options.StateCorrectionPath,
             League = model.League,
             Minute = _options.Minute,
             HomeGoals = _options.HomeGoals,
             AwayGoals = _options.AwayGoals,
             ScoreState = scoreState,
+            DetailedScoreState = stateCorrection.DetailedScoreState,
             SelectedTimingGroup = source.GroupName,
             TimingFallback = source.FallbackReason,
             StartingLine = _options.StartingLine,
@@ -143,6 +154,9 @@ public sealed class LiveTotalPricer
             WeibullRemainingShare = timing.WeibullRemainingShare,
             EmpiricalRemainingShare = timing.EmpiricalRemainingShare,
             TimingRemainingShare = remainingShare,
+            RemainingXgBeforeStateCorrection = remainingXgBeforeStateCorrection,
+            StateCorrectionFactor = stateCorrection.Factor,
+            StateCorrectionSource = stateCorrection.Source,
             RemainingXgBeforeVolume = remainingXgBeforeVolume,
             VolumeFactor = volumeFactor,
             VolumeFactorSource = _options.VolumeFactorSource,
@@ -234,6 +248,31 @@ public sealed class LiveTotalPricer
         }
 
         return result;
+    }
+
+    private async Task<LiveTotalStateCorrectionResolution> ResolveStateCorrectionAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_options.StateCorrectionPath))
+        {
+            return new LiveTotalStateCorrectionResolution
+            {
+                DetailedScoreState = LiveTotalStateCorrectionResolver.DetailedScoreState(_options.HomeGoals, _options.AwayGoals),
+                MinuteBand = LiveTotalStateCorrectionResolver.MinuteBand(_options.Minute),
+                Factor = 1.0,
+                Source = "none/default 1.0"
+            };
+        }
+
+        if (!File.Exists(_options.StateCorrectionPath))
+            throw new FileNotFoundException("State correction JSON was not found.", _options.StateCorrectionPath);
+
+        await using FileStream stream = File.OpenRead(_options.StateCorrectionPath);
+        LiveTotalStateCorrectionFile correction = await JsonSerializer.DeserializeAsync<LiveTotalStateCorrectionFile>(stream, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        }, cancellationToken) ?? throw new InvalidOperationException("Could not read state correction JSON.");
+
+        return LiveTotalStateCorrectionResolver.Resolve(correction, _options.Minute, _options.HomeGoals, _options.AwayGoals);
     }
 
     private string BuildSideDecision(double? edge, bool hasRecentGoal, bool hasRedCard, string side)

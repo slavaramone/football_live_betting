@@ -13,6 +13,7 @@ public sealed class LeagueProfile
     public string Name { get; set; } = string.Empty;
     public string League { get; set; } = string.Empty;
     public string ModelPath { get; set; } = string.Empty;
+    public string StateCorrectionPath { get; set; } = string.Empty;
     public List<int> BaseSeasonIds { get; set; } = [];
     public int CurrentSeasonId { get; set; }
     public int? DefaultBeforeRound { get; set; }

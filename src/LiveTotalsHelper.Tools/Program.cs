@@ -24,6 +24,7 @@ try
         "validate-db" => await RunValidateDb(commandArgs),
         "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
         "analyze-live-total-calibration" => await RunAnalyzeLiveTotalCalibration(commandArgs),
+        "fit-live-total-state-correction" => await RunFitLiveTotalStateCorrection(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
         "price-live-total" => await RunPriceLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
@@ -186,6 +187,49 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
     static string D(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
 }
 
+static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    var options = new LiveTotalStateCorrectionFitOptions
+    {
+        InputPath = parsed.RequiredString("input"),
+        OutputPath = parsed.String("output", string.Empty),
+        MinBucketMatches = parsed.Int("min-bucket-matches", 100),
+        MinStateMatches = parsed.Int("min-state-matches", 200),
+        MinFactor = parsed.Double("min-factor", 0.50),
+        MaxFactor = parsed.Double("max-factor", 2.50)
+    };
+    AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
+
+    var fitter = new LiveTotalStateCorrectionFitter(options);
+    LiveTotalStateCorrectionFitResult result = await fitter.FitAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Live total state correction fit done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"Output: {result.OutputPath}");
+    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? "unknown" : result.League)}");
+    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
+    Console.WriteLine($"Rows used: {result.TrainingRowsUsed}");
+    Console.WriteLine($"Matches used: {result.TrainingMatchesUsed}");
+    Console.WriteLine($"League average final goals: {result.LeagueAverageFinalGoals:0.###}");
+
+    Console.WriteLine();
+    Console.WriteLine("Bucket factors:");
+    Console.WriteLine("Band    ScoreState            Rows  Matches  Raw    Used   Usable");
+    foreach (LiveTotalStateCorrectionBucket bucket in result.Buckets)
+        Console.WriteLine($"{bucket.MinuteBand,-7} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.RawFactor,5:0.###}  {bucket.Factor,5:0.###}  {bucket.IsUsable}");
+
+    Console.WriteLine();
+    Console.WriteLine("State fallback factors:");
+    Console.WriteLine("ScoreState            Rows  Matches  Raw    Used   Usable");
+    foreach (LiveTotalStateCorrectionFallback fallback in result.StateFallbacks)
+        Console.WriteLine($"{fallback.DetailedScoreState,-20} {fallback.Rows,5}  {fallback.Matches,7}  {fallback.RawFactor,5:0.###}  {fallback.Factor,5:0.###}  {fallback.IsUsable}");
+
+    return 0;
+}
+
 static async Task<int> RunFitWeibull(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
@@ -315,6 +359,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     var options = new LiveTotalPriceOptions
     {
         ModelPath = modelPath,
+        StateCorrectionPath = parsed.String("state-correction", profile?.StateCorrectionPath ?? string.Empty),
         StartingLine = parsed.RequiredDouble("starting-line"),
         StartingOverOdds = parsed.RequiredDouble("starting-over"),
         StartingUnderOdds = parsed.RequiredDouble("starting-under"),
@@ -414,7 +459,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     }
     Console.WriteLine($"Model: {result.ModelPath}");
     Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? (profile?.League ?? "unknown") : result.League)}");
-    Console.WriteLine($"Minute/score: {result.Minute}'  {result.HomeGoals}-{result.AwayGoals} ({result.ScoreState})");
+    Console.WriteLine($"Minute/score: {result.Minute}'  {result.HomeGoals}-{result.AwayGoals} ({result.ScoreState}; {result.DetailedScoreState})");
     Console.WriteLine($"Timing group: {result.SelectedTimingGroup}");
     if (!string.IsNullOrWhiteSpace(result.TimingFallback))
         Console.WriteLine($"Timing fallback: {result.TimingFallback}");
@@ -424,6 +469,8 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     Console.WriteLine($"Blend: Empirical {result.EmpiricalWeight:P0}, Weibull {result.WeibullWeight:P0}");
     Console.WriteLine($"Edge threshold: {options.EdgeThreshold:P0}");
     Console.WriteLine($"Remaining share: Weibull {result.WeibullRemainingShare:P1}, Empirical {result.EmpiricalRemainingShare:P1}, Used {result.TimingRemainingShare:P1}");
+    Console.WriteLine($"Remaining xG before state correction: {result.RemainingXgBeforeStateCorrection:0.###}");
+    Console.WriteLine($"State correction: {result.StateCorrectionFactor:0.###} ({result.StateCorrectionSource})");
     Console.WriteLine($"Remaining xG before volume: {result.RemainingXgBeforeVolume:0.###}");
     Console.WriteLine($"Volume factor: {result.VolumeFactor:0.###} ({result.VolumeFactorSource})");
     if (seasonVolume is not null)
