@@ -145,6 +145,8 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
         InputPath = parsed.RequiredString("input"),
         OutputPath = parsed.String("output", string.Empty)
     };
+    AddOptionalIntList(options.TrainingSeasonIds, parsed, "training-season-ids", clearExisting: true);
+    AddOptionalIntList(options.TestSeasonIds, parsed, "test-season-ids", clearExisting: true);
 
     var analyzer = new LiveTotalCalibrationAnalyzer(options);
     LiveTotalCalibrationAnalysisResult result = await analyzer.AnalyzeAsync(CancellationToken.None);
@@ -154,9 +156,22 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
     Console.WriteLine($"Input: {result.InputPath}");
     Console.WriteLine($"Rows read: {result.RowsRead}");
     Console.WriteLine($"Rows analyzed: {result.RowsAnalyzed}");
-    Console.WriteLine($"Buckets written: {result.Buckets.Count}");
     Console.WriteLine($"Output: {result.OutputPath}");
 
+    if (result.HasTrainTestSplit)
+    {
+        Console.WriteLine($"Train/test buckets written: {result.TrainTestBuckets.Count}");
+        Console.WriteLine();
+        Console.WriteLine("MinuteBand  ScoreState            TrRows  TeRows  Factor  TestActual  TestBase  TestCorrected  BaseAbsErr  CorrAbsErr");
+        foreach (LiveTotalCalibrationTrainTestBucketResult bucket in result.TrainTestBuckets)
+        {
+            Console.WriteLine($"{bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.TrainRows,6} {bucket.TestRows,6}  {F(bucket.CorrectionFactor),6}  {bucket.TestActualRemainingGoalsPerRow,10:0.###}  {bucket.TestBaselineRemainingGoalsPerRow,8:0.###}  {D(bucket.TestCorrectedRemainingGoalsPerRow),13}  {D(bucket.TestBaselineAbsErrorPerRow),10}  {D(bucket.TestCorrectedAbsErrorPerRow),10}");
+        }
+
+        return 0;
+    }
+
+    Console.WriteLine($"Buckets written: {result.Buckets.Count}");
     Console.WriteLine();
     Console.WriteLine("MinuteBand  ScoreState            Rows  Matches  ActualRem/Row  BaseRem/Row  TimingShare  Factor");
     foreach (LiveTotalCalibrationBucketResult bucket in result.Buckets)
@@ -168,6 +183,7 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
 
     static string P(double value) => value.ToString("P1", CultureInfo.InvariantCulture);
     static string F(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
+    static string D(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
 }
 
 static async Task<int> RunFitWeibull(string[] args)

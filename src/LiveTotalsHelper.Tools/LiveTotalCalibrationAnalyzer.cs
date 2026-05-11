@@ -7,6 +7,8 @@ public sealed class LiveTotalCalibrationAnalysisOptions
 {
     public string InputPath { get; set; } = string.Empty;
     public string OutputPath { get; set; } = string.Empty;
+    public List<int> TrainingSeasonIds { get; } = [];
+    public List<int> TestSeasonIds { get; } = [];
 }
 
 public sealed class LiveTotalCalibrationAnalysisResult
@@ -15,7 +17,9 @@ public sealed class LiveTotalCalibrationAnalysisResult
     public string OutputPath { get; set; } = string.Empty;
     public int RowsRead { get; set; }
     public int RowsAnalyzed { get; set; }
+    public bool HasTrainTestSplit { get; set; }
     public List<LiveTotalCalibrationBucketResult> Buckets { get; } = [];
+    public List<LiveTotalCalibrationTrainTestBucketResult> TrainTestBuckets { get; } = [];
 }
 
 public sealed class LiveTotalCalibrationBucketResult
@@ -31,6 +35,32 @@ public sealed class LiveTotalCalibrationBucketResult
     public double AverageTimingRemainingShare { get; set; }
     public double BaselineRemainingGoalsPerRow { get; set; }
     public double? CorrectionFactor { get; set; }
+}
+
+public sealed class LiveTotalCalibrationTrainTestBucketResult
+{
+    public string MinuteBand { get; set; } = string.Empty;
+    public string DetailedScoreState { get; set; } = string.Empty;
+
+    public int TrainRows { get; set; }
+    public int TrainMatches { get; set; }
+    public double TrainLeagueAverageFinalGoals { get; set; }
+    public double TrainActualRemainingGoalsPerRow { get; set; }
+    public double TrainAverageTimingRemainingShare { get; set; }
+    public double TrainBaselineRemainingGoalsPerRow { get; set; }
+    public double? CorrectionFactor { get; set; }
+
+    public int TestRows { get; set; }
+    public int TestMatches { get; set; }
+    public double TestLeagueAverageFinalGoals { get; set; }
+    public double TestActualRemainingGoalsPerRow { get; set; }
+    public double TestAverageTimingRemainingShare { get; set; }
+    public double TestBaselineRemainingGoalsPerRow { get; set; }
+    public double? TestCorrectedRemainingGoalsPerRow { get; set; }
+    public double? TestBaselineSignedErrorPerRow { get; set; }
+    public double? TestCorrectedSignedErrorPerRow { get; set; }
+    public double? TestBaselineAbsErrorPerRow { get; set; }
+    public double? TestCorrectedAbsErrorPerRow { get; set; }
 }
 
 public sealed class LiveTotalCalibrationAnalyzer
@@ -57,7 +87,7 @@ public sealed class LiveTotalCalibrationAnalyzer
 
         List<LiveTotalCalibrationInputRow> rows = await ReadRowsAsync(_options.InputPath, cancellationToken);
         var analyzedRows = rows
-            .Select(x => new { Row = x, MinuteBand = ResolveMinuteBand(x.Minute) })
+            .Select(x => new RowWithBand(x, ResolveMinuteBand(x.Minute)))
             .Where(x => !string.IsNullOrWhiteSpace(x.MinuteBand))
             .ToList();
 
@@ -66,16 +96,108 @@ public sealed class LiveTotalCalibrationAnalyzer
             InputPath = _options.InputPath,
             OutputPath = ResolveOutputPath(),
             RowsRead = rows.Count,
-            RowsAnalyzed = analyzedRows.Count
+            RowsAnalyzed = analyzedRows.Count,
+            HasTrainTestSplit = _options.TrainingSeasonIds.Count > 0 || _options.TestSeasonIds.Count > 0
         };
 
-        double leagueAverageFinalGoals = rows
+        if (result.HasTrainTestSplit)
+        {
+            if (_options.TrainingSeasonIds.Count == 0 || _options.TestSeasonIds.Count == 0)
+                throw new ArgumentException("For train/test mode, provide both --training-season-ids and --test-season-ids.");
+
+            BuildTrainTestAnalysis(result, analyzedRows);
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(result.OutputPath)) ?? ".");
+            await File.WriteAllTextAsync(result.OutputPath, ToTrainTestCsv(result.TrainTestBuckets), Encoding.UTF8, cancellationToken);
+            return result;
+        }
+
+        result.Buckets.AddRange(BuildBucketResults(analyzedRows.Select(x => x.Row).ToList(), analyzedRows));
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(result.OutputPath)) ?? ".");
+        await File.WriteAllTextAsync(result.OutputPath, ToCsv(result.Buckets), Encoding.UTF8, cancellationToken);
+        return result;
+    }
+
+    private void BuildTrainTestAnalysis(LiveTotalCalibrationAnalysisResult result, IReadOnlyList<RowWithBand> analyzedRows)
+    {
+        List<RowWithBand> train = analyzedRows
+            .Where(x => _options.TrainingSeasonIds.Contains(x.Row.SofaScoreSeasonId))
+            .ToList();
+        List<RowWithBand> test = analyzedRows
+            .Where(x => _options.TestSeasonIds.Contains(x.Row.SofaScoreSeasonId))
+            .ToList();
+
+        Dictionary<(string MinuteBand, string DetailedScoreState), LiveTotalCalibrationBucketResult> trainBuckets = BuildBucketResults(
+                train.Select(x => x.Row).ToList(),
+                train)
+            .ToDictionary(x => (x.MinuteBand, x.DetailedScoreState));
+
+        Dictionary<(string MinuteBand, string DetailedScoreState), LiveTotalCalibrationBucketResult> testBuckets = BuildBucketResults(
+                test.Select(x => x.Row).ToList(),
+                test)
+            .ToDictionary(x => (x.MinuteBand, x.DetailedScoreState));
+
+        var keys = trainBuckets.Keys
+            .Union(testBuckets.Keys)
+            .OrderBy(x => MinuteBandOrder(x.MinuteBand))
+            .ThenBy(x => ScoreStateIndex(x.DetailedScoreState))
+            .ToList();
+
+        foreach ((string MinuteBand, string DetailedScoreState) key in keys)
+        {
+            trainBuckets.TryGetValue(key, out LiveTotalCalibrationBucketResult? tr);
+            testBuckets.TryGetValue(key, out LiveTotalCalibrationBucketResult? te);
+
+            double? corrected = te is not null && tr?.CorrectionFactor is not null
+                ? te.BaselineRemainingGoalsPerRow * tr.CorrectionFactor.Value
+                : null;
+
+            double? baselineSignedError = te is not null
+                ? te.BaselineRemainingGoalsPerRow - te.ActualRemainingGoalsPerRow
+                : null;
+
+            double? correctedSignedError = te is not null && corrected.HasValue
+                ? corrected.Value - te.ActualRemainingGoalsPerRow
+                : null;
+
+            result.TrainTestBuckets.Add(new LiveTotalCalibrationTrainTestBucketResult
+            {
+                MinuteBand = key.MinuteBand,
+                DetailedScoreState = key.DetailedScoreState,
+
+                TrainRows = tr?.Rows ?? 0,
+                TrainMatches = tr?.Matches ?? 0,
+                TrainLeagueAverageFinalGoals = tr?.LeagueAverageFinalGoals ?? 0.0,
+                TrainActualRemainingGoalsPerRow = tr?.ActualRemainingGoalsPerRow ?? 0.0,
+                TrainAverageTimingRemainingShare = tr?.AverageTimingRemainingShare ?? 0.0,
+                TrainBaselineRemainingGoalsPerRow = tr?.BaselineRemainingGoalsPerRow ?? 0.0,
+                CorrectionFactor = tr?.CorrectionFactor,
+
+                TestRows = te?.Rows ?? 0,
+                TestMatches = te?.Matches ?? 0,
+                TestLeagueAverageFinalGoals = te?.LeagueAverageFinalGoals ?? 0.0,
+                TestActualRemainingGoalsPerRow = te?.ActualRemainingGoalsPerRow ?? 0.0,
+                TestAverageTimingRemainingShare = te?.AverageTimingRemainingShare ?? 0.0,
+                TestBaselineRemainingGoalsPerRow = te?.BaselineRemainingGoalsPerRow ?? 0.0,
+                TestCorrectedRemainingGoalsPerRow = corrected,
+                TestBaselineSignedErrorPerRow = baselineSignedError,
+                TestCorrectedSignedErrorPerRow = correctedSignedError,
+                TestBaselineAbsErrorPerRow = baselineSignedError.HasValue ? Math.Abs(baselineSignedError.Value) : null,
+                TestCorrectedAbsErrorPerRow = correctedSignedError.HasValue ? Math.Abs(correctedSignedError.Value) : null
+            });
+        }
+    }
+
+    private static List<LiveTotalCalibrationBucketResult> BuildBucketResults(IReadOnlyList<LiveTotalCalibrationInputRow> allRowsForLeagueAverage, IReadOnlyList<RowWithBand> rowsWithBands)
+    {
+        double leagueAverageFinalGoals = allRowsForLeagueAverage
             .GroupBy(x => x.MatchId)
             .Select(x => x.First().ActualFinalTotalGoals)
             .DefaultIfEmpty(0.0)
             .Average();
 
-        foreach (var group in analyzedRows
+        var result = new List<LiveTotalCalibrationBucketResult>();
+
+        foreach (var group in rowsWithBands
             .GroupBy(x => new { x.MinuteBand, x.Row.DetailedScoreState })
             .OrderBy(x => MinuteBandOrder(x.Key.MinuteBand))
             .ThenBy(x => ScoreStateIndex(x.Key.DetailedScoreState)))
@@ -90,7 +212,7 @@ public sealed class LiveTotalCalibrationAnalyzer
                 ? actualRemainingGoalsPerRow / baselineRemainingGoalsPerRow
                 : null;
 
-            result.Buckets.Add(new LiveTotalCalibrationBucketResult
+            result.Add(new LiveTotalCalibrationBucketResult
             {
                 MinuteBand = group.Key.MinuteBand,
                 DetailedScoreState = group.Key.DetailedScoreState,
@@ -106,8 +228,6 @@ public sealed class LiveTotalCalibrationAnalyzer
             });
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(result.OutputPath)) ?? ".");
-        await File.WriteAllTextAsync(result.OutputPath, ToCsv(result.Buckets), Encoding.UTF8, cancellationToken);
         return result;
     }
 
@@ -167,6 +287,7 @@ public sealed class LiveTotalCalibrationAnalyzer
             .Select((name, position) => new { name, position })
             .ToDictionary(x => x.name, x => x.position, StringComparer.OrdinalIgnoreCase);
 
+        Require(index, "SofaScoreSeasonId");
         Require(index, "MatchId");
         Require(index, "Minute");
         Require(index, "DetailedScoreState");
@@ -180,7 +301,8 @@ public sealed class LiveTotalCalibrationAnalyzer
             if (record.Count == 1 && string.IsNullOrWhiteSpace(record[0]))
                 continue;
 
-            if (!TryGetInt(record, index, "MatchId", out int matchId) ||
+            if (!TryGetInt(record, index, "SofaScoreSeasonId", out int seasonId) ||
+                !TryGetInt(record, index, "MatchId", out int matchId) ||
                 !TryGetInt(record, index, "Minute", out int minute) ||
                 !TryGetDouble(record, index, "TimingRemainingShare", out double timingRemainingShare) ||
                 !TryGetDouble(record, index, "ActualFinalTotalGoals", out double actualFinalTotalGoals) ||
@@ -193,6 +315,7 @@ public sealed class LiveTotalCalibrationAnalyzer
 
             rows.Add(new LiveTotalCalibrationInputRow
             {
+                SofaScoreSeasonId = seasonId,
                 MatchId = matchId,
                 Minute = minute,
                 DetailedScoreState = detailedScoreState,
@@ -248,6 +371,37 @@ public sealed class LiveTotalCalibrationAnalyzer
                 D(row.AverageTimingRemainingShare),
                 D(row.BaselineRemainingGoalsPerRow),
                 D(row.CorrectionFactor)));
+        }
+        return sb.ToString();
+    }
+
+    private static string ToTrainTestCsv(IReadOnlyCollection<LiveTotalCalibrationTrainTestBucketResult> rows)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("MinuteBand,DetailedScoreState,TrainRows,TrainMatches,TrainLeagueAverageFinalGoals,TrainActualRemainingGoalsPerRow,TrainAverageTimingRemainingShare,TrainBaselineRemainingGoalsPerRow,CorrectionFactor,TestRows,TestMatches,TestLeagueAverageFinalGoals,TestActualRemainingGoalsPerRow,TestAverageTimingRemainingShare,TestBaselineRemainingGoalsPerRow,TestCorrectedRemainingGoalsPerRow,TestBaselineSignedErrorPerRow,TestCorrectedSignedErrorPerRow,TestBaselineAbsErrorPerRow,TestCorrectedAbsErrorPerRow");
+        foreach (LiveTotalCalibrationTrainTestBucketResult row in rows)
+        {
+            sb.AppendLine(string.Join(',',
+                EscapeCsv(row.MinuteBand),
+                EscapeCsv(row.DetailedScoreState),
+                row.TrainRows.ToString(CultureInfo.InvariantCulture),
+                row.TrainMatches.ToString(CultureInfo.InvariantCulture),
+                D(row.TrainLeagueAverageFinalGoals),
+                D(row.TrainActualRemainingGoalsPerRow),
+                D(row.TrainAverageTimingRemainingShare),
+                D(row.TrainBaselineRemainingGoalsPerRow),
+                D(row.CorrectionFactor),
+                row.TestRows.ToString(CultureInfo.InvariantCulture),
+                row.TestMatches.ToString(CultureInfo.InvariantCulture),
+                D(row.TestLeagueAverageFinalGoals),
+                D(row.TestActualRemainingGoalsPerRow),
+                D(row.TestAverageTimingRemainingShare),
+                D(row.TestBaselineRemainingGoalsPerRow),
+                D(row.TestCorrectedRemainingGoalsPerRow),
+                D(row.TestBaselineSignedErrorPerRow),
+                D(row.TestCorrectedSignedErrorPerRow),
+                D(row.TestBaselineAbsErrorPerRow),
+                D(row.TestCorrectedAbsErrorPerRow)));
         }
         return sb.ToString();
     }
@@ -328,6 +482,7 @@ public sealed class LiveTotalCalibrationAnalyzer
 
     private sealed class LiveTotalCalibrationInputRow
     {
+        public int SofaScoreSeasonId { get; set; }
         public int MatchId { get; set; }
         public int Minute { get; set; }
         public string DetailedScoreState { get; set; } = string.Empty;
@@ -335,4 +490,6 @@ public sealed class LiveTotalCalibrationAnalyzer
         public double ActualFinalTotalGoals { get; set; }
         public double ActualRemainingGoals { get; set; }
     }
+
+    private sealed record RowWithBand(LiveTotalCalibrationInputRow Row, string MinuteBand);
 }

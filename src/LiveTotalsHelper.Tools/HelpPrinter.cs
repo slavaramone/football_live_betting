@@ -123,13 +123,18 @@ public static class HelpPrinter
         Console.WriteLine("Analyze live total calibration usage:");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration \\");
         Console.WriteLine("    --input data/datasets/norwegian-1st-division-live-total-calibration.csv \\");
-        Console.WriteLine("    --output data/reports/norwegian-1st-division-live-total-calibration-analysis.csv");
+        Console.WriteLine("    --training-season-ids 40407,47820,57356 \\");
+        Console.WriteLine("    --test-season-ids 70186 \\");
+        Console.WriteLine("    --output data/reports/norwegian-1st-division-live-total-calibration-train-test.csv");
         Console.WriteLine();
         Console.WriteLine("Arguments:");
-        Console.WriteLine("  --input               Required live-total calibration dataset CSV.");
-        Console.WriteLine("  --output              Output bucket report CSV. Default: <input>-analysis.csv.");
+        Console.WriteLine("  --input                 Required live-total calibration dataset CSV.");
+        Console.WriteLine("  --output                Output bucket report CSV. Default: <input>-analysis.csv.");
+        Console.WriteLine("  --training-season-ids   Optional comma-separated season ids used to estimate correction factors.");
+        Console.WriteLine("  --test-season-ids       Optional comma-separated season ids used to evaluate correction factors.");
         Console.WriteLine();
-        Console.WriteLine("Outputs actual remaining goals per row, baseline remaining goals per row, and correction factor by minute band and detailed live score state.");
+        Console.WriteLine("Without train/test ids, outputs all-data correction factors by minute band and detailed live score state.");
+        Console.WriteLine("With train/test ids, estimates factors on training seasons and applies them to held-out test seasons.");
     }
 
     public static void PrintFitWeibull()
