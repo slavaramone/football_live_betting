@@ -10,8 +10,11 @@ public static class HelpPrinter
         Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON only.");
         Console.WriteLine("  import-sofascore     Import saved SofaScore JSON into PostgreSQL and apply pending migrations.");
         Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
-        Console.WriteLine("  build-live-total-calibration-dataset  Build correction rows using the exact live-total pricing service.");
-        Console.WriteLine("  fit-weibull                           Fit a league-wide Weibull timing model from a goal-minute CSV.");
+        Console.WriteLine("  build-live-total-calibration-dataset  Build correction rows from the shared live-total timing core.");
+        Console.WriteLine("  analyze-live-total-calibration        Compare correction factors by trigger/state.");
+        Console.WriteLine("  fit-live-total-state-correction       Fit trigger/state correction factors.");
+        Console.WriteLine("  evaluate-live-total-model             Evaluate baseline vs state correction vs state+team factor.");
+        Console.WriteLine("  fit-weibull                           Fit a league-wide Weibull timing model from imported DB events.");
         Console.WriteLine("  price-live-total                      Price live Over totals from starting odds, score state and fitted timing model.");
         Console.WriteLine();
         PrintDownloadSofaScore();
@@ -25,6 +28,8 @@ public static class HelpPrinter
         PrintAnalyzeLiveTotalCalibration();
         Console.WriteLine();
         PrintFitLiveTotalStateCorrection();
+        Console.WriteLine();
+        PrintEvaluateLiveTotalModel();
         Console.WriteLine();
         PrintFitWeibull();
         Console.WriteLine();
@@ -115,10 +120,11 @@ public static class HelpPrinter
         Console.WriteLine("  --season-id/--season-ids Optional SofaScore season filter.");
         Console.WriteLine("  --minutes              Fixed snapshot minutes. Default: 10,15,...,85.");
         Console.WriteLine("  --include-event-triggers true/false. Default: true; adds AfterGoal and AfterRedCard rows.");
+        Console.WriteLine("  --team-volume-prior-matches Prior strength for same-season rolling team-volume factors. Default: 20.");
         Console.WriteLine("  --empirical-weight     Optional override. Default comes from profile, otherwise 0.80.");
         Console.WriteLine("  --output               Output CSV path. Default: data/datasets/<league>-<seasons>-live-total-calibration.csv.");
         Console.WriteLine();
-        Console.WriteLine("No odds are required. Each row stores one historical live state with StateTrigger=FixedMinute, AfterGoal, or AfterRedCard, the fitted timing-share components used by `price-live-total`, and realised remaining goals.");
+        Console.WriteLine("No odds are required. Each row stores one historical live state with StateTrigger=FixedMinute, AfterGoal, or AfterRedCard, the shared timing-core outputs used by `price-live-total`, rolling same-season team-volume factors, and realised remaining goals.");
     }
 
     public static void PrintAnalyzeLiveTotalCalibration()
@@ -156,6 +162,25 @@ public static class HelpPrinter
         Console.WriteLine("  --min-state-matches     Minimum distinct matches for score-state fallback. Default: 200.");
         Console.WriteLine("  --min-factor            Lower clamp for factors. Default: 0.50.");
         Console.WriteLine("  --max-factor            Upper clamp for factors. Default: 2.50.");
+    }
+
+    public static void PrintEvaluateLiveTotalModel()
+    {
+        Console.WriteLine("Evaluate live total model usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-model \\");
+        Console.WriteLine("    --input data/datasets/allsvenskan-live-total-calibration.csv \\");
+        Console.WriteLine("    --state-correction data/models/live-total-state-correction/allsvenskan-2022-2024.json \\");
+        Console.WriteLine("    --test-season-ids 69956 \\");
+        Console.WriteLine("    --output data/reports/allsvenskan-live-total-model-evaluation.csv");
+        Console.WriteLine();
+        Console.WriteLine("Arguments:");
+        Console.WriteLine("  --input                       Required latest calibration dataset CSV.");
+        Console.WriteLine("  --state-correction            Required fitted state-correction JSON trained on earlier seasons.");
+        Console.WriteLine("  --test-season-ids             Required held-out season ids.");
+        Console.WriteLine("  --output                      Output CSV path. Default: <input>-model-evaluation.csv.");
+        Console.WriteLine("  --require-team-volume-history true/false. Default false; when true, excludes rows where either team has no prior same-season matches.");
+        Console.WriteLine();
+        Console.WriteLine("Compares held-out remaining-goal MAE/bias for timing baseline, trigger/state correction, and trigger/state correction × rolling same-season team-volume factor, grouped by trigger.");
     }
 
     public static void PrintFitWeibull()
@@ -247,7 +272,13 @@ public static class HelpPrinter
         Console.WriteLine("  --live-under-odds    Optional generic format: \"1.5=3.60,2.0=2.10,2.5=1.65,3.5=1.90\".");
         Console.WriteLine("  --edge-threshold     Optional override. Default comes from profile, otherwise 0.10 = 10%.");
         Console.WriteLine("  --volume-factor      Optional manual multiplier for remaining xG. Overrides automatic current-season volume.");
-        Console.WriteLine("  --use-current-season-volume true/false. Default comes from profile, otherwise false.");
+        Console.WriteLine("  --use-current-season-volume true/false. Default comes from profile; without profile, auto-activates when --current-season-id and --base-season-ids are supplied.");
+        Console.WriteLine("  --team-volume-factor Optional manual same-season team-volume multiplier for remaining xG.");
+        Console.WriteLine("  --use-team-volume    true/false. Optional automatic rolling same-season team-volume factor.");
+        Console.WriteLine("  --home-team-id       Required for automatic team volume.");
+        Console.WriteLine("  --away-team-id       Required for automatic team volume.");
+        Console.WriteLine("  --team-volume-season-id Optional override. Defaults to current-season-id/profile currentSeasonId.");
+        Console.WriteLine("  --team-volume-prior-matches Optional shrinkage prior for team volume. Default: 20.");
         Console.WriteLine("  --league             Required for automatic volume if not provided by profile.");
         Console.WriteLine("  --base-season-ids    Required for automatic volume if not provided by profile.");
         Console.WriteLine("  --current-season-id  Required for automatic volume if not provided by profile.");

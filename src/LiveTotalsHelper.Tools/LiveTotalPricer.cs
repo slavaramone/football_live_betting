@@ -23,6 +23,8 @@ public sealed class LiveTotalPriceOptions
     public int RecentGoalMinutes { get; set; } = 2;
     public double VolumeFactor { get; set; } = 1.0;
     public string VolumeFactorSource { get; set; } = "manual/default";
+    public double TeamVolumeFactor { get; set; } = 1.0;
+    public string TeamVolumeFactorSource { get; set; } = "none/default 1.0";
     public List<double> TargetLines { get; } = [1.5, 2.0, 2.5, 3.0];
     public Dictionary<double, double> LiveOverOddsByLine { get; } = new();
     public Dictionary<double, double> LiveUnderOddsByLine { get; } = new();
@@ -59,6 +61,9 @@ public sealed class LiveTotalPriceResult
     public double RemainingXgBeforeVolume { get; set; }
     public double VolumeFactor { get; set; } = 1.0;
     public string VolumeFactorSource { get; set; } = string.Empty;
+    public double RemainingXgBeforeTeamVolume { get; set; }
+    public double TeamVolumeFactor { get; set; } = 1.0;
+    public string TeamVolumeFactorSource { get; set; } = string.Empty;
     public double RemainingXg { get; set; }
     public int HomeRedCards { get; set; }
     public int AwayRedCards { get; set; }
@@ -111,30 +116,23 @@ public sealed class LiveTotalPricer
             PropertyNameCaseInsensitive = true
         }, cancellationToken) ?? throw new InvalidOperationException("Could not read timing model JSON.");
 
-        string scoreState = ScoreStateResolver.FromScore(_options.HomeGoals, _options.AwayGoals);
-        TimingModelSource source = ResolveTimingModel(model, scoreState);
+        LiveTotalTimingEvaluation timing = LiveTotalTimingEvaluator.Evaluate(
+            model,
+            _options.Minute,
+            _options.HomeGoals,
+            _options.AwayGoals,
+            _options.EmpiricalWeight);
 
         double startingFairOverProbability = TotalGoalsPricingCalculator.RemoveTwoWayMargin(_options.StartingOverOdds, _options.StartingUnderOdds);
         double startingTotalXg = TotalGoalsPricingCalculator.SolveTotalXg(_options.StartingLine, startingFairOverProbability);
-
-        double minute = Math.Clamp(_options.Minute, 0, model.MaxMinute > 0 ? model.MaxMinute : 90);
-        TimingBlendResult timing = TimingShareCalculator.Calculate(new TimingBlendInput
-        {
-            Minute = minute,
-            ShapeK = source.ShapeK,
-            ScaleLambda = source.ScaleLambda,
-            CdfAtMaxMinute = source.CdfAtMaxMinute,
-            EmpiricalBuckets = MapBuckets(source.EmpiricalBuckets),
-            EmpiricalWeight = _options.EmpiricalWeight
-        });
-        double empiricalWeight = timing.EmpiricalWeight;
-        double remainingShare = timing.BlendedRemainingShare;
-        double remainingXgBeforeStateCorrection = startingTotalXg * remainingShare;
+        double remainingXgBeforeStateCorrection = startingTotalXg * timing.TimingRemainingShare;
 
         LiveTotalStateCorrectionResolution stateCorrection = await ResolveStateCorrectionAsync(cancellationToken);
         double remainingXgBeforeVolume = remainingXgBeforeStateCorrection * stateCorrection.Factor;
         double volumeFactor = Math.Clamp(_options.VolumeFactor, 0.20, 2.50);
-        double remainingXg = remainingXgBeforeVolume * volumeFactor;
+        double remainingXgBeforeTeamVolume = remainingXgBeforeVolume * volumeFactor;
+        double teamVolumeFactor = Math.Clamp(_options.TeamVolumeFactor, 0.50, 1.50);
+        double remainingXg = remainingXgBeforeTeamVolume * teamVolumeFactor;
 
         var result = new LiveTotalPriceResult
         {
@@ -145,19 +143,19 @@ public sealed class LiveTotalPricer
             Minute = _options.Minute,
             HomeGoals = _options.HomeGoals,
             AwayGoals = _options.AwayGoals,
-            ScoreState = scoreState,
+            ScoreState = timing.ScoreState,
             DetailedScoreState = stateCorrection.DetailedScoreState,
-            SelectedTimingGroup = source.GroupName,
-            TimingFallback = source.FallbackReason,
+            SelectedTimingGroup = timing.SelectedTimingGroup,
+            TimingFallback = timing.TimingFallback,
             StartingLine = _options.StartingLine,
             StartingOverOdds = _options.StartingOverOdds,
             StartingUnderOdds = _options.StartingUnderOdds,
             StartingFairOverProbability = startingFairOverProbability,
             StartingTotalXg = startingTotalXg,
-            EmpiricalWeight = empiricalWeight,
+            EmpiricalWeight = timing.EmpiricalWeight,
             WeibullRemainingShare = timing.WeibullRemainingShare,
             EmpiricalRemainingShare = timing.EmpiricalRemainingShare,
-            TimingRemainingShare = remainingShare,
+            TimingRemainingShare = timing.TimingRemainingShare,
             RemainingXgBeforeStateCorrection = remainingXgBeforeStateCorrection,
             StateCorrectionFactor = stateCorrection.Factor,
             StateCorrectionSupported = stateCorrection.IsSupported,
@@ -165,14 +163,17 @@ public sealed class LiveTotalPricer
             RemainingXgBeforeVolume = remainingXgBeforeVolume,
             VolumeFactor = volumeFactor,
             VolumeFactorSource = _options.VolumeFactorSource,
+            RemainingXgBeforeTeamVolume = remainingXgBeforeTeamVolume,
+            TeamVolumeFactor = teamVolumeFactor,
+            TeamVolumeFactorSource = _options.TeamVolumeFactorSource,
             RemainingXg = remainingXg,
             HomeRedCards = _options.HomeRedCards,
             AwayRedCards = _options.AwayRedCards,
             LastGoalMinute = _options.LastGoalMinute
         };
 
-        if (!string.IsNullOrWhiteSpace(source.FallbackReason))
-            result.Warnings.Add(source.FallbackReason);
+        if (!string.IsNullOrWhiteSpace(timing.TimingFallback))
+            result.Warnings.Add(timing.TimingFallback);
 
         if (_options.HomeRedCards + _options.AwayRedCards > 0)
         {
@@ -342,239 +343,11 @@ public sealed class LiveTotalPricer
             throw new ArgumentException("--edge-threshold must be >= 0.");
         if (_options.VolumeFactor <= 0)
             throw new ArgumentException("--volume-factor must be greater than 0.");
-    }
-
-    private static double RemoveTwoWayMargin(double overOdds, double underOdds)
-    {
-        double overRaw = 1.0 / overOdds;
-        double underRaw = 1.0 / underOdds;
-        return overRaw / (overRaw + underRaw);
-    }
-
-    private static double SolveTotalXg(double line, double fairOverProbability)
-    {
-        double low = 0.01;
-        double high = 8.0;
-
-        while (OverNoPushProbability(high, line) < fairOverProbability && high < 20.0)
-            high *= 1.5;
-
-        for (int i = 0; i < 100; i++)
-        {
-            double mid = (low + high) / 2.0;
-            double p = OverNoPushProbability(mid, line);
-            if (p < fairOverProbability)
-                low = mid;
-            else
-                high = mid;
-        }
-
-        return (low + high) / 2.0;
-    }
-
-    private static double OverNoPushProbability(double lambda, double line)
-    {
-        SettlementProbabilities p = CalculateOverSettlementProbabilities(line, 0, lambda);
-        double decisive = p.WinProbability + p.LossProbability;
-        if (decisive <= 0)
-            return 0.5;
-        return p.WinProbability / decisive;
-    }
-
-    private static SettlementProbabilities CalculateOverSettlementProbabilities(double line, int currentGoals, double remainingLambda)
-    {
-        double frac = Math.Round(line - Math.Floor(line), 6);
-        int floor = (int)Math.Floor(line);
-
-        if (Math.Abs(frac - 0.5) < 1e-6)
-        {
-            int winFromTotal = floor + 1;
-            int needed = winFromTotal - currentGoals;
-            double win = ProbabilityAtLeast(needed, remainingLambda);
-            return new SettlementProbabilities(win, 0.0, 1.0 - win);
-        }
-
-        if (Math.Abs(frac) < 1e-6)
-        {
-            int neededWin = floor + 1 - currentGoals;
-            int neededPush = floor - currentGoals;
-            double win = ProbabilityAtLeast(neededWin, remainingLambda);
-            double push = ProbabilityExactly(neededPush, remainingLambda);
-            double loss = Math.Max(0.0, 1.0 - win - push);
-            return new SettlementProbabilities(win, push, loss);
-        }
-
-        // Quarter lines are not primary targets, but this approximation returns full-win/push/loss style values
-        // for display by averaging the adjacent Asian half-lines.
-        if (Math.Abs(frac - 0.25) < 1e-6)
-        {
-            SettlementProbabilities lower = CalculateOverSettlementProbabilities(floor, currentGoals, remainingLambda);
-            SettlementProbabilities upper = CalculateOverSettlementProbabilities(floor + 0.5, currentGoals, remainingLambda);
-            return Average(lower, upper);
-        }
-
-        if (Math.Abs(frac - 0.75) < 1e-6)
-        {
-            SettlementProbabilities lower = CalculateOverSettlementProbabilities(floor + 0.5, currentGoals, remainingLambda);
-            SettlementProbabilities upper = CalculateOverSettlementProbabilities(floor + 1.0, currentGoals, remainingLambda);
-            return Average(lower, upper);
-        }
-
-        throw new ArgumentException($"Unsupported total line {line.ToString(CultureInfo.InvariantCulture)}. Supported: .0, .25, .5, .75 lines.");
-    }
-
-    private static SettlementProbabilities Average(SettlementProbabilities a, SettlementProbabilities b)
-    {
-        return new SettlementProbabilities(
-            (a.WinProbability + b.WinProbability) / 2.0,
-            (a.PushProbability + b.PushProbability) / 2.0,
-            (a.LossProbability + b.LossProbability) / 2.0);
-    }
-
-    private static double CalculateFairOdds(SettlementProbabilities p)
-    {
-        if (p.WinProbability <= 0)
-            return double.PositiveInfinity;
-        return 1.0 + p.LossProbability / p.WinProbability;
-    }
-
-    private static double ProbabilityAtLeast(int needed, double lambda)
-    {
-        if (needed <= 0)
-            return 1.0;
-        return Math.Clamp(1.0 - PoissonCdf(needed - 1, lambda), 0.0, 1.0);
-    }
-
-    private static double ProbabilityExactly(int needed, double lambda)
-    {
-        if (needed < 0)
-            return 0.0;
-        return PoissonPmf(needed, lambda);
-    }
-
-    private static double PoissonPmf(int k, double lambda)
-    {
-        if (k < 0)
-            return 0.0;
-        if (lambda < 0)
-            throw new ArgumentOutOfRangeException(nameof(lambda));
-
-        double result = Math.Exp(-lambda);
-        for (int i = 1; i <= k; i++)
-            result *= lambda / i;
-        return result;
-    }
-
-    private static double PoissonCdf(int k, double lambda)
-    {
-        if (k < 0)
-            return 0.0;
-        double sum = 0.0;
-        for (int i = 0; i <= k; i++)
-            sum += PoissonPmf(i, lambda);
-        return Math.Clamp(sum, 0.0, 1.0);
-    }
-
-    private static string ResolveScoreState(int homeGoals, int awayGoals)
-    {
-        int margin = Math.Abs(homeGoals - awayGoals);
-        return margin switch
-        {
-            0 => "Level",
-            1 => "OneGoalMargin",
-            2 => "TwoGoalMargin",
-            _ => "ThreePlusGoalMargin"
-        };
-    }
-
-    private static TimingModelSource ResolveTimingModel(WeibullModelFile model, string scoreState)
-    {
-        TimingModelGroupResult? group = model.Groups.FirstOrDefault(g => g.GroupName.Equals(scoreState, StringComparison.OrdinalIgnoreCase));
-        if (group is not null)
-        {
-            return new TimingModelSource
-            {
-                GroupName = group.GroupName,
-                ShapeK = group.ShapeK,
-                ScaleLambda = group.ScaleLambda,
-                CdfAtMaxMinute = group.CdfAtMaxMinute,
-                EmpiricalBuckets = group.EmpiricalBuckets
-            };
-        }
-
-        string fallback = model.Groups.Count > 0
-            ? $"Timing group '{scoreState}' was not found; falling back to All/root model."
-            : string.Empty;
-
-        return new TimingModelSource
-        {
-            GroupName = "All",
-            FallbackReason = fallback,
-            ShapeK = model.Weibull.ShapeK,
-            ScaleLambda = model.Weibull.ScaleLambda,
-            CdfAtMaxMinute = model.Weibull.CdfAtMaxMinute,
-            EmpiricalBuckets = model.Empirical.Buckets
-        };
-    }
-
-    private static double NormalizedWeibullCdf(double minute, double shapeK, double scaleLambda, double cdfAtMaxMinute)
-    {
-        if (minute <= 0)
-            return 0.0;
-        if (shapeK <= 0 || scaleLambda <= 0 || cdfAtMaxMinute <= 0)
-            return 0.0;
-        double raw = 1.0 - Math.Exp(-Math.Pow(minute / scaleLambda, shapeK));
-        return Math.Clamp(raw / cdfAtMaxMinute, 0.0, 1.0);
-    }
-
-    private static double EmpiricalCdf(double minute, IReadOnlyList<EmpiricalTimingBucket> buckets)
-    {
-        if (minute <= 0 || buckets.Count == 0)
-            return 0.0;
-
-        foreach (EmpiricalTimingBucket bucket in buckets)
-        {
-            if (minute <= bucket.FromMinuteExclusive)
-                return bucket.CumulativeShareBefore;
-
-            if (minute <= bucket.ToMinuteInclusive)
-            {
-                double width = bucket.ToMinuteInclusive - bucket.FromMinuteExclusive;
-                if (width <= 0)
-                    return bucket.CumulativeShareAfter;
-                double progress = (minute - bucket.FromMinuteExclusive) / width;
-                return Math.Clamp(bucket.CumulativeShareBefore + bucket.GoalShare * progress, 0.0, 1.0);
-            }
-        }
-
-        return 1.0;
-    }
-
-    private static List<EmpiricalTimingBucketModel> MapBuckets(IEnumerable<EmpiricalTimingBucket> buckets)
-    {
-        return buckets.Select(x => new EmpiricalTimingBucketModel
-        {
-            FromMinuteExclusive = x.FromMinuteExclusive,
-            ToMinuteInclusive = x.ToMinuteInclusive,
-            Label = x.Label,
-            GoalCount = x.GoalCount,
-            GoalShare = x.GoalShare,
-            CumulativeShareBefore = x.CumulativeShareBefore,
-            CumulativeShareAfter = x.CumulativeShareAfter
-        }).ToList();
+        if (_options.TeamVolumeFactor <= 0)
+            throw new ArgumentException("--team-volume-factor must be greater than 0.");
     }
 
     public static double NormalizeLineKey(double line) => Math.Round(line, 2);
 }
 
-internal readonly record struct SettlementProbabilities(double WinProbability, double PushProbability, double LossProbability);
 
-internal sealed class TimingModelSource
-{
-    public string GroupName { get; set; } = string.Empty;
-    public string FallbackReason { get; set; } = string.Empty;
-    public double ShapeK { get; set; }
-    public double ScaleLambda { get; set; }
-    public double CdfAtMaxMinute { get; set; }
-    public List<EmpiricalTimingBucket> EmpiricalBuckets { get; set; } = [];
-}
