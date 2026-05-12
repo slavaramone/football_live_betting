@@ -2,7 +2,7 @@
   "profiles": {
     "LiveTotalsHelper.Tools": {
       "commandName": "Project",
-      "commandLineArgs": "price-live-total --minute 67 --home-goals 1 --away-goals 3 --live-over-odds \"5.5=1.85\" --live-under-odds \"5.5=1.85\" --starting-line 3.5 --starting-over 2.20 --starting-under 1.60 --profile \" m-league-division-a\" --before-round 7\r\n"
+      "commandLineArgs": "fit-weibull --profile norwegian-1st-division --validation true\r\n"
     }
   }
 }

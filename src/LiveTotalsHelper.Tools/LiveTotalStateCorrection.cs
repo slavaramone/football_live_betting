@@ -41,7 +41,6 @@ public sealed class LiveTotalStateCorrectionFitOptions
     public string OutputPath { get; set; } = string.Empty;
     public List<int> TrainingSeasonIds { get; } = [];
     public int MinBucketMatches { get; set; } = 100;
-    public int AfterGoalMinBucketMatches { get; set; } = 60;
     public double MinFactor { get; set; } = 0.50;
     public double MaxFactor { get; set; } = 2.50;
 }
@@ -67,7 +66,6 @@ public sealed class LiveTotalStateCorrectionFile
     public List<int> TrainingSeasonIds { get; set; } = [];
     public double LeagueAverageFinalGoals { get; set; }
     public int MinBucketMatches { get; set; }
-    public int AfterGoalMinBucketMatches { get; set; }
     public double MinFactor { get; set; }
     public double MaxFactor { get; set; }
     public List<LiveTotalStateCorrectionBucket> Buckets { get; set; } = [];
@@ -78,7 +76,6 @@ public sealed class LiveTotalStateCorrectionBucket
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string MinuteBand { get; set; } = string.Empty;
     public string DetailedScoreState { get; set; } = string.Empty;
-    public string GoalChangeType { get; set; } = string.Empty;
     public int Rows { get; set; }
     public int Matches { get; set; }
     public double ActualRemainingGoalsPerRow { get; set; }
@@ -94,7 +91,6 @@ public sealed class LiveTotalStateCorrectionResolution
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string DetailedScoreState { get; set; } = string.Empty;
     public string MinuteBand { get; set; } = string.Empty;
-    public string GoalChangeType { get; set; } = string.Empty;
     public double Factor { get; set; } = 1.0;
     public bool IsSupported { get; set; }
     public string Source { get; set; } = "unsupported - no exact usable bucket";
@@ -144,14 +140,11 @@ public static class LiveTotalStateCorrectionResolver
 
     public static string MinuteBand(int minute) => MinuteBand(LiveTotalStateTrigger.FixedMinute, minute);
 
-    public static LiveTotalStateCorrectionResolution Resolve(LiveTotalStateCorrectionFile model, string stateTrigger, int minute, int homeGoals, int awayGoals, string goalChangeType = "")
+    public static LiveTotalStateCorrectionResolution Resolve(LiveTotalStateCorrectionFile model, string stateTrigger, int minute, int homeGoals, int awayGoals)
     {
         stateTrigger = LiveTotalStateTrigger.Normalize(stateTrigger);
         string detailedScoreState = DetailedScoreState(homeGoals, awayGoals);
         string minuteBand = MinuteBand(stateTrigger, minute);
-        string normalizedGoalChangeType = LiveTotalStateTrigger.Normalize(stateTrigger).Equals(LiveTotalStateTrigger.AfterGoal, StringComparison.OrdinalIgnoreCase)
-            ? LiveTotalGoalChangeClassifier.Normalize(goalChangeType)
-            : LiveTotalGoalChangeClassifier.None;
 
         if (!string.IsNullOrWhiteSpace(minuteBand))
         {
@@ -159,8 +152,7 @@ public static class LiveTotalStateCorrectionResolver
                 x.IsUsable &&
                 LiveTotalStateTrigger.Normalize(x.StateTrigger).Equals(stateTrigger, StringComparison.OrdinalIgnoreCase) &&
                 x.MinuteBand.Equals(minuteBand, StringComparison.OrdinalIgnoreCase) &&
-                x.DetailedScoreState.Equals(detailedScoreState, StringComparison.OrdinalIgnoreCase) &&
-                LiveTotalGoalChangeClassifier.Normalize(x.GoalChangeType).Equals(normalizedGoalChangeType, StringComparison.OrdinalIgnoreCase));
+                x.DetailedScoreState.Equals(detailedScoreState, StringComparison.OrdinalIgnoreCase));
 
             if (bucket is not null)
             {
@@ -169,12 +161,9 @@ public static class LiveTotalStateCorrectionResolver
                     StateTrigger = stateTrigger,
                     DetailedScoreState = detailedScoreState,
                     MinuteBand = minuteBand,
-                    GoalChangeType = normalizedGoalChangeType,
                     Factor = bucket.Factor,
                     IsSupported = true,
-                    Source = string.IsNullOrWhiteSpace(normalizedGoalChangeType)
-                        ? $"bucket {stateTrigger}/{minuteBand}/{detailedScoreState}"
-                        : $"bucket {stateTrigger}/{minuteBand}/{detailedScoreState}/{normalizedGoalChangeType}"
+                    Source = $"bucket {stateTrigger}/{minuteBand}/{detailedScoreState}"
                 };
             }
         }
@@ -184,14 +173,11 @@ public static class LiveTotalStateCorrectionResolver
             StateTrigger = stateTrigger,
             DetailedScoreState = detailedScoreState,
             MinuteBand = minuteBand,
-            GoalChangeType = normalizedGoalChangeType,
             Factor = 1.0,
             IsSupported = false,
             Source = string.IsNullOrWhiteSpace(minuteBand)
                 ? $"unsupported - {stateTrigger} minute is outside betting bands"
-                : string.IsNullOrWhiteSpace(normalizedGoalChangeType)
-                    ? $"unsupported sparse bucket {stateTrigger}/{minuteBand}/{detailedScoreState}"
-                    : $"unsupported sparse bucket {stateTrigger}/{minuteBand}/{detailedScoreState}/{normalizedGoalChangeType}"
+                : $"unsupported sparse bucket {stateTrigger}/{minuteBand}/{detailedScoreState}"
         };
     }
 }
@@ -255,7 +241,6 @@ public sealed class LiveTotalStateCorrectionFitter
             TrainingSeasonIds = result.TrainingSeasonIds.ToList(),
             LeagueAverageFinalGoals = result.LeagueAverageFinalGoals,
             MinBucketMatches = _options.MinBucketMatches,
-            AfterGoalMinBucketMatches = _options.AfterGoalMinBucketMatches,
             MinFactor = _options.MinFactor,
             MaxFactor = _options.MaxFactor,
             Buckets = result.Buckets.ToList()
@@ -276,11 +261,10 @@ public sealed class LiveTotalStateCorrectionFitter
         return trainingRows
             .Select(x => new { Row = x, MinuteBand = LiveTotalStateCorrectionResolver.MinuteBand(x.StateTrigger, x.Minute) })
             .Where(x => !string.IsNullOrWhiteSpace(x.MinuteBand))
-            .GroupBy(x => new { x.Row.StateTrigger, x.MinuteBand, x.Row.DetailedScoreState, GoalChangeType = CorrectionGoalChangeType(x.Row.StateTrigger, x.Row.GoalChangeType) })
+            .GroupBy(x => new { x.Row.StateTrigger, x.MinuteBand, x.Row.DetailedScoreState })
             .OrderBy(x => TriggerOrder(x.Key.StateTrigger))
             .ThenBy(x => MinuteBandOrder(x.Key.MinuteBand))
             .ThenBy(x => ScoreStateIndex(x.Key.DetailedScoreState))
-            .ThenBy(x => GoalChangeTypeOrder(x.Key.GoalChangeType))
             .Select(group =>
             {
                 List<InputRow> bucketRows = group.Select(x => x.Row).ToList();
@@ -294,7 +278,6 @@ public sealed class LiveTotalStateCorrectionFitter
                     StateTrigger = group.Key.StateTrigger,
                     MinuteBand = group.Key.MinuteBand,
                     DetailedScoreState = group.Key.DetailedScoreState,
-                    GoalChangeType = group.Key.GoalChangeType,
                     Rows = bucketRows.Count,
                     Matches = matches,
                     ActualRemainingGoalsPerRow = actual,
@@ -302,34 +285,11 @@ public sealed class LiveTotalStateCorrectionFitter
                     BaselineRemainingGoalsPerRow = baseline,
                     RawFactor = raw,
                     Factor = ClampFactor(raw),
-                    IsUsable = matches >= RequiredMatches(group.Key.StateTrigger) && baseline > 0
+                    IsUsable = matches >= _options.MinBucketMatches && baseline > 0
                 };
             })
             .ToList();
     }
-
-    private int RequiredMatches(string stateTrigger)
-    {
-        return LiveTotalStateTrigger.Normalize(stateTrigger).Equals(LiveTotalStateTrigger.AfterGoal, StringComparison.OrdinalIgnoreCase)
-            ? _options.AfterGoalMinBucketMatches
-            : _options.MinBucketMatches;
-    }
-
-    private static string CorrectionGoalChangeType(string stateTrigger, string goalChangeType)
-    {
-        return LiveTotalStateTrigger.Normalize(stateTrigger).Equals(LiveTotalStateTrigger.AfterGoal, StringComparison.OrdinalIgnoreCase)
-            ? LiveTotalGoalChangeClassifier.Normalize(goalChangeType)
-            : LiveTotalGoalChangeClassifier.None;
-    }
-
-    private static int GoalChangeTypeOrder(string value) => LiveTotalGoalChangeClassifier.Normalize(value) switch
-    {
-        LiveTotalGoalChangeClassifier.GoAheadGoal => 1,
-        LiveTotalGoalChangeClassifier.Equalizer => 2,
-        LiveTotalGoalChangeClassifier.MarginIncrease => 3,
-        LiveTotalGoalChangeClassifier.MarginDecrease => 4,
-        _ => 99
-    };
 
     private void ValidateOptions()
     {
@@ -341,8 +301,6 @@ public sealed class LiveTotalStateCorrectionFitter
             throw new ArgumentException("Missing required argument --training-season-ids.");
         if (_options.MinBucketMatches < 1)
             throw new ArgumentException("--min-bucket-matches must be >= 1.");
-        if (_options.AfterGoalMinBucketMatches < 1)
-            throw new ArgumentException("--after-goal-min-bucket-matches must be >= 1.");
         if (_options.MinFactor <= 0 || _options.MaxFactor <= 0 || _options.MinFactor > _options.MaxFactor)
             throw new ArgumentException("--min-factor and --max-factor must be positive and min <= max.");
     }
@@ -433,9 +391,6 @@ public sealed class LiveTotalStateCorrectionFitter
                 MatchId = matchId,
                 Minute = minute,
                 DetailedScoreState = detailedScoreState,
-                GoalChangeType = index.ContainsKey("GoalChangeType")
-                    ? LiveTotalGoalChangeClassifier.Normalize(GetString(record, index, "GoalChangeType"))
-                    : LiveTotalGoalChangeClassifier.None,
                 TimingRemainingShare = timingRemainingShare,
                 ActualFinalTotalGoals = actualFinalTotalGoals,
                 ActualRemainingGoals = actualRemainingGoals
@@ -537,7 +492,6 @@ public sealed class LiveTotalStateCorrectionFitter
         public int MatchId { get; set; }
         public int Minute { get; set; }
         public string DetailedScoreState { get; set; } = string.Empty;
-        public string GoalChangeType { get; set; } = string.Empty;
         public double TimingRemainingShare { get; set; }
         public double ActualFinalTotalGoals { get; set; }
         public double ActualRemainingGoals { get; set; }

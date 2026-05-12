@@ -137,7 +137,7 @@ public static class HelpPrinter
         Console.WriteLine();
         Console.WriteLine("Production mode uses profile calibrationDatasetPath, stateCorrectionPath, trainingSeasonIds.");
         Console.WriteLine("Validation mode uses profile validation dataset/path and validationTrainingSeasonIds.");
-        Console.WriteLine("Overrides remain available: --input, --training-season-ids, --output, --min-bucket-matches, --after-goal-min-bucket-matches, --min-factor, --max-factor.");
+        Console.WriteLine("Overrides remain available: --input, --training-season-ids, --output, --min-bucket-matches, --min-factor, --max-factor.");
     }
 
     
@@ -211,8 +211,6 @@ public static class HelpPrinter
         Console.WriteLine("  --home-goals         Required current home goals.");
         Console.WriteLine("  --away-goals         Required current away goals.");
         Console.WriteLine("  --live-over-odds / --live-under-odds Optional bookmaker live odds, needed for edge/bet decisions.");
-        Console.WriteLine("  --score-before-home / --score-before-away Required for after-goal unless --goal-change-type is supplied.");
-        Console.WriteLine("  --goal-change-type   Optional after-goal type: GoAheadGoal, Equalizer, MarginIncrease, MarginDecrease.");
         Console.WriteLine("  --before-round       Needed for current-season volume unless defaultBeforeRound is maintained in the profile.");
         Console.WriteLine("  --home-red-cards / --away-red-cards Optional; red-card states remain warning/manual-review states.");
         Console.WriteLine("  --last-goal-minute   Optional; fixed-minute checks shortly after a goal become WAIT.");

@@ -45,7 +45,6 @@ public sealed class LeagueProfile
 
     // State correction fit defaults.
     public int StateCorrectionMinBucketMatches { get; set; } = 100;
-    public int AfterGoalMinBucketMatches { get; set; } = 60;
     public double StateCorrectionMinFactor { get; set; } = 0.50;
     public double StateCorrectionMaxFactor { get; set; } = 2.50;
 
