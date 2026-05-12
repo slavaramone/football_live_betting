@@ -9,10 +9,10 @@ public sealed class SampleMatchRepository : IMatchRepository
     {
         return
         [
-            new() { League = league, HomeTeam = "Brisbane City U23", AwayTeam = "SWQ Thunder", Minute = 42, HomeGoals = 1, AwayGoals = 0, BestSignal = "Over 2.0", BestEdgePercent = 3.8 },
-            new() { League = league, HomeTeam = "Moreton Bay Utd", AwayTeam = "Gold Coast Knights", Minute = 39, HomeGoals = 0, AwayGoals = 0, BestSignal = "Over 1.5", BestEdgePercent = 2.6 },
-            new() { League = league, HomeTeam = "Rochedale Rovers", AwayTeam = "Eastern Suburbs", Minute = 45, HomeGoals = 1, AwayGoals = 1, BestSignal = "No bet", BestEdgePercent = 0.0 },
-            new() { League = league, HomeTeam = "Sunshine Coast FC", AwayTeam = "Redlands Utd", Minute = 34, HomeGoals = 0, AwayGoals = 1, BestSignal = "Over 2.5", BestEdgePercent = 2.3 }
+            new() { League = league, HomeTeam = "Manual Home A", AwayTeam = "Manual Away A", Minute = 60, HomeGoals = 1, AwayGoals = 0, BestSignal = "Prepare check", BestEdgePercent = 0.0 },
+            new() { League = league, HomeTeam = "Manual Home B", AwayTeam = "Manual Away B", Minute = 65, HomeGoals = 0, AwayGoals = 0, BestSignal = "Prepare check", BestEdgePercent = 0.0 },
+            new() { League = league, HomeTeam = "Manual Home C", AwayTeam = "Manual Away C", Minute = 75, HomeGoals = 1, AwayGoals = 1, BestSignal = "Prepare check", BestEdgePercent = 0.0 },
+            new() { League = league, HomeTeam = "Manual Home D", AwayTeam = "Manual Away D", Minute = 55, HomeGoals = 2, AwayGoals = 0, BestSignal = "Prepare check", BestEdgePercent = 0.0 }
         ];
     }
 }

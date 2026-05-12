@@ -11,9 +11,21 @@ public partial class MainWindow : Window
         InitializeComponent();
     }
 
-    private void Recalculate_Click(object? sender, RoutedEventArgs e)
+    private async void BuildCheck_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is MainWindowViewModel vm)
-            vm.Recalculate();
+            await vm.BuildLiveCheckAsync();
+    }
+
+    private async void AppendPaperLog_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel vm)
+            await vm.AppendPaperLogAsync();
+    }
+
+    private async void LogBet_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel vm)
+            await vm.LogBetAsync();
     }
 }

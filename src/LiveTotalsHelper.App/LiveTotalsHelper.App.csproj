@@ -17,5 +17,14 @@
     <ProjectReference Include="..\LiveTotalsHelper.Core\LiveTotalsHelper.Core.csproj" />
     <ProjectReference Include="..\LiveTotalsHelper.Modeling\LiveTotalsHelper.Modeling.csproj" />
     <ProjectReference Include="..\LiveTotalsHelper.Infrastructure\LiveTotalsHelper.Infrastructure.csproj" />
+    <ProjectReference Include="..\LiveTotalsHelper.Tools\LiveTotalsHelper.Tools.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="league-profiles.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 </Project>
