@@ -36,7 +36,14 @@ public sealed class MainWindowViewModel : ObservableObject
             Leagues.Add("No profiles loaded");
         }
 
-        LeagueFilter = Leagues[0];
+        _leagueFilter = Leagues[0];
+        OnPropertyChanged(nameof(LeagueFilter));
+
+        SelectedProfile = _liveSessionService.FindProfileByLeague(_leagueFilter) ?? Profiles.FirstOrDefault();
+        LiveResult = new LiveBettingCheckResult
+        {
+            Status = "READY - click Load fixtures"
+        };
     }
 
     public ObservableCollection<string> Leagues { get; } = [];
@@ -106,12 +113,13 @@ public sealed class MainWindowViewModel : ObservableObject
                 if (profile is not null)
                     SelectedProfile = profile;
 
-                ReloadMatches();
-                SelectedMatch = Matches.FirstOrDefault();
+                Matches.Clear();
+                SelectedMatch = null;
+                LiveDecisions.Clear();
 
                 LiveResult = new LiveBettingCheckResult
                 {
-                    Status = $"READY - {Matches.Count} fixtures loaded"
+                    Status = "READY - click Load fixtures"
                 };
             }
         }
@@ -143,6 +151,17 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         get => _summary;
         private set => SetProperty(ref _summary, value);
+    }
+
+    public void LoadFixtures()
+    {
+        ReloadMatches();
+        SelectedMatch = Matches.FirstOrDefault();
+
+        LiveResult = new LiveBettingCheckResult
+        {
+            Status = $"READY - {Matches.Count} fixtures loaded"
+        };
     }
 
     public async Task BuildLiveCheckAsync()

@@ -41,30 +41,56 @@ public partial class App : Application
                 var bettingModel = new BettingModelService(weibullProvider);
                 var liveSessionService = new LiveTotalsHelper.App.Services.LiveBettingSessionService(dbContext, profileStore.Profiles, logsFolder);
 
+                desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
                 desktop.MainWindow = new MainWindow
                 {
                     DataContext = new MainWindowViewModel(matchRepository, bettingModel, liveSessionService)
                 };
+                desktop.MainWindow.Show();
             }
             catch (Exception ex)
             {
+                string errorText = ex.ToString();
+                TryWriteStartupError(errorText);
+
+                desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
                 desktop.MainWindow = new Window
                 {
                     Title = "LiveTotalsHelper startup error",
-                    Width = 900,
-                    Height = 520,
+                    Width = 980,
+                    Height = 620,
+                    WindowStartupLocation = WindowStartupLocation.CenterScreen,
                     Content = new TextBox
                     {
-                        Text = ex.ToString(),
+                        Text = errorText,
                         IsReadOnly = true,
                         AcceptsReturn = true,
                         TextWrapping = Avalonia.Media.TextWrapping.Wrap
                     }
                 };
+                desktop.MainWindow.Show();
             }
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+
+    private static void TryWriteStartupError(string errorText)
+    {
+        try
+        {
+            string folder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "LiveTotalsHelper");
+
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "startup-error.txt"), errorText);
+        }
+        catch
+        {
+            // Startup error window is the primary diagnostic path.
+        }
     }
 
     private static AppStartupSettings LoadStartupSettings()

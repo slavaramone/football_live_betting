@@ -4,38 +4,48 @@
         xmlns:models="using:LiveTotalsHelper.Core.Models"
         x:Class="LiveTotalsHelper.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
-        Title="Live O/U Paper Betting Helper"
-        Width="1280"
-        Height="820"
-        MinWidth="1120"
-        MinHeight="720"
+        Title="Live O/U Helper"
+        Width="1220"
+        Height="760"
+        MinWidth="980"
+        MinHeight="620"
+        WindowStartupLocation="CenterScreen"
         Background="{StaticResource AppBgBrush}">
 
   <Window.Styles>
     <Style Selector="TextBlock.section-title">
-      <Setter Property="FontSize" Value="16" />
+      <Setter Property="FontSize" Value="13" />
       <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Margin" Value="0,0,0,8" />
+      <Setter Property="Margin" Value="0,0,0,4" />
     </Style>
     <Style Selector="Border.panel">
       <Setter Property="Background" Value="{StaticResource PanelBgBrush}" />
       <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="Padding" Value="14" />
-      <Setter Property="Margin" Value="0,0,0,12" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="8" />
+      <Setter Property="Margin" Value="0,0,0,6" />
     </Style>
     <Style Selector="TextBlock.label">
       <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="11" />
     </Style>
     <Style Selector="TextBox.input">
-      <Setter Property="Width" Value="86" />
-      <Setter Property="Margin" Value="0,4,12,0" />
+      <Setter Property="Width" Value="68" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="Margin" Value="0,1,6,0" />
+      <Setter Property="FontSize" Value="12" />
     </Style>
     <Style Selector="TextBox.wide-input">
-      <Setter Property="Width" Value="360" />
-      <Setter Property="Margin" Value="0,4,12,0" />
+      <Setter Property="Width" Value="265" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="Margin" Value="0,1,6,0" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="Button.compact">
+      <Setter Property="Padding" Value="10,5" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Margin" Value="0,0,4,0" />
     </Style>
     <Style Selector="TextBlock.positive">
       <Setter Property="Foreground" Value="{StaticResource AccentGreenBrush}" />
@@ -43,42 +53,31 @@
     </Style>
   </Window.Styles>
 
-  <Grid RowDefinitions="Auto,*" ColumnDefinitions="320,*" Margin="16">
+  <Grid RowDefinitions="Auto,*" ColumnDefinitions="280,*" Margin="8">
 
-    <Border Grid.Row="0" Grid.ColumnSpan="2" Classes="panel" Padding="14,10" Margin="0,0,0,14">
-      <DockPanel>
-        <StackPanel DockPanel.Dock="Left">
-          <TextBlock Text="{Binding AppTitle}" FontSize="22" FontWeight="Bold" />
-          <TextBlock Text="Select league, choose DB fixture, enter live odds, price directly in-app, then log checks/bets." Foreground="{StaticResource MutedTextBrush}" />
-        </StackPanel>
-        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right" Spacing="8">
-          <Ellipse Width="9" Height="9" Fill="{StaticResource AccentGreenBrush}" VerticalAlignment="Center" />
-          <TextBlock Text="{Binding ConnectionStatus}" VerticalAlignment="Center" />
-        </StackPanel>
-      </DockPanel>
+    <Border Grid.Row="0" Grid.ColumnSpan="2" Classes="panel" Padding="8,6">
+      <Grid ColumnDefinitions="Auto,190,Auto,*,Auto" ColumnSpacing="8">
+        <TextBlock Text="League" Classes="label" VerticalAlignment="Center" />
+        <ComboBox Grid.Column="1" ItemsSource="{Binding Leagues}" SelectedItem="{Binding LeagueFilter}" Height="28" />
+        <Button Grid.Column="2" Classes="compact" Content="Load fixtures" Click="LoadFixtures_Click" />
+        <TextBlock Grid.Column="3" Text="{Binding ProfileNotes}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="4" Text="{Binding LiveStatus}" FontWeight="Bold" Foreground="{StaticResource AccentGreenBrush}" VerticalAlignment="Center" />
+      </Grid>
     </Border>
 
-    <Border Grid.Row="1" Grid.Column="0" Classes="panel" Margin="0,0,14,0">
-      <Grid RowDefinitions="Auto,Auto,*">
-        <StackPanel Grid.Row="0" Spacing="6">
-          <TextBlock Text="League" Classes="label" />
-          <ComboBox ItemsSource="{Binding Leagues}" SelectedItem="{Binding LeagueFilter}" Width="270" />
-          <TextBlock Text="{Binding ProfileNotes}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,8,0,0" />
-        </StackPanel>
-
-        <TextBlock Grid.Row="1" Text="DB fixtures" Classes="section-title" Margin="0,18,0,8" />
-
-        <ListBox Grid.Row="2" ItemsSource="{Binding Matches}" SelectedItem="{Binding SelectedMatch}" Background="Transparent" BorderThickness="0">
+    <Border Grid.Row="1" Grid.Column="0" Classes="panel" Margin="0,0,8,0">
+      <Grid RowDefinitions="Auto,*">
+        <TextBlock Grid.Row="0" Text="Fixtures from DB" Classes="section-title" />
+        <ListBox Grid.Row="1" ItemsSource="{Binding Matches}" SelectedItem="{Binding SelectedMatch}" Background="Transparent" BorderThickness="0">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="models:MatchSnapshot">
-              <Border BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="0,0,0,1" Padding="8">
-                <Grid ColumnDefinitions="42,*,44,76" RowDefinitions="Auto,Auto">
-                  <TextBlock Grid.RowSpan="2" Text="{Binding MinuteText}" Foreground="{StaticResource AccentGreenBrush}" FontWeight="Bold" VerticalAlignment="Center" />
-                  <TextBlock Grid.Column="1" Text="{Binding HomeTeam}" FontWeight="SemiBold" />
-                  <TextBlock Grid.Column="2" Text="{Binding Score}" HorizontalAlignment="Center" FontWeight="Bold" />
-                  <TextBlock Grid.Column="3" Text="{Binding EdgeText}" Classes="positive" HorizontalAlignment="Right" />
-                  <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding AwayTeam}" Foreground="{StaticResource MutedTextBrush}" />
-                  <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding BestSignal}" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Right" />
+              <Border BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="0,0,0,1" Padding="4">
+                <Grid ColumnDefinitions="32,*,40" RowDefinitions="Auto,Auto">
+                  <TextBlock Grid.RowSpan="2" Text="{Binding MinuteText}" FontSize="11" Foreground="{StaticResource AccentGreenBrush}" FontWeight="Bold" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="1" Text="{Binding HomeTeam}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="2" Text="{Binding Score}" FontSize="12" HorizontalAlignment="Center" FontWeight="Bold" />
+                  <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding AwayTeam}" FontSize="12" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding BestSignal}" FontSize="10" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" />
                 </Grid>
               </Border>
             </DataTemplate>
@@ -87,189 +86,135 @@
       </Grid>
     </Border>
 
-    <ScrollViewer Grid.Row="1" Grid.Column="1">
-      <StackPanel>
+    <Grid Grid.Row="1" Grid.Column="1" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="6">
 
-        <Border Classes="panel">
-          <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
-            <StackPanel>
-              <TextBlock Text="Live betting check" Classes="section-title" />
-              <TextBlock Text="{Binding SelectedMatchTitle}" FontSize="20" FontWeight="Bold" />
-              <TextBlock Text="{Binding Notes}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" />
-            </StackPanel>
-            <Button Grid.Column="1" Content="Price live total" Click="BuildCheck_Click" Padding="16,8" />
-            <Button Grid.Column="2" Content="Append paper log" Click="AppendPaperLog_Click" Padding="16,8" />
-            <Button Grid.Column="3" Content="Log bet" Click="LogBet_Click" Padding="16,8" />
-          </Grid>
-        </Border>
-
-        <Border Classes="panel">
+      <Border Grid.Row="0" Classes="panel">
+        <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="4">
           <StackPanel>
-            <TextBlock Text="1. Trigger and match state" Classes="section-title" />
-
-            <WrapPanel Margin="0,0,0,10">
-              <StackPanel>
-                <TextBlock Text="Trigger" Classes="label" />
-                <ComboBox Width="150" ItemsSource="{Binding StateTriggers}" SelectedItem="{Binding LiveInput.StateTrigger}" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Minute" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.Minute}" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Home goals" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.HomeGoals}" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Away goals" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.AwayGoals}" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Home reds" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.HomeRedCards}" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Away reds" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.AwayRedCards}" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Last goal min" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.LastGoalMinute}" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Before round" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.BeforeRound}" Watermark="optional" />
-              </StackPanel>
-            </WrapPanel>
+            <TextBlock Text="{Binding SelectedMatchTitle}" FontSize="16" FontWeight="Bold" />
+            <TextBlock Text="{Binding Notes}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
           </StackPanel>
-        </Border>
+          <Button Grid.Column="1" Classes="compact" Content="Price" Click="BuildCheck_Click" />
+          <Button Grid.Column="2" Classes="compact" Content="Log state" Click="AppendPaperLog_Click" />
+          <Button Grid.Column="3" Classes="compact" Content="Log bet" Click="LogBet_Click" />
+        </Grid>
+      </Border>
 
-        <Border Classes="panel">
-          <StackPanel>
-            <TextBlock Text="2. Starting market and current live odds" Classes="section-title" />
-
-            <TextBlock Text="Starting/pre-match total" Classes="label" />
-            <WrapPanel Margin="0,0,0,10">
-              <StackPanel>
-                <TextBlock Text="Line" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.StartingLine}" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Over" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.StartingOverOdds}" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Under" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.StartingUnderOdds}" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Target lines" Classes="label" />
-                <TextBox Classes="wide-input" Text="{Binding LiveInput.TargetLinesText}" />
-              </StackPanel>
-            </WrapPanel>
-
-            <TextBlock Text="Live odds format: 2.5=2.30,3.5=4.20" Classes="label" />
+      <Border Grid.Row="1" Classes="panel">
+        <Grid RowDefinitions="Auto,Auto" RowSpacing="6">
+          <StackPanel Grid.Row="0">
+            <TextBlock Text="State" Classes="section-title" />
             <WrapPanel>
               <StackPanel>
-                <TextBlock Text="Live over odds" Classes="label" />
-                <TextBox Classes="wide-input" Text="{Binding LiveInput.LiveOverOddsText}" />
+                <TextBlock Text="Trigger" Classes="label" />
+                <ComboBox Width="126" Height="28" FontSize="12" ItemsSource="{Binding StateTriggers}" SelectedItem="{Binding LiveInput.StateTrigger}" />
               </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Live under odds" Classes="label" />
-                <TextBox Classes="wide-input" Text="{Binding LiveInput.LiveUnderOddsText}" />
-              </StackPanel>
+              <StackPanel><TextBlock Text="Min" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.Minute, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              <StackPanel><TextBlock Text="HG" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.HomeGoals, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              <StackPanel><TextBlock Text="AG" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.AwayGoals, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              <StackPanel><TextBlock Text="HR" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.HomeRedCards, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              <StackPanel><TextBlock Text="AR" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.AwayRedCards, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              <StackPanel><TextBlock Text="LastG" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.LastGoalMinute, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              <StackPanel><TextBlock Text="Round" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.BeforeRound, UpdateSourceTrigger=PropertyChanged}" Watermark="opt" /></StackPanel>
             </WrapPanel>
           </StackPanel>
-        </Border>
 
-        <Border Classes="panel">
-          <StackPanel>
-            <TextBlock Text="3. Direct pricing result" Classes="section-title" />
-            <Grid ColumnDefinitions="160,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8">
-              <TextBlock Grid.Row="0" Text="Status" Classes="label" />
-              <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LiveStatus}" FontSize="18" FontWeight="Bold" Foreground="{StaticResource AccentGreenBrush}" />
+          <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="14">
+            <StackPanel Grid.Column="0">
+              <TextBlock Text="Starting total" Classes="section-title" />
+              <WrapPanel>
+                <StackPanel><TextBlock Text="Line" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.StartingLine, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel><TextBlock Text="Over" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.StartingOverOdds, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel><TextBlock Text="Under" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.StartingUnderOdds, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel><TextBlock Text="Lines" Classes="label" /><TextBox Classes="wide-input" Width="320" Text="{Binding LiveInput.TargetLinesText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              </WrapPanel>
+            </StackPanel>
 
-              <TextBlock Grid.Row="1" Text="Model" Classes="label" />
-              <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ModelSummaryText}" TextWrapping="Wrap" />
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="Live odds" Classes="section-title" />
+              <WrapPanel>
+                <StackPanel><TextBlock Text="Over odds" Classes="label" /><TextBox Classes="wide-input" Width="320" Text="{Binding LiveInput.LiveOverOddsText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel><TextBlock Text="Under odds" Classes="label" /><TextBox Classes="wide-input" Width="320" Text="{Binding LiveInput.LiveUnderOddsText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              </WrapPanel>
+            </StackPanel>
+          </Grid>
+        </Grid>
+      </Border>
 
-              <TextBlock Grid.Row="2" Text="State correction" Classes="label" />
-              <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding StateCorrectionText}" TextWrapping="Wrap" />
+      <Border Grid.Row="2" Classes="panel">
+        <Grid ColumnDefinitions="90,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="6" RowSpacing="2">
+          <TextBlock Grid.Row="0" Text="Model" Classes="label" />
+          <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding ModelSummaryText}" FontSize="12" TextTrimming="CharacterEllipsis" />
 
-              <TextBlock Grid.Row="3" Text="Volume factor" Classes="label" />
-              <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding VolumeText}" TextWrapping="Wrap" />
+          <TextBlock Grid.Row="1" Text="Warnings" Classes="label" />
+          <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Warnings}" FontSize="12" TextWrapping="Wrap" MaxHeight="34" />
 
-              <TextBlock Grid.Row="4" Text="Warnings" Classes="label" />
-              <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Warnings}" TextWrapping="Wrap" />
+          <TextBlock Grid.Row="2" Text="State corr." Classes="label" />
+          <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding StateCorrectionText}" FontSize="12" TextWrapping="Wrap" MaxHeight="34" />
 
-              <TextBlock Grid.Row="5" Text="Log path" Classes="label" />
-              <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding PaperLogPath}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" />
-            </Grid>
-          </StackPanel>
-        </Border>
+          <TextBlock Grid.Row="3" Text="Volume" Classes="label" />
+          <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding VolumeText}" FontSize="12" TextWrapping="Wrap" MaxHeight="34" />
+        </Grid>
+      </Border>
 
-        <Border Classes="panel">
-          <StackPanel>
-            <TextBlock Text="4. Pricing table" Classes="section-title" />
-            <Grid ColumnDefinitions="60,80,90,100,90,110,*" Margin="0,0,0,6">
+      <Grid Grid.Row="3" ColumnDefinitions="*,260" ColumnSpacing="6">
+        <Border Grid.Column="0" Classes="panel">
+          <Grid RowDefinitions="Auto,*">
+            <Grid Grid.Row="0" ColumnDefinitions="55,65,70,80,70,80,*" Margin="0,0,0,4">
               <TextBlock Text="Line" Classes="label" />
               <TextBlock Grid.Column="1" Text="Side" Classes="label" />
               <TextBlock Grid.Column="2" Text="Book" Classes="label" />
-              <TextBlock Grid.Column="3" Text="Model %" Classes="label" />
+              <TextBlock Grid.Column="3" Text="Model" Classes="label" />
               <TextBlock Grid.Column="4" Text="Fair" Classes="label" />
               <TextBlock Grid.Column="5" Text="Edge" Classes="label" />
               <TextBlock Grid.Column="6" Text="Decision" Classes="label" />
             </Grid>
-            <ItemsControl ItemsSource="{Binding LiveDecisions}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="models:LiveBettingDecisionRow">
-                  <Border BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="0,1,0,0" Padding="0,8">
-                    <Grid ColumnDefinitions="60,80,90,100,90,110,*">
-                      <TextBlock Text="{Binding LineText}" FontWeight="SemiBold" />
-                      <TextBlock Grid.Column="1" Text="{Binding Side}" />
-                      <TextBlock Grid.Column="2" Text="{Binding BookOddsText}" />
-                      <TextBlock Grid.Column="3" Text="{Binding ModelProbabilityText}" />
-                      <TextBlock Grid.Column="4" Text="{Binding FairOddsText}" />
-                      <TextBlock Grid.Column="5" Text="{Binding EdgeText}" Classes="positive" />
-                      <TextBlock Grid.Column="6" Text="{Binding Decision}" FontWeight="Bold" />
-                    </Grid>
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-          </StackPanel>
+            <ScrollViewer Grid.Row="1">
+              <ItemsControl ItemsSource="{Binding LiveDecisions}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="models:LiveBettingDecisionRow">
+                    <Border BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="0,1,0,0" Padding="0,4">
+                      <Grid ColumnDefinitions="55,65,70,80,70,80,*">
+                        <TextBlock Text="{Binding LineText}" FontSize="12" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" Text="{Binding Side}" FontSize="12" />
+                        <TextBlock Grid.Column="2" Text="{Binding BookOddsText}" FontSize="12" />
+                        <TextBlock Grid.Column="3" Text="{Binding ModelProbabilityText}" FontSize="12" />
+                        <TextBlock Grid.Column="4" Text="{Binding FairOddsText}" FontSize="12" />
+                        <TextBlock Grid.Column="5" Text="{Binding EdgeText}" FontSize="12" Classes="positive" />
+                        <TextBlock Grid.Column="6" Text="{Binding Decision}" FontSize="12" FontWeight="Bold" />
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </Grid>
         </Border>
 
-        <Border Classes="panel">
+        <Border Grid.Column="1" Classes="panel">
           <StackPanel>
-            <TextBlock Text="5. Log selected bet" Classes="section-title" />
-            <WrapPanel Margin="0,0,0,10">
-              <StackPanel>
-                <TextBlock Text="Line" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.SelectedBetLineText}" />
-              </StackPanel>
+            <TextBlock Text="Log selected bet" Classes="section-title" />
+            <WrapPanel>
+              <StackPanel><TextBlock Text="Line" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.SelectedBetLineText, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
               <StackPanel>
                 <TextBlock Text="Side" Classes="label" />
-                <ComboBox Width="110" ItemsSource="{Binding BetSides}" SelectedItem="{Binding LiveInput.SelectedBetSide}" />
+                <ComboBox Width="80" Height="28" FontSize="12" ItemsSource="{Binding BetSides}" SelectedItem="{Binding LiveInput.SelectedBetSide}" />
               </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Odds" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.SelectedBetOdds}" />
-              </StackPanel>
-              <StackPanel>
-                <TextBlock Text="Stake" Classes="label" />
-                <TextBox Classes="input" Text="{Binding LiveInput.Stake}" />
-              </StackPanel>
+              <StackPanel><TextBlock Text="Odds" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.SelectedBetOdds, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              <StackPanel><TextBlock Text="Stake" Classes="label" /><TextBox Classes="input" Text="{Binding LiveInput.Stake, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
               <StackPanel>
                 <TextBlock Text="Mode" Classes="label" />
-                <ComboBox Width="110" ItemsSource="{Binding BetModes}" SelectedItem="{Binding LiveInput.BetMode}" />
+                <ComboBox Width="78" Height="28" FontSize="12" ItemsSource="{Binding BetModes}" SelectedItem="{Binding LiveInput.BetMode}" />
               </StackPanel>
             </WrapPanel>
-            <TextBlock Text="Bet notes" Classes="label" />
-            <TextBox Text="{Binding LiveInput.BetNotes}" AcceptsReturn="True" Height="54" />
+            <TextBlock Text="Notes" Classes="label" Margin="0,4,0,0" />
+            <TextBox Text="{Binding LiveInput.BetNotes, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" Height="54" FontSize="12" />
+            <TextBlock Text="Log file" Classes="label" Margin="0,6,0,0" />
+            <TextBlock Text="{Binding PaperLogPath}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
           </StackPanel>
         </Border>
+      </Grid>
 
-      </StackPanel>
-    </ScrollViewer>
+    </Grid>
   </Grid>
 </Window>

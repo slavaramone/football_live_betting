@@ -11,6 +11,12 @@ public partial class MainWindow : Window
         InitializeComponent();
     }
 
+    private void LoadFixtures_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel vm)
+            vm.LoadFixtures();
+    }
+
     private async void BuildCheck_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is MainWindowViewModel vm)
