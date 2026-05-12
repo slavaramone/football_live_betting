@@ -1,0 +1,50 @@
+{
+  "profiles": [
+    {
+      "key": "allsvenskan",
+      "name": "Allsvenskan",
+      "league": "Allsvenskan",
+
+      "modelPath": "C:\\Temp\\football_data\\allsvenskan-2022-2025.json",
+      "stateCorrectionPath": "C:\\Temp\\football_data\\allsvenskan-state-correction-2022-2025.json",
+      "calibrationDatasetPath": "C:\\Temp\\football_data\\allsvenskan-live-total-calibration-2022-2025.csv",
+      "trainingSeasonIds": [ 40406, 47730, 57284, 69956 ],
+
+      "validationTrainingSeasonIds": [ 40406, 47730, 57284 ],
+      "validationTestSeasonIds": [ 69956 ],
+      "validationModelPath": "C:\\Temp\\football_data\\allsvenskan-validation-weibull-2022-2024.json",
+      "validationCalibrationDatasetPath": "C:\\Temp\\football_data\\allsvenskan-validation-live-total-calibration-2022-2025.csv",
+      "validationStateCorrectionPath": "C:\\Temp\\football_data\\allsvenskan-validation-state-correction-2022-2024.json",
+      "calibrationAnalysisPath": "C:\\Temp\\football_data\\allsvenskan-live-total-calibration-analysis.csv",
+      "validationCalibrationAnalysisPath": "C:\\Temp\\football_data\\allsvenskan-validation-live-total-calibration-analysis.csv",
+      "modelEvaluationPath": "C:\\Temp\\football_data\\allsvenskan-live-total-model-evaluation.csv",
+      "validationModelEvaluationPath": "C:\\Temp\\football_data\\allsvenskan-validation-live-total-model-evaluation.csv",
+
+      "maxMinute": 90,
+      "groupByColumn": "ScoreStateBefore",
+      "minGroupGoals": 30,
+      "maxIterations": 100,
+      "tolerance": 1e-9,
+      "blendWeibullWeight": 0.30,
+
+      "includeUnreliableMatches": false,
+      "includeEventTriggers": true,
+      "snapshotMinutes": [ 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85 ],
+
+      "stateCorrectionMinBucketMatches": 100,
+      "stateCorrectionMinFactor": 0.50,
+      "stateCorrectionMaxFactor": 2.50,
+
+      "baseSeasonIds": [ 40406, 47730, 57284, 69956 ],
+      "currentSeasonId": 0,
+      "defaultBeforeRound": null,
+      "useCurrentSeasonVolume": true,
+      "defaultEmpiricalWeight": 0.80,
+      "edgeThreshold": 0.10,
+      "priorStrengthMatches": 100,
+      "targetLines": [ 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0 ],
+      "riskLevel": "Paper test",
+      "notes": "Set currentSeasonId and optionally defaultBeforeRound before live use."
+    }
+  ]
+}

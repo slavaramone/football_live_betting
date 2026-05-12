@@ -12,7 +12,44 @@ public sealed class LeagueProfile
     public string Key { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string League { get; set; } = string.Empty;
+
+    // Production/live artifacts and seasons.
     public string ModelPath { get; set; } = string.Empty;
+    public string StateCorrectionPath { get; set; } = string.Empty;
+    public string CalibrationDatasetPath { get; set; } = string.Empty;
+    public List<int> TrainingSeasonIds { get; set; } = [];
+
+    // Validation split and artifacts.
+    public List<int> ValidationTrainingSeasonIds { get; set; } = [];
+    public List<int> ValidationTestSeasonIds { get; set; } = [];
+    public string ValidationModelPath { get; set; } = string.Empty;
+    public string ValidationCalibrationDatasetPath { get; set; } = string.Empty;
+    public string ValidationStateCorrectionPath { get; set; } = string.Empty;
+    public string CalibrationAnalysisPath { get; set; } = string.Empty;
+    public string ValidationCalibrationAnalysisPath { get; set; } = string.Empty;
+    public string ModelEvaluationPath { get; set; } = string.Empty;
+    public string ValidationModelEvaluationPath { get; set; } = string.Empty;
+
+    // Weibull fit defaults.
+    public int MaxMinute { get; set; } = 90;
+    public string GroupByColumn { get; set; } = "ScoreStateBefore";
+    public int MinGroupGoals { get; set; } = 30;
+    public int MaxIterations { get; set; } = 100;
+    public double Tolerance { get; set; } = 1e-9;
+    public double BlendWeibullWeight { get; set; } = 0.30;
+
+    // Calibration dataset defaults.
+    public bool IncludeUnreliableMatches { get; set; }
+    public bool IncludeEventTriggers { get; set; } = true;
+    public List<int> SnapshotMinutes { get; set; } = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85];
+
+    // State correction fit defaults.
+    public int StateCorrectionMinBucketMatches { get; set; } = 100;
+    public int AfterGoalMinBucketMatches { get; set; } = 60;
+    public double StateCorrectionMinFactor { get; set; } = 0.50;
+    public double StateCorrectionMaxFactor { get; set; } = 2.50;
+
+    // Live pricing/current-season volume defaults.
     public List<int> BaseSeasonIds { get; set; } = [];
     public int CurrentSeasonId { get; set; }
     public int? DefaultBeforeRound { get; set; }

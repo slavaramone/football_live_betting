@@ -22,10 +22,11 @@ try
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
         "import-sofascore" => await RunImportSofaScore(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
-        "build-weibull-dataset" => await RunBuildWeibullDataset(commandArgs),
+        "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
+        "analyze-live-total-calibration" => await RunAnalyzeLiveTotalCalibration(commandArgs),
+        "fit-live-total-state-correction" => await RunFitLiveTotalStateCorrection(commandArgs),
+        "evaluate-live-total-model" => await RunEvaluateLiveTotalModel(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
-        "backtest-timing-model" => await RunBacktestTimingModel(commandArgs),
-        "backtest-live-total-calibration" => await RunBacktestLiveTotalCalibration(commandArgs),
         "price-live-total" => await RunPriceLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
@@ -81,25 +82,48 @@ static async Task<int> RunDownloadSofaScore(string[] args)
 
 
 
-static async Task<int> RunBuildWeibullDataset(string[] args)
+static async Task<int> RunBuildLiveTotalCalibrationDataset(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
 
-    var options = new WeibullDatasetOptions
+    string modelPath = parsed.Has("model")
+        ? parsed.RequiredString("model")
+        : GetRequiredProfilePath(profile, validationMode ? p => p.ValidationModelPath : p => p.ModelPath, "model", validationMode);
+
+    string defaultOutput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+
+    var options = new LiveTotalCalibrationDatasetOptions
     {
-        League = parsed.String("league", string.Empty),
-        SeasonId = parsed.Int("season-id", 0),
-        OutputPath = parsed.String("output", string.Empty),
-        MaxModelMinute = parsed.Int("max-model-minute", 90),
-        IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
+        League = parsed.String("league", profile?.League ?? string.Empty),
+        ModelPath = modelPath,
+        OutputPath = parsed.String("output", defaultOutput),
+        EmpiricalWeight = parsed.Double("empirical-weight", profile?.DefaultEmpiricalWeight ?? 0.80),
+        IncludeUnreliableMatches = parsed.Bool("include-unreliable", profile?.IncludeUnreliableMatches ?? false),
+        IncludeEventTriggers = parsed.Bool("include-event-triggers", profile?.IncludeEventTriggers ?? true),
         MaxExamples = parsed.Int("max-examples", 20)
     };
 
-
     AddSeasonIds(options.SeasonIds, parsed);
+    if (options.SeasonIds.Count == 0 && profile is not null)
+        AddProfileSeasonIds(options.SeasonIds, validationMode
+            ? profile.ValidationTrainingSeasonIds.Concat(profile.ValidationTestSeasonIds)
+            : profile.TrainingSeasonIds);
 
     if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
         AddRounds(options.Rounds, parsed);
+
+    if (parsed.Has("minutes"))
+        AddOptionalIntList(options.SnapshotMinutes, parsed, "minutes", clearExisting: true);
+    else if (profile?.SnapshotMinutes is { Count: > 0 })
+    {
+        options.SnapshotMinutes.Clear();
+        foreach (int minute in profile.SnapshotMinutes)
+            options.SnapshotMinutes.Add(minute);
+    }
 
     IConfiguration configuration = new ConfigurationBuilder()
         .SetBasePath(AppContext.BaseDirectory)
@@ -107,62 +131,268 @@ static async Task<int> RunBuildWeibullDataset(string[] args)
         .Build();
 
     await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
-    var builder = new WeibullDatasetBuilder(dbContext, options);
-    WeibullDatasetResult result = await builder.BuildAsync(CancellationToken.None);
+    var builder = new LiveTotalCalibrationDatasetBuilder(dbContext, options);
+    LiveTotalCalibrationDatasetResult result = await builder.BuildAsync(CancellationToken.None);
 
     Console.WriteLine();
-    Console.WriteLine("Weibull dataset build done.");
+    Console.WriteLine("Live total calibration dataset build done.");
+    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(options.League) ? "all" : options.League)}");
+    Console.WriteLine($"Seasons included: {(result.SeasonsIncluded.Count == 0 ? "none" : string.Join(", ", result.SeasonsIncluded))}");
     Console.WriteLine($"Matches checked: {result.MatchesChecked}");
     Console.WriteLine($"Finished matches: {result.FinishedMatches}");
     Console.WriteLine($"Reliable finished matches: {result.ReliableFinishedMatches}");
     Console.WriteLine($"Unreliable finished matches: {result.UnreliableFinishedMatches}");
-    Console.WriteLine($"Seasons included: {(result.SeasonsIncluded.Count == 0 ? "none" : string.Join(", ", result.SeasonsIncluded))}");
-    Console.WriteLine($"Goal rows written: {result.GoalRowsWritten}");
+    Console.WriteLine($"States written: {result.StatesWritten}");
+    Console.WriteLine($"  Fixed minute: {result.FixedMinuteStatesWritten}");
+    Console.WriteLine($"  After goal: {result.AfterGoalStatesWritten}");
+    Console.WriteLine($"  After red card: {result.AfterRedCardStatesWritten}");
     Console.WriteLine($"Output: {result.OutputPath}");
-    Console.WriteLine($"Warnings: {result.Warnings.Count}");
+    foreach (string warning in result.Warnings)
+        Console.WriteLine($"Warning: {warning}");
 
-    if (result.Warnings.Count > 0)
+    return 0;
+}
+
+static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+    string defaultOutput = validationMode
+        ? profile?.ValidationCalibrationAnalysisPath ?? string.Empty
+        : profile?.CalibrationAnalysisPath ?? string.Empty;
+
+    var options = new LiveTotalCalibrationAnalysisOptions
     {
-        Console.WriteLine();
-        Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings.Take(options.MaxExamples + 1))
-            Console.WriteLine($"- {warning}");
+        InputPath = parsed.String("input", defaultInput),
+        OutputPath = parsed.String("output", defaultOutput)
+    };
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
 
-        if (result.Warnings.Count > options.MaxExamples + 1)
-            Console.WriteLine($"... {result.Warnings.Count - options.MaxExamples - 1} more");
+    AddOptionalIntList(options.TrainingSeasonIds, parsed, "training-season-ids", clearExisting: true);
+    AddOptionalIntList(options.TestSeasonIds, parsed, "test-season-ids", clearExisting: true);
+    if (validationMode && profile is not null)
+    {
+        if (options.TrainingSeasonIds.Count == 0)
+            AddProfileSeasonIds(options.TrainingSeasonIds, profile.ValidationTrainingSeasonIds);
+        if (options.TestSeasonIds.Count == 0)
+            AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
+    }
+
+    var analyzer = new LiveTotalCalibrationAnalyzer(options);
+    LiveTotalCalibrationAnalysisResult result = await analyzer.AnalyzeAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Live total calibration analysis done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"Rows read: {result.RowsRead}");
+    Console.WriteLine($"Rows analyzed: {result.RowsAnalyzed}");
+    Console.WriteLine($"Output: {result.OutputPath}");
+
+    if (result.HasTrainTestSplit)
+    {
+        Console.WriteLine($"Train/test buckets written: {result.TrainTestBuckets.Count}");
+        Console.WriteLine();
+        Console.WriteLine("Trigger       MinuteBand  ScoreState            GoalChange       TrRows  TeRows  Factor  TestActual  TestBase  TestCorrected  BaseAbsErr  CorrAbsErr");
+        foreach (LiveTotalCalibrationTrainTestBucketResult bucket in result.TrainTestBuckets)
+        {
+            Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {(string.IsNullOrWhiteSpace(bucket.GoalChangeType) ? "-" : bucket.GoalChangeType),-16} {bucket.TrainRows,6} {bucket.TestRows,6}  {F(bucket.CorrectionFactor),6}  {bucket.TestActualRemainingGoalsPerRow,10:0.###}  {bucket.TestBaselineRemainingGoalsPerRow,8:0.###}  {D(bucket.TestCorrectedRemainingGoalsPerRow),13}  {D(bucket.TestBaselineAbsErrorPerRow),10}  {D(bucket.TestCorrectedAbsErrorPerRow),10}");
+        }
+
+        return 0;
+    }
+
+    Console.WriteLine($"Buckets written: {result.Buckets.Count}");
+    Console.WriteLine();
+    Console.WriteLine("Trigger       MinuteBand  ScoreState            GoalChange       Rows  Matches  ActualRem/Row  BaseRem/Row  TimingShare  Factor");
+    foreach (LiveTotalCalibrationBucketResult bucket in result.Buckets)
+    {
+        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {(string.IsNullOrWhiteSpace(bucket.GoalChangeType) ? "-" : bucket.GoalChangeType),-16} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.ActualRemainingGoalsPerRow,13:0.###}  {bucket.BaselineRemainingGoalsPerRow,11:0.###}  {P(bucket.AverageTimingRemainingShare),11}  {F(bucket.CorrectionFactor),7}");
+    }
+
+    return 0;
+
+    static string P(double value) => value.ToString("P1", CultureInfo.InvariantCulture);
+    static string F(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
+    static string D(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
+}
+
+static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+    string defaultOutput = validationMode
+        ? profile?.ValidationStateCorrectionPath ?? string.Empty
+        : profile?.StateCorrectionPath ?? string.Empty;
+
+    var options = new LiveTotalStateCorrectionFitOptions
+    {
+        InputPath = parsed.String("input", defaultInput),
+        OutputPath = parsed.String("output", defaultOutput),
+        MinBucketMatches = parsed.Int("min-bucket-matches", profile?.StateCorrectionMinBucketMatches ?? 100),
+        AfterGoalMinBucketMatches = parsed.Int("after-goal-min-bucket-matches", profile?.AfterGoalMinBucketMatches ?? 60),
+        MinFactor = parsed.Double("min-factor", profile?.StateCorrectionMinFactor ?? 0.50),
+        MaxFactor = parsed.Double("max-factor", profile?.StateCorrectionMaxFactor ?? 2.50)
+    };
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
+
+    if (parsed.Has("training-season-ids"))
+        AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
+    else if (profile is not null)
+        AddProfileSeasonIds(options.TrainingSeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
+    if (options.TrainingSeasonIds.Count == 0)
+        throw new ArgumentException("Missing required argument --training-season-ids, or provide --profile with training season ids.");
+
+    var fitter = new LiveTotalStateCorrectionFitter(options);
+    LiveTotalStateCorrectionFitResult result = await fitter.FitAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Live total state correction fit done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"Output: {result.OutputPath}");
+    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? "unknown" : result.League)}");
+    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
+    Console.WriteLine($"Rows used: {result.TrainingRowsUsed}");
+    Console.WriteLine($"Matches used: {result.TrainingMatchesUsed}");
+    Console.WriteLine($"League average final goals: {result.LeagueAverageFinalGoals:0.###}");
+    Console.WriteLine($"Min bucket matches: fixed/red-card {options.MinBucketMatches}, after-goal {options.AfterGoalMinBucketMatches}");
+
+    Console.WriteLine();
+    Console.WriteLine("Bucket factors:");
+    Console.WriteLine("Trigger       Band    ScoreState            GoalChange       Rows  Matches  Raw    Used   Usable");
+    foreach (LiveTotalStateCorrectionBucket bucket in result.Buckets)
+        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-7} {bucket.DetailedScoreState,-20} {(string.IsNullOrWhiteSpace(bucket.GoalChangeType) ? "-" : bucket.GoalChangeType),-16} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.RawFactor,5:0.###}  {bucket.Factor,5:0.###}  {bucket.IsUsable}");
+
+    return 0;
+}
+
+static async Task<int> RunEvaluateLiveTotalModel(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+    string defaultStateCorrection = validationMode
+        ? profile?.ValidationStateCorrectionPath ?? string.Empty
+        : profile?.StateCorrectionPath ?? string.Empty;
+    string defaultOutput = validationMode
+        ? profile?.ValidationModelEvaluationPath ?? string.Empty
+        : profile?.ModelEvaluationPath ?? string.Empty;
+
+    var options = new LiveTotalModelEvaluationOptions
+    {
+        InputPath = parsed.String("input", defaultInput),
+        StateCorrectionPath = parsed.String("state-correction", defaultStateCorrection),
+        OutputPath = parsed.String("output", defaultOutput)
+    };
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
+    if (string.IsNullOrWhiteSpace(options.StateCorrectionPath))
+        throw new ArgumentException("Missing required argument --state-correction, or provide --profile with a state correction path.");
+
+    if (parsed.Has("test-season-ids"))
+        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
+    else if (profile is not null && validationMode)
+        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
+    if (options.TestSeasonIds.Count == 0)
+        throw new ArgumentException("Missing required argument --test-season-ids, or use --validation true with a profile validation split.");
+
+    var evaluator = new LiveTotalModelEvaluator(options);
+    LiveTotalModelEvaluationResult result = await evaluator.EvaluateAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Live total model evaluation done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"State correction: {result.StateCorrectionPath}");
+    Console.WriteLine($"Rows read: {result.RowsRead}");
+    Console.WriteLine($"Test rows: {result.TestRows}");
+    Console.WriteLine($"Supported rows evaluated: {result.SupportedRows}");
+    Console.WriteLine($"Output: {result.OutputPath}");
+
+    Console.WriteLine();
+    Console.WriteLine("Trigger        Rows  Matches  BaseMAE  StateMAE  BaseBias  StateBias");
+    foreach (LiveTotalModelEvaluationSummary summary in result.Summaries)
+    {
+        Console.WriteLine($"{summary.StateTrigger,-13} {summary.Rows,5}  {summary.Matches,7}  {summary.BaselineMae,7:0.###}  {summary.StateCorrectedMae,8:0.###}  {summary.BaselineBias,8:0.###}  {summary.StateCorrectedBias,9:0.###}");
     }
 
     return 0;
 }
 
-
 static async Task<int> RunFitWeibull(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultOutput = validationMode
+        ? profile?.ValidationModelPath ?? string.Empty
+        : profile?.ModelPath ?? string.Empty;
 
     var options = new WeibullFitOptions
     {
-        InputPath = parsed.RequiredString("input"),
-        OutputPath = parsed.String("output", string.Empty),
-        League = parsed.String("league", string.Empty),
-        MaxMinute = parsed.Int("max-minute", 90),
-        MinuteColumn = parsed.String("minute-column", "GoalMinuteForModel"),
-        GroupByColumn = parsed.String("group-by", string.Empty),
-        MinGroupGoals = parsed.Int("min-group-goals", 30),
-        MaxIterations = parsed.Int("max-iterations", 100),
-        Tolerance = parsed.Double("tolerance", 1e-9),
-        BlendWeibullWeight = parsed.Double("blend-weibull-weight", 0.30)
+        OutputPath = parsed.String("output", defaultOutput),
+        League = parsed.String("league", profile?.League ?? string.Empty),
+        MaxMinute = parsed.Int("max-minute", profile?.MaxMinute ?? 90),
+        GroupByColumn = parsed.String("group-by", profile?.GroupByColumn ?? string.Empty),
+        MinGroupGoals = parsed.Int("min-group-goals", profile?.MinGroupGoals ?? 30),
+        MaxIterations = parsed.Int("max-iterations", profile?.MaxIterations ?? 100),
+        Tolerance = parsed.Double("tolerance", profile?.Tolerance ?? 1e-9),
+        BlendWeibullWeight = parsed.Double("blend-weibull-weight", profile?.BlendWeibullWeight ?? 0.30)
     };
 
+    var sampleOptions = new WeibullDbSampleOptions
+    {
+        League = options.League,
+        GroupByColumn = options.GroupByColumn,
+        MaxMinute = options.MaxMinute,
+        IncludeUnreliableMatches = parsed.Bool("include-unreliable", profile?.IncludeUnreliableMatches ?? false),
+        MaxExamples = parsed.Int("max-examples", 20)
+    };
+    AddSeasonIds(sampleOptions.SeasonIds, parsed);
+    if (sampleOptions.SeasonIds.Count == 0 && profile is not null)
+        AddProfileSeasonIds(sampleOptions.SeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
+    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
+        AddRounds(sampleOptions.Rounds, parsed);
+
+    IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+
+    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
+    var sampleLoader = new WeibullDbSampleLoader(dbContext, sampleOptions);
+    WeibullDbSampleResult sample = await sampleLoader.LoadAsync(CancellationToken.None);
+
     var fitter = new WeibullModelFitter(options);
-    WeibullFitResult result = await fitter.FitAsync(CancellationToken.None);
+    WeibullFitResult result = await fitter.FitAsync(sample.Rows, "database", CancellationToken.None);
+    foreach (string warning in sample.Warnings)
+        result.Warnings.Insert(0, warning);
 
     Console.WriteLine();
     Console.WriteLine("Weibull fit done.");
-    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine("Source: database");
     Console.WriteLine($"Output: {result.OutputPath}");
     Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? "unknown" : result.League)}");
     Console.WriteLine($"Seasons included: {(result.SeasonIds.Count == 0 ? "unknown" : string.Join(", ", result.SeasonIds))}");
+    Console.WriteLine($"Matches checked: {sample.MatchesChecked}");
+    Console.WriteLine($"Finished matches: {sample.FinishedMatches}");
+    Console.WriteLine($"Reliable finished matches: {sample.ReliableFinishedMatches}");
+    Console.WriteLine($"Unreliable finished matches: {sample.UnreliableFinishedMatches}");
     Console.WriteLine($"Goals used: {result.GoalCount}");
     Console.WriteLine($"Matches represented: {result.MatchCount}");
     Console.WriteLine($"Mean goal minute: {result.MeanGoalMinute:0.00}");
@@ -193,7 +423,6 @@ static async Task<int> RunFitWeibull(string[] args)
     foreach (TimingModelFitScore score in result.FitScores.OrderBy(x => x.MeanAbsoluteBucketError))
         Console.WriteLine($"{score.Model,-9}   {score.MeanAbsoluteBucketError,7:P2}   {score.RootMeanSquaredBucketError,7:P2}   {score.MaxAbsoluteBucketError,7:P2}");
 
-
     if (result.Groups.Count > 0)
     {
         Console.WriteLine();
@@ -219,8 +448,6 @@ static async Task<int> RunFitWeibull(string[] args)
 }
 
 
-
-
 static async Task<int> RunPriceLiveTotal(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
@@ -243,12 +470,17 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     var options = new LiveTotalPriceOptions
     {
         ModelPath = modelPath,
+        StateCorrectionPath = parsed.String("state-correction", profile?.StateCorrectionPath ?? string.Empty),
+        StateTrigger = LiveTotalStateTrigger.Normalize(parsed.String("state-trigger", LiveTotalStateTrigger.FixedMinute)),
         StartingLine = parsed.RequiredDouble("starting-line"),
         StartingOverOdds = parsed.RequiredDouble("starting-over"),
         StartingUnderOdds = parsed.RequiredDouble("starting-under"),
         Minute = parsed.RequiredInt("minute"),
         HomeGoals = parsed.RequiredInt("home-goals"),
         AwayGoals = parsed.RequiredInt("away-goals"),
+        ScoreBeforeHome = parsed.Int("score-before-home", -1),
+        ScoreBeforeAway = parsed.Int("score-before-away", -1),
+        GoalChangeType = parsed.String("goal-change-type", string.Empty),
         EmpiricalWeight = parsed.Double("empirical-weight", profile?.DefaultEmpiricalWeight ?? 0.80),
         EdgeThreshold = parsed.Double("edge-threshold", profile?.EdgeThreshold ?? 0.10),
         HomeRedCards = parsed.Int("home-red-cards", parsed.Int("home-reds", 0)),
@@ -267,7 +499,8 @@ static async Task<int> RunPriceLiveTotal(string[] args)
             options.TargetLines.Add(line);
     }
 
-    bool useCurrentSeasonVolume = !parsed.Has("volume-factor") && parsed.Bool("use-current-season-volume", profile?.UseCurrentSeasonVolume ?? false);
+    bool inferredCurrentSeasonVolume = parsed.Has("current-season-id") && parsed.Has("base-season-ids");
+    bool useCurrentSeasonVolume = !parsed.Has("volume-factor") && parsed.Bool("use-current-season-volume", profile?.UseCurrentSeasonVolume ?? inferredCurrentSeasonVolume);
     SeasonVolumeFactorResult? seasonVolume = null;
     if (useCurrentSeasonVolume)
     {
@@ -342,7 +575,9 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     }
     Console.WriteLine($"Model: {result.ModelPath}");
     Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? (profile?.League ?? "unknown") : result.League)}");
-    Console.WriteLine($"Minute/score: {result.Minute}'  {result.HomeGoals}-{result.AwayGoals} ({result.ScoreState})");
+    Console.WriteLine($"Minute/score: {result.Minute}'  {result.HomeGoals}-{result.AwayGoals} ({result.ScoreState}; {result.DetailedScoreState}; {result.StateTrigger})");
+    if (LiveTotalStateTrigger.Normalize(result.StateTrigger).Equals(LiveTotalStateTrigger.AfterGoal, StringComparison.OrdinalIgnoreCase))
+        Console.WriteLine($"Goal change type: {(string.IsNullOrWhiteSpace(result.GoalChangeType) ? "none" : result.GoalChangeType)}");
     Console.WriteLine($"Timing group: {result.SelectedTimingGroup}");
     if (!string.IsNullOrWhiteSpace(result.TimingFallback))
         Console.WriteLine($"Timing fallback: {result.TimingFallback}");
@@ -352,7 +587,11 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     Console.WriteLine($"Blend: Empirical {result.EmpiricalWeight:P0}, Weibull {result.WeibullWeight:P0}");
     Console.WriteLine($"Edge threshold: {options.EdgeThreshold:P0}");
     Console.WriteLine($"Remaining share: Weibull {result.WeibullRemainingShare:P1}, Empirical {result.EmpiricalRemainingShare:P1}, Used {result.TimingRemainingShare:P1}");
+    Console.WriteLine($"Remaining xG before state correction: {result.RemainingXgBeforeStateCorrection:0.###}");
+    Console.WriteLine($"State correction: {result.StateCorrectionFactor:0.###} ({result.StateCorrectionSource})");
+    Console.WriteLine($"State correction supported for betting: {result.StateCorrectionSupported}");
     Console.WriteLine($"Remaining xG before volume: {result.RemainingXgBeforeVolume:0.###}");
+    Console.WriteLine($"Current-season volume active: {useCurrentSeasonVolume}");
     Console.WriteLine($"Volume factor: {result.VolumeFactor:0.###} ({result.VolumeFactorSource})");
     if (seasonVolume is not null)
     {
@@ -363,6 +602,9 @@ static async Task<int> RunPriceLiveTotal(string[] args)
             result.Warnings.Add(seasonVolume.Warning);
     }
     Console.WriteLine($"Expected remaining goals: {result.RemainingXg:0.###}");
+
+    if (!result.StateCorrectionSupported && !string.IsNullOrWhiteSpace(options.StateCorrectionPath))
+        result.Warnings.Add("Unsupported sparse state bucket - no betting decision will be allowed.");
 
     if (result.Warnings.Count > 0)
     {
@@ -401,172 +643,6 @@ static string FormatFairOdds(double odds)
     return odds.ToString("0.###", CultureInfo.InvariantCulture);
 }
 
-
-static async Task<int> RunBacktestTimingModel(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-
-    var options = new TimingBacktestOptions
-    {
-        League = parsed.String("league", string.Empty),
-        MaxModelMinute = parsed.Int("max-model-minute", 90),
-        MinTrainingSnapshots = parsed.Int("min-training-snapshots", 20),
-        IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
-        WalkForward = parsed.Bool("walk-forward", false),
-        UseCurrentSeasonVolumeCalibration = parsed.Bool("use-current-season-volume-calibration", false),
-        UseScoreStateCurrentSeasonVolumeCalibration = parsed.Bool("use-score-state-volume-calibration", false),
-        PriorStrengthMatches = parsed.Int("prior-strength-matches", 100),
-        OutputPath = parsed.String("output", string.Empty)
-    };
-
-    AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
-    AddRequiredIntList(options.BacktestSeasonIds, parsed, "backtest-season-ids");
-    AddOptionalIntList(options.SnapshotMinutes, parsed, "minutes", clearExisting: true);
-    AddOptionalDoubleList(options.TestEmpiricalWeights, parsed, "test-empirical-weights", clearExisting: true);
-
-    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
-        AddRounds(options.Rounds, parsed);
-
-    IConfiguration configuration = new ConfigurationBuilder()
-        .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-        .Build();
-
-    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
-    var backtester = new TimingModelBacktester(dbContext, options);
-    TimingBacktestResult result = await backtester.RunAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("Timing model backtest done.");
-    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(options.League) ? "all" : options.League)}");
-    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
-    Console.WriteLine($"Backtest seasons: {string.Join(", ", result.BacktestSeasonIds)}");
-    Console.WriteLine($"Training matches checked: {result.TrainingMatchesChecked}");
-    Console.WriteLine($"Training reliable matches: {result.TrainingReliableMatches}");
-    Console.WriteLine($"Backtest matches checked: {result.BacktestMatchesChecked}");
-    Console.WriteLine($"Backtest reliable matches: {result.BacktestReliableMatches}");
-    Console.WriteLine($"Training snapshots: {result.TrainingSnapshots}");
-    Console.WriteLine($"Walk-forward: {result.WalkForward}");
-    Console.WriteLine($"Current-season volume calibration: {result.UseCurrentSeasonVolumeCalibration}");
-    Console.WriteLine($"Score-state current-season volume calibration: {result.UseScoreStateCurrentSeasonVolumeCalibration}");
-    if (result.UseCurrentSeasonVolumeCalibration || result.UseScoreStateCurrentSeasonVolumeCalibration)
-        Console.WriteLine($"Prior strength matches: {result.PriorStrengthMatches}");
-    Console.WriteLine($"Empirical weights tested: {string.Join(", ", result.TestedEmpiricalWeights.Select(x => x.ToString("0.##", CultureInfo.InvariantCulture)))}");
-    if (result.WalkForward)
-        Console.WriteLine($"Walk-forward prior-season snapshots added across rounds: {result.WalkForwardTrainingSnapshotsAdded}");
-    Console.WriteLine($"Backtest snapshots: {result.BacktestSnapshots}");
-    if (!string.IsNullOrWhiteSpace(result.OutputPath))
-        Console.WriteLine($"Prediction CSV: {result.OutputPath}");
-
-    PrintBacktestTable("Overall", result.OverallRows);
-    PrintBacktestTable("By minute", result.ByMinuteRows);
-    PrintBacktestTable("By score state", result.ByStateRows);
-    PrintBacktestTable("By minute and score state", result.ByMinuteAndStateRows);
-
-    if (result.Warnings.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings)
-            Console.WriteLine($"- {warning}");
-    }
-
-    return 0;
-}
-
-static void PrintBacktestTable(string title, IReadOnlyList<TimingBacktestSummaryRow> rows)
-{
-    Console.WriteLine();
-    Console.WriteLine(title + ":");
-    Console.WriteLine("Group                         N   PredRem   ActRem     Bias      MAE     RMSE");
-    foreach (TimingBacktestSummaryRow row in rows)
-    {
-        Console.WriteLine($"{row.Group,-28} {row.Count,4}  {row.AvgPredictedRemainingGoals,8:0.000}  {row.AvgActualRemainingGoals,7:0.000}  {row.Bias,7:0.000}  {row.MeanAbsoluteError,7:0.000}  {row.RootMeanSquaredError,7:0.000}");
-    }
-}
-
-
-static async Task<int> RunBacktestLiveTotalCalibration(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-
-    var options = new LiveTotalCalibrationBacktestOptions
-    {
-        League = parsed.String("league", string.Empty),
-        MaxModelMinute = parsed.Int("max-model-minute", 90),
-        MinTrainingSnapshots = parsed.Int("min-training-snapshots", 20),
-        IncludeUnreliableMatches = parsed.Bool("include-unreliable", false),
-        WalkForward = parsed.Bool("walk-forward", false),
-        UseCurrentSeasonVolumeCalibration = parsed.Bool("use-current-season-volume-calibration", false),
-        PriorStrengthMatches = parsed.Int("prior-strength-matches", 100),
-        OutputPath = parsed.String("output", string.Empty)
-    };
-
-    AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
-    AddRequiredIntList(options.BacktestSeasonIds, parsed, "backtest-season-ids");
-    AddOptionalIntList(options.SnapshotMinutes, parsed, "minutes", clearExisting: true);
-    AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
-    AddOptionalDoubleList(options.TestEmpiricalWeights, parsed, "test-empirical-weights", clearExisting: true);
-
-    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
-        AddRounds(options.Rounds, parsed);
-
-    IConfiguration configuration = new ConfigurationBuilder()
-        .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-        .Build();
-
-    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
-    var backtester = new LiveTotalCalibrationBacktester(dbContext, options);
-    LiveTotalCalibrationBacktestResult result = await backtester.RunAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("Live total calibration backtest done.");
-    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(options.League) ? "all" : options.League)}");
-    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
-    Console.WriteLine($"Backtest seasons: {string.Join(", ", result.BacktestSeasonIds)}");
-    Console.WriteLine($"Training matches checked: {result.TrainingMatchesChecked}");
-    Console.WriteLine($"Training reliable matches: {result.TrainingReliableMatches}");
-    Console.WriteLine($"Backtest matches checked: {result.BacktestMatchesChecked}");
-    Console.WriteLine($"Backtest reliable matches: {result.BacktestReliableMatches}");
-    Console.WriteLine($"Training snapshots: {result.TrainingSnapshots}");
-    Console.WriteLine($"Walk-forward: {result.WalkForward}");
-    Console.WriteLine($"Current-season volume calibration: {result.UseCurrentSeasonVolumeCalibration}");
-    if (result.UseCurrentSeasonVolumeCalibration)
-        Console.WriteLine($"Prior strength matches: {result.PriorStrengthMatches}");
-    Console.WriteLine($"Empirical weights tested: {string.Join(", ", result.TestedEmpiricalWeights.Select(x => x.ToString("0.##", CultureInfo.InvariantCulture)))}");
-    if (result.WalkForward)
-        Console.WriteLine($"Walk-forward prior-season snapshots added across rounds: {result.WalkForwardTrainingSnapshotsAdded}");
-    Console.WriteLine($"Backtest snapshots: {result.BacktestSnapshots}");
-    if (!string.IsNullOrWhiteSpace(result.OutputPath))
-        Console.WriteLine($"Prediction CSV: {result.OutputPath}");
-
-    PrintCalibrationTable("Overall", result.OverallRows);
-    PrintCalibrationTable("By minute", result.ByMinuteRows);
-    PrintCalibrationTable("By detailed score state", result.ByStateRows);
-    PrintCalibrationTable("By state / minute / line", result.ByStateMinuteLineRows);
-
-    if (result.Warnings.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings)
-            Console.WriteLine($"- {warning}");
-    }
-
-    return 0;
-}
-
-static void PrintCalibrationTable(string title, IReadOnlyList<LiveTotalCalibrationSummaryRow> rows)
-{
-    Console.WriteLine();
-    Console.WriteLine(title + ":");
-    Console.WriteLine("Group                              N  PredO  ActO   DiffO  PredU  ActU   DiffU  BrierO BrierU PredRem ActRem");
-    foreach (LiveTotalCalibrationSummaryRow row in rows)
-    {
-        Console.WriteLine($"{row.Group,-32} {row.Count,5} {row.AvgPredictedOverProbability,6:P1} {row.AvgActualOverHitRate,6:P1} {row.OverCalibrationError,7:+0.0%;-0.0%;0.0%} {row.AvgPredictedUnderProbability,6:P1} {row.AvgActualUnderHitRate,6:P1} {row.UnderCalibrationError,7:+0.0%;-0.0%;0.0%} {row.OverBrierScore,7:0.000} {row.UnderBrierScore,7:0.000} {row.AvgPredictedRemainingGoals,7:0.000} {row.AvgActualRemainingGoals,6:0.000}");
-    }
-}
 
 static async Task<int> RunValidateDb(string[] args)
 {
@@ -1028,6 +1104,35 @@ static void AddLiveUnderOddsForLine(IDictionary<double, double> target, ParsedAr
             throw new ArgumentException($"Argument --{name} must be greater than 1.0.");
 
         target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
+    }
+}
+
+static async Task<LeagueProfile?> LoadOptionalProfileAsync(ParsedArgs parsed)
+{
+    if (!parsed.Has("profile"))
+        return null;
+
+    string profilesFile = parsed.String("profiles-file", "league-profiles.json");
+    LeagueProfileStore profileStore = await LeagueProfileStore.LoadAsync(profilesFile, CancellationToken.None);
+    return profileStore.FindRequired(parsed.RequiredString("profile"));
+}
+
+static string GetRequiredProfilePath(LeagueProfile? profile, Func<LeagueProfile, string> selector, string argumentName, bool validationMode)
+{
+    string value = profile is null ? string.Empty : selector(profile);
+    if (!string.IsNullOrWhiteSpace(value))
+        return value;
+
+    string suffix = validationMode ? " validation" : string.Empty;
+    throw new ArgumentException($"Missing required argument --{argumentName}, or provide --profile with{suffix} {argumentName} path set.");
+}
+
+static void AddProfileSeasonIds(ICollection<int> target, IEnumerable<int> seasonIds)
+{
+    foreach (int seasonId in seasonIds.Where(x => x > 0).Distinct().OrderBy(x => x))
+    {
+        if (!target.Contains(seasonId))
+            target.Add(seasonId);
     }
 }
 

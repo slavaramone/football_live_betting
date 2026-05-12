@@ -50,7 +50,6 @@ public sealed class ParsedArgs
             : throw new ArgumentException($"Argument --{key} must be an integer.");
     }
 
-
     public double RequiredDouble(string name)
     {
         string value = RequiredString(name);
