@@ -61,7 +61,7 @@ static async Task<int> RunDownloadSofaScore(string[] args)
         DelayMs = parsed.Int("delay-ms", 450),
         Overwrite = parsed.Bool("overwrite", false),
         DownloadIncidents = parsed.Bool("incidents", true),
-        DownloadStatistics = parsed.Bool("statistics", true),
+        DownloadStatistics = parsed.Has("skip-stat") ? false : parsed.Bool("statistics", true),
         Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
         WarmupDelayMs = parsed.Int("warmup-delay-ms", 1000),
         CalendarMode = parsed.String("calendar-mode", "round"),
@@ -1205,19 +1205,21 @@ static void AddRounds(ICollection<int> target, ParsedArgs parsed)
     {
         target.Add(parsed.RequiredInt("round"));
     }
-    else if (parsed.Has("from-round") || parsed.Has("to-round"))
+    else if (parsed.Has("from-round") || parsed.Has("round-from") || parsed.Has("to-round"))
     {
-        int from = parsed.RequiredInt("from-round");
+        int from = parsed.Has("round-from")
+            ? parsed.RequiredInt("round-from")
+            : parsed.RequiredInt("from-round");
         int to = parsed.RequiredInt("to-round");
         if (to < from)
-            throw new ArgumentException("to-round must be greater than or equal to from-round.");
+            throw new ArgumentException("to-round must be greater than or equal to round-from/from-round.");
 
         for (int round = from; round <= to; round++)
             target.Add(round);
     }
     else
     {
-        throw new ArgumentException("Provide either --round or --from-round and --to-round.");
+        throw new ArgumentException("Provide either --round or --round-from/--from-round and --to-round.");
     }
 }
 

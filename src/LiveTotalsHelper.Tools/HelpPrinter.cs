@@ -51,7 +51,7 @@ public static class HelpPrinter
         Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --round 2");
         Console.WriteLine();
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- download-sofascore \\");
-        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --from-round 1 --to-round 30 \\");
+        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --round-from 1 --to-round 30 \\");
         Console.WriteLine("    --output data/sofascore --delay-ms 600 --overwrite false");
         Console.WriteLine();
         Console.WriteLine("Download arguments:");
@@ -59,7 +59,7 @@ public static class HelpPrinter
         Console.WriteLine("  --tournament-id      SofaScore unique tournament id.");
         Console.WriteLine("  --season-id          SofaScore season id.");
         Console.WriteLine("  --round              Single round to download.");
-        Console.WriteLine("  --from-round         First round when downloading a range.");
+        Console.WriteLine("  --round-from         First round when downloading a range. Alias: --from-round.");
         Console.WriteLine("  --to-round           Last round when downloading a range.");
         Console.WriteLine("  --calendar-mode      SofaScore calendar path segment: round or last. Default: round");
         Console.WriteLine("  --output             Output root. Default: data/sofascore");
@@ -67,6 +67,7 @@ public static class HelpPrinter
         Console.WriteLine("  --overwrite          true/false. Default: false");
         Console.WriteLine("  --incidents          true/false. Default: true");
         Console.WriteLine("  --statistics         true/false. Default: true");
+        Console.WriteLine("  --skip-stat          Shortcut for --statistics false. Use when league stats endpoint is unavailable.");
         Console.WriteLine("  --skip-details-for-not-started true/false. Default: true");
         Console.WriteLine("  --strict-event-details true/false. Default: false. If true, incidents/statistics errors fail the run.");
         Console.WriteLine("  --headless           true/false. Default: true");
@@ -81,14 +82,14 @@ public static class HelpPrinter
         Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --round 2 --input data/sofascore");
         Console.WriteLine();
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-sofascore \\");
-        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --from-round 1 --to-round 30 --input data/sofascore");
+        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --round-from 1 --to-round 30 --input data/sofascore");
         Console.WriteLine();
         Console.WriteLine("Import arguments:");
         Console.WriteLine("  --league             League name used in folder structure.");
         Console.WriteLine("  --tournament-id      SofaScore unique tournament id fallback. Optional, default: 0.");
         Console.WriteLine("  --season-id          SofaScore season id.");
         Console.WriteLine("  --round              Single round to import.");
-        Console.WriteLine("  --from-round         First round when importing a range.");
+        Console.WriteLine("  --round-from         First round when importing a range. Alias: --from-round.");
         Console.WriteLine("  --to-round           Last round when importing a range.");
         Console.WriteLine("  --input              Input root where JSON was downloaded. Default: data/sofascore");
         Console.WriteLine("  --debug-import       true/false. Prints every file before importing and returns detailed DB errors. Default: false");
