@@ -160,28 +160,32 @@
       <Grid Grid.Row="3" ColumnDefinitions="*,260" ColumnSpacing="6">
         <Border Grid.Column="0" Classes="panel">
           <Grid RowDefinitions="Auto,*">
-            <Grid Grid.Row="0" ColumnDefinitions="55,65,70,80,70,80,*" Margin="0,0,0,4">
+            <Grid Grid.Row="0" ColumnDefinitions="45,55,58,58,58,70,62,70,*" Margin="0,0,0,4">
               <TextBlock Text="Line" Classes="label" />
               <TextBlock Grid.Column="1" Text="Side" Classes="label" />
-              <TextBlock Grid.Column="2" Text="Book" Classes="label" />
-              <TextBlock Grid.Column="3" Text="Model" Classes="label" />
-              <TextBlock Grid.Column="4" Text="Fair" Classes="label" />
-              <TextBlock Grid.Column="5" Text="Edge" Classes="label" />
-              <TextBlock Grid.Column="6" Text="Decision" Classes="label" />
+              <TextBlock Grid.Column="2" Text="BaseO" Classes="label" />
+              <TextBlock Grid.Column="3" Text="CorrO" Classes="label" />
+              <TextBlock Grid.Column="4" Text="Move" Classes="label" />
+              <TextBlock Grid.Column="5" Text="Book" Classes="label" />
+              <TextBlock Grid.Column="6" Text="Edge" Classes="label" />
+              <TextBlock Grid.Column="7" Text="Fair" Classes="label" />
+              <TextBlock Grid.Column="8" Text="Decision" Classes="label" />
             </Grid>
             <ScrollViewer Grid.Row="1">
               <ItemsControl ItemsSource="{Binding LiveDecisions}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="models:LiveBettingDecisionRow">
                     <Border BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="0,1,0,0" Padding="0,4">
-                      <Grid ColumnDefinitions="55,65,70,80,70,80,*">
+                      <Grid ColumnDefinitions="45,55,58,58,58,70,62,70,*">
                         <TextBlock Text="{Binding LineText}" FontSize="12" FontWeight="SemiBold" />
                         <TextBlock Grid.Column="1" Text="{Binding Side}" FontSize="12" />
-                        <TextBlock Grid.Column="2" Text="{Binding BookOddsText}" FontSize="12" />
-                        <TextBlock Grid.Column="3" Text="{Binding ModelProbabilityText}" FontSize="12" />
-                        <TextBlock Grid.Column="4" Text="{Binding FairOddsText}" FontSize="12" />
-                        <TextBlock Grid.Column="5" Text="{Binding EdgeText}" FontSize="12" Classes="positive" />
-                        <TextBlock Grid.Column="6" Text="{Binding Decision}" FontSize="12" FontWeight="Bold" />
+                        <TextBlock Grid.Column="2" Text="{Binding BaseOverText}" FontSize="12" />
+                        <TextBlock Grid.Column="3" Text="{Binding CorrOverText}" FontSize="12" />
+                        <TextBlock Grid.Column="4" Text="{Binding ProbabilityMoveText}" FontSize="12" Classes="positive" />
+                        <TextBlock Grid.Column="5" Text="{Binding BookOddsText}" FontSize="12" />
+                        <TextBlock Grid.Column="6" Text="{Binding EdgeText}" FontSize="12" Classes="positive" />
+                        <TextBlock Grid.Column="7" Text="{Binding FairOddsText}" FontSize="12" />
+                        <TextBlock Grid.Column="8" Text="{Binding Decision}" FontSize="12" FontWeight="Bold" />
                       </Grid>
                     </Border>
                   </DataTemplate>

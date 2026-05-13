@@ -11,5 +11,7 @@ public sealed class LiveBettingProfile
     public bool UseCurrentSeasonVolume { get; init; } = true;
     public int? DefaultBeforeRound { get; init; }
     public double EdgeThreshold { get; init; } = 0.10;
+    public bool UseProbabilityMoveFilter { get; init; }
+    public int LiveBettingRulesCount { get; init; }
     public string Notes { get; init; } = string.Empty;
 }
