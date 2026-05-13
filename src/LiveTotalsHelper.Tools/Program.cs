@@ -26,6 +26,7 @@ try
         "analyze-live-total-calibration" => await RunAnalyzeLiveTotalCalibration(commandArgs),
         "fit-live-total-state-correction" => await RunFitLiveTotalStateCorrection(commandArgs),
         "evaluate-live-total-model" => await RunEvaluateLiveTotalModel(commandArgs),
+        "evaluate-live-total-betting-metrics" => await RunEvaluateLiveTotalBettingMetrics(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
         "price-live-total" => await RunPriceLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
@@ -326,6 +327,82 @@ static async Task<int> RunEvaluateLiveTotalModel(string[] args)
     foreach (LiveTotalModelEvaluationSummary summary in result.Summaries)
     {
         Console.WriteLine($"{summary.StateTrigger,-13} {summary.Rows,5}  {summary.Matches,7}  {summary.BaselineMae,7:0.###}  {summary.StateCorrectedMae,8:0.###}  {summary.BaselineBias,8:0.###}  {summary.StateCorrectedBias,9:0.###}");
+    }
+
+    return 0;
+}
+
+
+static async Task<int> RunEvaluateLiveTotalBettingMetrics(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+    string defaultStateCorrection = validationMode
+        ? profile?.ValidationStateCorrectionPath ?? string.Empty
+        : profile?.StateCorrectionPath ?? string.Empty;
+
+    string defaultOutput = string.Empty;
+    if (!string.IsNullOrWhiteSpace(defaultInput))
+    {
+        string directory = Path.GetDirectoryName(defaultInput) ?? ".";
+        string fileName = Path.GetFileNameWithoutExtension(defaultInput);
+        defaultOutput = Path.Combine(directory, $"{fileName}-betting-metrics.csv");
+    }
+
+    var options = new LiveTotalBettingMetricsEvaluationOptions
+    {
+        InputPath = parsed.String("input", defaultInput),
+        StateCorrectionPath = parsed.String("state-correction", defaultStateCorrection),
+        OutputPath = parsed.String("output", defaultOutput),
+        EdgeBucketOutputPath = parsed.String("edge-output", string.Empty),
+        EdgeBucketStep = parsed.Double("edge-bucket-step", 0.02)
+    };
+
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
+    if (string.IsNullOrWhiteSpace(options.StateCorrectionPath))
+        throw new ArgumentException("Missing required argument --state-correction, or provide --profile with a state correction path.");
+
+    if (parsed.Has("target-lines"))
+        AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
+    else if (profile?.TargetLines is { Count: > 0 })
+    {
+        options.TargetLines.Clear();
+        foreach (double line in profile.TargetLines)
+            options.TargetLines.Add(line);
+    }
+
+    if (parsed.Has("test-season-ids"))
+        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
+    else if (profile is not null && validationMode)
+        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
+
+    if (options.TestSeasonIds.Count == 0)
+        throw new ArgumentException("Missing required argument --test-season-ids, or use --validation true with a profile validation split.");
+
+    var evaluator = new LiveTotalBettingMetricsEvaluator(options);
+    LiveTotalBettingMetricsEvaluationResult result = await evaluator.EvaluateAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Live total betting metrics evaluation done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"State correction: {result.StateCorrectionPath}");
+    Console.WriteLine($"Rows read: {result.RowsRead}");
+    Console.WriteLine($"Test rows: {result.TestRows}");
+    Console.WriteLine($"Line rows: {result.LineRows}");
+    Console.WriteLine($"Summary CSV: {result.OutputPath}");
+    Console.WriteLine($"Edge bucket CSV: {result.EdgeBucketOutputPath}");
+
+    Console.WriteLine();
+    Console.WriteLine("Trigger       Line  Rows   BaseBr  CorrBr  BrImp%  BaseLL  CorrLL  LLImp%  BaseAcc  CorrAcc  AccDiff");
+    foreach (LiveTotalBettingMetricSummary row in result.Summaries.Where(x => x.StateTrigger == "All" || x.StateTrigger == LiveTotalStateTrigger.FixedMinute || x.StateTrigger == LiveTotalStateTrigger.AfterGoal))
+    {
+        Console.WriteLine($"{row.StateTrigger,-13} {row.Line,4:0.##} {row.Rows,5}  {row.BaselineBrier,6:0.###}  {row.CorrectedBrier,6:0.###}  {row.BrierImprovementPct,6:0.#}  {row.BaselineLogLoss,6:0.###}  {row.CorrectedLogLoss,6:0.###}  {row.LogLossImprovementPct,6:0.#}  {row.BaselineDirectionAccuracy,7:P1}  {row.CorrectedDirectionAccuracy,7:P1}  {row.DirectionAccuracyDiffPctPoints,7:0.#}");
     }
 
     return 0;

@@ -14,6 +14,7 @@ public static class HelpPrinter
         Console.WriteLine("  analyze-live-total-calibration        Compare correction factors by trigger/state.");
         Console.WriteLine("  fit-live-total-state-correction       Fit trigger/state correction factors.");
         Console.WriteLine("  evaluate-live-total-model             Evaluate baseline vs exact trigger/state correction.");
+        Console.WriteLine("  evaluate-live-total-betting-metrics   Evaluate line-specific Brier/log-loss/direction metrics.");
         Console.WriteLine("  fit-weibull                           Fit a league-wide Weibull timing model from imported DB events.");
         Console.WriteLine("  price-live-total                      Price live Over totals from starting odds, score state and fitted timing model.");
         Console.WriteLine();
@@ -30,6 +31,8 @@ public static class HelpPrinter
         PrintFitLiveTotalStateCorrection();
         Console.WriteLine();
         PrintEvaluateLiveTotalModel();
+        Console.WriteLine();
+        PrintEvaluateLiveTotalBettingMetrics();
         Console.WriteLine();
         PrintFitWeibull();
         Console.WriteLine();
@@ -152,6 +155,28 @@ public static class HelpPrinter
     }
 
     
+
+    public static void PrintEvaluateLiveTotalBettingMetrics()
+    {
+        Console.WriteLine("Betting metrics evaluation usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-betting-metrics \\");
+        Console.WriteLine("    --profile eliteserien --validation true");
+        Console.WriteLine();
+        Console.WriteLine("Betting metrics arguments:");
+        Console.WriteLine("  --profile / --profiles-file      Use profile paths and validation split.");
+        Console.WriteLine("  --validation true                Use validation input/state-correction/test seasons from profile.");
+        Console.WriteLine("  --input                          Calibration dataset CSV override.");
+        Console.WriteLine("  --state-correction               State correction JSON override.");
+        Console.WriteLine("  --test-season-ids                Comma-separated test season ids.");
+        Console.WriteLine("  --target-lines                   Optional comma-separated lines. Defaults to profile targetLines.");
+        Console.WriteLine("  --output                         Summary CSV path.");
+        Console.WriteLine("  --edge-output                    Edge-bucket CSV path.");
+        Console.WriteLine();
+        Console.WriteLine("Output metrics:");
+        Console.WriteLine("  Per line and trigger: Brier, log loss, direction accuracy, actual over rate.");
+        Console.WriteLine("  Edge bucket CSV groups by corrected probability move vs baseline probability.");
+    }
+
     public static void PrintFitWeibull()
     {
         Console.WriteLine("Fit Weibull usage:");
