@@ -7,6 +7,17 @@ public sealed class LeagueProfilesConfig
     public List<LeagueProfile> Profiles { get; set; } = [];
 }
 
+public sealed class LiveTotalProfileBettingRule
+{
+    public string StateTrigger { get; set; } = string.Empty; // FixedMinute, AfterGoal, AfterRedCard, All/Any
+    public string Side { get; set; } = string.Empty; // Over / Under
+    public double Line { get; set; }
+    public double MinProbabilityMove { get; set; }
+    public double MinEdge { get; set; }
+    public bool AllowBet { get; set; } = true;
+    public string Notes { get; set; } = string.Empty;
+}
+
 public sealed class LeagueProfile
 {
     public string Key { get; set; } = string.Empty;
@@ -55,6 +66,11 @@ public sealed class LeagueProfile
     public bool UseCurrentSeasonVolume { get; set; } = true;
     public double DefaultEmpiricalWeight { get; set; } = 0.80;
     public double EdgeThreshold { get; set; } = 0.10;
+    public bool UseProbabilityMoveFilter { get; set; }
+    public double MinOverProbabilityMove { get; set; } = 0.10;
+    public double MinUnderProbabilityMove { get; set; } = -0.12;
+    public bool UnderSignalsBettingAllowed { get; set; }
+    public List<LiveTotalProfileBettingRule> LiveBettingRules { get; set; } = [];
     public int PriorStrengthMatches { get; set; } = 100;
     public List<double> TargetLines { get; set; } = [];
     public string RiskLevel { get; set; } = string.Empty;

@@ -237,6 +237,10 @@ public static class HelpPrinter
         Console.WriteLine("  --home-goals         Required current home goals.");
         Console.WriteLine("  --away-goals         Required current away goals.");
         Console.WriteLine("  --live-over-odds / --live-under-odds Optional bookmaker live odds, needed for edge/bet decisions.");
+        Console.WriteLine("  --use-probability-move-filter true|false Optional; require probability move threshold before BET/LEAN.");
+        Console.WriteLine("  --min-over-probability-move 0.10      Optional global Over move threshold.");
+        Console.WriteLine("  --min-under-probability-move -0.12    Optional global Under move threshold.");
+        Console.WriteLine("  --under-signals-betting-allowed true|false Optional; default false.");
         Console.WriteLine("  --before-round       Needed for current-season volume unless defaultBeforeRound is maintained in the profile.");
         Console.WriteLine("  --home-red-cards / --away-red-cards Optional; red-card states remain warning/manual-review states.");
         Console.WriteLine("  --last-goal-minute   Optional; fixed-minute checks shortly after a goal become WAIT.");

@@ -555,6 +555,10 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         AwayGoals = parsed.RequiredInt("away-goals"),
         EmpiricalWeight = parsed.Double("empirical-weight", profile?.DefaultEmpiricalWeight ?? 0.80),
         EdgeThreshold = parsed.Double("edge-threshold", profile?.EdgeThreshold ?? 0.10),
+        UseProbabilityMoveFilter = parsed.Bool("use-probability-move-filter", profile?.UseProbabilityMoveFilter ?? false),
+        MinOverProbabilityMove = parsed.Double("min-over-probability-move", profile?.MinOverProbabilityMove ?? 0.10),
+        MinUnderProbabilityMove = parsed.Double("min-under-probability-move", profile?.MinUnderProbabilityMove ?? -0.12),
+        UnderSignalsBettingAllowed = parsed.Bool("under-signals-betting-allowed", profile?.UnderSignalsBettingAllowed ?? false),
         HomeRedCards = parsed.Int("home-red-cards", parsed.Int("home-reds", 0)),
         AwayRedCards = parsed.Int("away-red-cards", parsed.Int("away-reds", 0)),
         LastGoalMinute = parsed.Int("last-goal-minute", -1),
@@ -562,6 +566,12 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         VolumeFactor = parsed.Double("volume-factor", 1.0),
         VolumeFactorSource = parsed.Has("volume-factor") ? "manual --volume-factor" : "none/default 1.0"
     };
+
+    if (profile?.LiveBettingRules is { Count: > 0 })
+    {
+        foreach (LiveTotalProfileBettingRule rule in profile.LiveBettingRules)
+            options.LiveBettingRules.Add(rule);
+    }
 
     bool explicitTargetLines = parsed.Has("target-lines");
     if (!explicitTargetLines && profile?.TargetLines is { Count: > 0 })
@@ -656,6 +666,9 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     Console.WriteLine($"Starting total xG: {result.StartingTotalXg:0.###}");
     Console.WriteLine($"Blend: Empirical {result.EmpiricalWeight:P0}, Weibull {result.WeibullWeight:P0}");
     Console.WriteLine($"Edge threshold: {options.EdgeThreshold:P0}");
+    Console.WriteLine($"Probability move filter: {options.UseProbabilityMoveFilter}; over >= {options.MinOverProbabilityMove:+0%;-0%;0%}, under <= {options.MinUnderProbabilityMove:+0%;-0%;0%}; under allowed: {options.UnderSignalsBettingAllowed}");
+    if (options.LiveBettingRules.Count > 0)
+        Console.WriteLine($"Profile betting rules loaded: {options.LiveBettingRules.Count}");
     Console.WriteLine($"Remaining share: Weibull {result.WeibullRemainingShare:P1}, Empirical {result.EmpiricalRemainingShare:P1}, Used {result.TimingRemainingShare:P1}");
     Console.WriteLine($"Remaining xG before state correction: {result.RemainingXgBeforeStateCorrection:0.###}");
     Console.WriteLine($"State correction: {result.StateCorrectionFactor:0.###} ({result.StateCorrectionSource})");
@@ -686,7 +699,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
 
     Console.WriteLine();
     Console.WriteLine("Over/Under pricing:");
-    Console.WriteLine("Line   Over%   Push%  Under%  FairO  BookO   EdgeO     EVO    FairU  BookU   EdgeU     EVU    Decision");
+    Console.WriteLine("Line  BaseO  CorrO   Move   Over%   Push%  Under%  FairO  BookO   EdgeO     EVO    FairU  BookU   EdgeU     EVU    Decision");
     foreach (LiveTotalLinePrice line in result.Lines)
     {
         string bookOver = line.BookOverOdds.HasValue ? line.BookOverOdds.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";
@@ -699,7 +712,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         string underEv = line.UnderExpectedValue.HasValue ? line.UnderExpectedValue.Value.ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture) : "-";
         string fairUnder = FormatFairOdds(line.FairUnderOdds);
 
-        Console.WriteLine($"{line.Line,4:0.##}  {line.WinProbability,6:P1}  {line.PushProbability,6:P1}  {line.UnderWinProbability,6:P1}  {fairOver,5}  {bookOver,5}  {overEdge,7}  {overEv,7}  {fairUnder,6}  {bookUnder,5}  {underEdge,7}  {underEv,7}  {line.Decision}");
+        Console.WriteLine($"{line.Line,4:0.##}  {line.BaselineOverNoPushProbability,5:P0}  {line.CorrectedOverNoPushProbability,5:P0}  {line.OverProbabilityMove,6:+0.0%;-0.0%;0.0%}  {line.WinProbability,6:P1}  {line.PushProbability,6:P1}  {line.UnderWinProbability,6:P1}  {fairOver,5}  {bookOver,5}  {overEdge,7}  {overEv,7}  {fairUnder,6}  {bookUnder,5}  {underEdge,7}  {underEv,7}  {line.Decision}");
     }
 
     return 0;

@@ -38,7 +38,28 @@
       "priorStrengthMatches": 100,
       "targetLines": [ 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0 ],
       "riskLevel": "Paper test",
-      "notes": "Fill SofaScore season IDs from DB. Previous validation for NPL NSW looked strong; validate again after importing current data. Use old no-Elo state-correction workflow."
+      "notes": "Fill SofaScore season IDs from DB. Previous validation for NPL NSW looked strong; validate again after importing current data. Use old no-Elo state-correction workflow.",
+
+      "useProbabilityMoveFilter": true,
+      "underSignalsBettingAllowed": false,
+      "liveBettingRules": [
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 3.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.12,
+          "notes": "NPL NSW is mostly a 3.5-line league."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Under",
+          "line": 3.5,
+          "minProbabilityMove": -0.1,
+          "minEdge": 0.12,
+          "notes": "Paper only: Under 3.5 when Over probability move <= -10%."
+        }
+      ]
     },
     {
       "key": "eliteserien",
@@ -78,7 +99,36 @@
       "priorStrengthMatches": 100,
       "targetLines": [ 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0 ],
       "riskLevel": "Validation first",
-      "notes": "Fill SofaScore season IDs from DB. Validate before paper betting. For production, if current season is included in trainingSeasonIds, set useCurrentSeasonVolume=false to avoid double-counting."
+      "notes": "Fill SofaScore season IDs from DB. Validate before paper betting. For production, if current season is included in trainingSeasonIds, set useCurrentSeasonVolume=false to avoid double-counting.",
+
+      "useProbabilityMoveFilter": true,
+      "underSignalsBettingAllowed": false,
+      "liveBettingRules": [
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 1.5,
+          "minProbabilityMove": 0.1,
+          "minEdge": 0.1,
+          "notes": "Use positive move only."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 2.5,
+          "minProbabilityMove": 0.1,
+          "minEdge": 0.1,
+          "notes": "Use positive move only."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 3.5,
+          "minProbabilityMove": 0.1,
+          "minEdge": 0.12,
+          "notes": "Use positive move only; slightly stricter edge."
+        }
+      ]
     },
     {
       "key": "latvia-1-liga",
@@ -118,7 +168,36 @@
       "priorStrengthMatches": 100,
       "targetLines": [ 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5 ],
       "riskLevel": "Validation first",
-      "notes": "Fill SofaScore season IDs from DB. Validate first before paper betting. If current season is included in production trainingSeasonIds, set useCurrentSeasonVolume=false to avoid double-counting current-season scoring level."
+      "notes": "Fill SofaScore season IDs from DB. Validate first before paper betting. If current season is included in production trainingSeasonIds, set useCurrentSeasonVolume=false to avoid double-counting current-season scoring level.",
+
+      "useProbabilityMoveFilter": true,
+      "underSignalsBettingAllowed": false,
+      "liveBettingRules": [
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 1.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.1,
+          "notes": "Latvia overs only."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 2.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.1,
+          "notes": "Cleanest Latvia signal, especially >= +10% move."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 3.5,
+          "minProbabilityMove": 0.1,
+          "minEdge": 0.15,
+          "notes": "Secondary only: high edge and large move."
+        }
+      ]
     },
     {
       "key": "allsvenskan",
@@ -164,7 +243,36 @@
       "priorStrengthMatches": 100,
       "targetLines": [ 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0 ],
       "riskLevel": "Paper test",
-      "notes": "Set currentSeasonId and optionally defaultBeforeRound before live use."
+      "notes": "Set currentSeasonId and optionally defaultBeforeRound before live use.",
+
+      "useProbabilityMoveFilter": true,
+      "underSignalsBettingAllowed": false,
+      "liveBettingRules": [
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 1.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.1,
+          "notes": "Strongest Allsvenskan signal."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 2.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.12,
+          "notes": "Usable but weaker than Norway; require slightly higher edge."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 3.5,
+          "minProbabilityMove": 0.1,
+          "minEdge": 0.15,
+          "notes": "Only large move and large edge."
+        }
+      ]
     },
     {
       "key": "norwegian-1st-division",
@@ -204,7 +312,36 @@
       "priorStrengthMatches": 100,
       "targetLines": [ 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0 ],
       "riskLevel": "Paper test",
-      "notes": "Fill season IDs from DB. For live pricing against the current season, keep useCurrentSeasonVolume=true only when currentSeasonId is not already included in production trainingSeasonIds."
+      "notes": "Fill season IDs from DB. For live pricing against the current season, keep useCurrentSeasonVolume=true only when currentSeasonId is not already included in production trainingSeasonIds.",
+
+      "useProbabilityMoveFilter": true,
+      "underSignalsBettingAllowed": false,
+      "liveBettingRules": [
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 1.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.1,
+          "notes": "Best Norway signal: FixedMinute Over 1.5, move >= +5%."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 2.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.1,
+          "notes": "Good Norway signal: FixedMinute Over 2.5, move >= +5%."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Under",
+          "line": 3.5,
+          "minProbabilityMove": -0.05,
+          "minEdge": 0.12,
+          "notes": "Paper only: FixedMinute Under 3.5 when Over probability move <= -5%."
+        }
+      ]
     }
   ]
 }
