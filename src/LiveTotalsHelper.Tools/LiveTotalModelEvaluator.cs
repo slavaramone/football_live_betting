@@ -10,6 +10,8 @@ public sealed class LiveTotalModelEvaluationOptions
     public string StateCorrectionPath { get; set; } = string.Empty;
     public string OutputPath { get; set; } = string.Empty;
     public List<int> TestSeasonIds { get; } = [];
+    public string DecisionScope { get; set; } = LiveTotalDecisionScope.FullModel;
+    public bool CompareScopes { get; set; }
 }
 
 public sealed class LiveTotalModelEvaluationResult
@@ -20,11 +22,13 @@ public sealed class LiveTotalModelEvaluationResult
     public int RowsRead { get; set; }
     public int TestRows { get; set; }
     public int SupportedRows { get; set; }
+    public List<string> ScopesEvaluated { get; } = [];
     public List<LiveTotalModelEvaluationSummary> Summaries { get; } = [];
 }
 
 public sealed class LiveTotalModelEvaluationSummary
 {
+    public string Scope { get; set; } = LiveTotalDecisionScope.FullModel;
     public string StateTrigger { get; set; } = string.Empty;
     public int Rows { get; set; }
     public int Matches { get; set; }
@@ -60,6 +64,10 @@ public sealed class LiveTotalModelEvaluator
             .Where(x => _options.TestSeasonIds.Contains(x.SofaScoreSeasonId))
             .ToList();
 
+        string[] scopes = _options.CompareScopes
+            ? LiveTotalDecisionScope.ComparisonScopes
+            : [LiveTotalDecisionScope.Normalize(_options.DecisionScope)];
+
         var observations = new List<Observation>();
         foreach (InputRow row in testRows)
         {
@@ -75,12 +83,20 @@ public sealed class LiveTotalModelEvaluator
 
             double baseline = correction.LeagueAverageFinalGoals * row.TimingRemainingShare;
             double stateCorrected = baseline * resolved.Factor;
-            observations.Add(new Observation
+
+            foreach (string scope in scopes)
             {
-                Row = row,
-                Baseline = baseline,
-                StateCorrected = stateCorrected
-            });
+                if (!LiveTotalDecisionScope.IsEligible(scope, row.StateTrigger, row.Minute))
+                    continue;
+
+                observations.Add(new Observation
+                {
+                    Scope = scope,
+                    Row = row,
+                    Baseline = baseline,
+                    StateCorrected = stateCorrected
+                });
+            }
         }
 
         var result = new LiveTotalModelEvaluationResult
@@ -92,13 +108,20 @@ public sealed class LiveTotalModelEvaluator
             TestRows = testRows.Count,
             SupportedRows = observations.Count
         };
+        result.ScopesEvaluated.AddRange(scopes);
 
-        result.Summaries.Add(BuildSummary("All", observations));
-        foreach (IGrouping<string, Observation> group in observations
-            .GroupBy(x => x.Row.StateTrigger)
-            .OrderBy(x => TriggerOrder(x.Key)))
+        foreach (IGrouping<string, Observation> scopeGroup in observations
+            .GroupBy(x => x.Scope)
+            .OrderBy(x => LiveTotalDecisionScope.Order(x.Key)))
         {
-            result.Summaries.Add(BuildSummary(group.Key, group.ToList()));
+            List<Observation> scoped = scopeGroup.ToList();
+            result.Summaries.Add(BuildSummary(scopeGroup.Key, "All", scoped));
+            foreach (IGrouping<string, Observation> group in scoped
+                .GroupBy(x => x.Row.StateTrigger)
+                .OrderBy(x => TriggerOrder(x.Key)))
+            {
+                result.Summaries.Add(BuildSummary(scopeGroup.Key, group.Key, group.ToList()));
+            }
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(result.OutputPath)) ?? ".");
@@ -106,13 +129,14 @@ public sealed class LiveTotalModelEvaluator
         return result;
     }
 
-    private LiveTotalModelEvaluationSummary BuildSummary(string stateTrigger, IReadOnlyCollection<Observation> rows)
+    private LiveTotalModelEvaluationSummary BuildSummary(string scope, string stateTrigger, IReadOnlyCollection<Observation> rows)
     {
         if (rows.Count == 0)
-            return new LiveTotalModelEvaluationSummary { StateTrigger = stateTrigger };
+            return new LiveTotalModelEvaluationSummary { Scope = scope, StateTrigger = stateTrigger };
 
         return new LiveTotalModelEvaluationSummary
         {
+            Scope = scope,
             StateTrigger = stateTrigger,
             Rows = rows.Count,
             Matches = rows.Select(x => x.Row.MatchId).Distinct().Count(),
@@ -137,6 +161,7 @@ public sealed class LiveTotalModelEvaluator
             throw new FileNotFoundException("State correction JSON was not found.", _options.StateCorrectionPath);
         if (_options.TestSeasonIds.Count == 0)
             throw new ArgumentException("Missing required argument --test-season-ids.");
+        _ = LiveTotalDecisionScope.Normalize(_options.DecisionScope);
     }
 
     private string ResolveOutputPath()
@@ -204,10 +229,11 @@ public sealed class LiveTotalModelEvaluator
     private static string ToCsv(IReadOnlyCollection<LiveTotalModelEvaluationSummary> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("StateTrigger,Rows,Matches,BaselineMae,StateCorrectedMae,BaselineBias,StateCorrectedBias,BaselineRmse,StateCorrectedRmse");
+        sb.AppendLine("Scope,StateTrigger,Rows,Matches,BaselineMae,StateCorrectedMae,BaselineBias,StateCorrectedBias,BaselineRmse,StateCorrectedRmse");
         foreach (LiveTotalModelEvaluationSummary row in rows)
         {
             sb.AppendLine(string.Join(',',
+                EscapeCsv(row.Scope),
                 EscapeCsv(row.StateTrigger),
                 row.Rows.ToString(CultureInfo.InvariantCulture),
                 row.Matches.ToString(CultureInfo.InvariantCulture),
@@ -339,6 +365,7 @@ public sealed class LiveTotalModelEvaluator
 
     private sealed class Observation
     {
+        public string Scope { get; set; } = LiveTotalDecisionScope.FullModel;
         public InputRow Row { get; set; } = new();
         public double Baseline { get; set; }
         public double StateCorrected { get; set; }

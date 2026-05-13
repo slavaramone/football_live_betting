@@ -14,6 +14,8 @@ public sealed class LiveTotalBettingMetricsEvaluationOptions
     public List<int> TestSeasonIds { get; } = [];
     public List<double> TargetLines { get; } = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0];
     public double EdgeBucketStep { get; set; } = 0.02;
+    public string DecisionScope { get; set; } = LiveTotalDecisionScope.FullModel;
+    public bool CompareScopes { get; set; }
 }
 
 public sealed class LiveTotalBettingMetricsEvaluationResult
@@ -25,12 +27,14 @@ public sealed class LiveTotalBettingMetricsEvaluationResult
     public int RowsRead { get; set; }
     public int TestRows { get; set; }
     public int LineRows { get; set; }
+    public List<string> ScopesEvaluated { get; } = [];
     public List<LiveTotalBettingMetricSummary> Summaries { get; } = [];
     public List<LiveTotalBettingEdgeBucketSummary> EdgeBuckets { get; } = [];
 }
 
 public sealed class LiveTotalBettingMetricSummary
 {
+    public string Scope { get; set; } = LiveTotalDecisionScope.FullModel;
     public string StateTrigger { get; set; } = string.Empty;
     public double Line { get; set; }
     public int Rows { get; set; }
@@ -61,6 +65,7 @@ public sealed class LiveTotalBettingMetricSummary
 
 public sealed class LiveTotalBettingEdgeBucketSummary
 {
+    public string Scope { get; set; } = LiveTotalDecisionScope.FullModel;
     public string StateTrigger { get; set; } = string.Empty;
     public double Line { get; set; }
     public string EdgeBucket { get; set; } = string.Empty;
@@ -98,6 +103,10 @@ public sealed class LiveTotalBettingMetricsEvaluator
             .Where(x => _options.TestSeasonIds.Contains(x.SofaScoreSeasonId))
             .ToList();
 
+        string[] scopes = _options.CompareScopes
+            ? LiveTotalDecisionScope.ComparisonScopes
+            : [LiveTotalDecisionScope.Normalize(_options.DecisionScope)];
+
         var lineRows = new List<LineRow>();
 
         foreach (InputRow row in testRows)
@@ -124,15 +133,22 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 if (!baselineP.HasValue || !correctedP.HasValue)
                     continue;
 
-                lineRows.Add(new LineRow
+                foreach (string scope in scopes)
                 {
-                    StateTrigger = row.StateTrigger,
-                    MatchId = row.MatchId,
-                    Line = line,
-                    ActualOver = actualOver.Value,
-                    BaselineProbability = baselineP.Value,
-                    CorrectedProbability = correctedP.Value
-                });
+                    if (!LiveTotalDecisionScope.IsEligible(scope, row.StateTrigger, row.Minute))
+                        continue;
+
+                    lineRows.Add(new LineRow
+                    {
+                        Scope = scope,
+                        StateTrigger = row.StateTrigger,
+                        MatchId = row.MatchId,
+                        Line = line,
+                        ActualOver = actualOver.Value,
+                        BaselineProbability = baselineP.Value,
+                        CorrectedProbability = correctedP.Value
+                    });
+                }
             }
         }
 
@@ -146,6 +162,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
             TestRows = testRows.Count,
             LineRows = lineRows.Count
         };
+        result.ScopesEvaluated.AddRange(scopes);
 
         result.Summaries.AddRange(BuildSummaries(lineRows));
         result.EdgeBuckets.AddRange(BuildEdgeBuckets(lineRows));
@@ -164,11 +181,12 @@ public sealed class LiveTotalBettingMetricsEvaluator
         var groups = lineRows
             .SelectMany(x => new[]
             {
-                new { Key = "All", Row = x },
-                new { Key = x.StateTrigger, Row = x }
+                new { x.Scope, Key = "All", Row = x },
+                new { x.Scope, Key = x.StateTrigger, Row = x }
             })
-            .GroupBy(x => new { x.Key, x.Row.Line })
-            .OrderBy(x => TriggerOrder(x.Key.Key))
+            .GroupBy(x => new { x.Scope, x.Key, x.Row.Line })
+            .OrderBy(x => LiveTotalDecisionScope.Order(x.Key.Scope))
+            .ThenBy(x => TriggerOrder(x.Key.Key))
             .ThenBy(x => x.Key.Line);
 
         var result = new List<LiveTotalBettingMetricSummary>();
@@ -176,13 +194,13 @@ public sealed class LiveTotalBettingMetricsEvaluator
         foreach (var group in groups)
         {
             List<LineRow> rows = group.Select(x => x.Row).ToList();
-            result.Add(BuildSummary(group.Key.Key, group.Key.Line, rows));
+            result.Add(BuildSummary(group.Key.Scope, group.Key.Key, group.Key.Line, rows));
         }
 
         return result;
     }
 
-    private static LiveTotalBettingMetricSummary BuildSummary(string trigger, double line, IReadOnlyCollection<LineRow> rows)
+    private static LiveTotalBettingMetricSummary BuildSummary(string scope, string trigger, double line, IReadOnlyCollection<LineRow> rows)
     {
         int n = rows.Count;
         double baseBrier = rows.Average(x => Squared(x.BaselineProbability - BoolToDouble(x.ActualOver)));
@@ -203,6 +221,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
 
         return new LiveTotalBettingMetricSummary
         {
+            Scope = scope,
             StateTrigger = trigger,
             Line = line,
             Rows = n,
@@ -237,11 +256,12 @@ public sealed class LiveTotalBettingMetricsEvaluator
         var groups = lineRows
             .SelectMany(x => new[]
             {
-                new { Key = "All", Row = x },
-                new { Key = x.StateTrigger, Row = x }
+                new { x.Scope, Key = "All", Row = x },
+                new { x.Scope, Key = x.StateTrigger, Row = x }
             })
-            .GroupBy(x => new { x.Key, x.Row.Line, Bucket = ProbabilityMoveBucket(x.Row.CorrectedProbability - x.Row.BaselineProbability) })
-            .OrderBy(x => TriggerOrder(x.Key.Key))
+            .GroupBy(x => new { x.Scope, x.Key, x.Row.Line, Bucket = ProbabilityMoveBucket(x.Row.CorrectedProbability - x.Row.BaselineProbability) })
+            .OrderBy(x => LiveTotalDecisionScope.Order(x.Key.Scope))
+            .ThenBy(x => TriggerOrder(x.Key.Key))
             .ThenBy(x => x.Key.Line)
             .ThenBy(x => EdgeBucketOrder(x.Key.Bucket));
 
@@ -252,6 +272,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
             List<LineRow> rows = group.Select(x => x.Row).ToList();
             result.Add(new LiveTotalBettingEdgeBucketSummary
             {
+                Scope = group.Key.Scope,
                 StateTrigger = group.Key.Key,
                 Line = group.Key.Line,
                 EdgeBucket = group.Key.Bucket,
@@ -394,6 +415,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
             throw new ArgumentException("Missing required argument --test-season-ids, or use --validation true with a profile validation split.");
         if (_options.TargetLines.Count == 0)
             throw new ArgumentException("At least one target line is required.");
+        _ = LiveTotalDecisionScope.Normalize(_options.DecisionScope);
     }
 
     private static int TriggerOrder(string stateTrigger)
@@ -555,11 +577,12 @@ public sealed class LiveTotalBettingMetricsEvaluator
     private static string ToSummaryCsv(IReadOnlyCollection<LiveTotalBettingMetricSummary> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("StateTrigger,Line,Rows,Matches,BaselineAvgProb,CorrectedAvgProb,ActualOverRate,BaselineBrier,CorrectedBrier,BrierImprovementPct,BaselineLogLoss,CorrectedLogLoss,LogLossImprovementPct,BaselineDirectionAccuracy,CorrectedDirectionAccuracy,DirectionAccuracyDiffPctPoints,AverageProbabilityMove,CorrectedBetterRows,CorrectedWorseRows,CorrectedBetterRate,CorrectedWorseRate");
+        sb.AppendLine("Scope,StateTrigger,Line,Rows,Matches,BaselineAvgProb,CorrectedAvgProb,ActualOverRate,BaselineBrier,CorrectedBrier,BrierImprovementPct,BaselineLogLoss,CorrectedLogLoss,LogLossImprovementPct,BaselineDirectionAccuracy,CorrectedDirectionAccuracy,DirectionAccuracyDiffPctPoints,AverageProbabilityMove,CorrectedBetterRows,CorrectedWorseRows,CorrectedBetterRate,CorrectedWorseRate");
 
         foreach (LiveTotalBettingMetricSummary row in rows)
         {
             sb.AppendLine(string.Join(',',
+                EscapeCsv(row.Scope),
                 EscapeCsv(row.StateTrigger),
                 D(row.Line),
                 row.Rows.ToString(CultureInfo.InvariantCulture),
@@ -589,11 +612,12 @@ public sealed class LiveTotalBettingMetricsEvaluator
     private static string ToEdgeBucketCsv(IReadOnlyCollection<LiveTotalBettingEdgeBucketSummary> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("StateTrigger,Line,EdgeBucket,Rows,Matches,AverageBaselineProbability,AverageCorrectedProbability,AverageProbabilityMove,ActualOverRate,BaselineBrier,CorrectedBrier");
+        sb.AppendLine("Scope,StateTrigger,Line,EdgeBucket,Rows,Matches,AverageBaselineProbability,AverageCorrectedProbability,AverageProbabilityMove,ActualOverRate,BaselineBrier,CorrectedBrier");
 
         foreach (LiveTotalBettingEdgeBucketSummary row in rows)
         {
             sb.AppendLine(string.Join(',',
+                EscapeCsv(row.Scope),
                 EscapeCsv(row.StateTrigger),
                 D(row.Line),
                 EscapeCsv(row.EdgeBucket),
@@ -636,6 +660,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
 
     private sealed class LineRow
     {
+        public string Scope { get; set; } = LiveTotalDecisionScope.FullModel;
         public string StateTrigger { get; set; } = string.Empty;
         public int MatchId { get; set; }
         public double Line { get; set; }

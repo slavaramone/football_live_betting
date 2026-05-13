@@ -296,7 +296,9 @@ static async Task<int> RunEvaluateLiveTotalModel(string[] args)
     {
         InputPath = parsed.String("input", defaultInput),
         StateCorrectionPath = parsed.String("state-correction", defaultStateCorrection),
-        OutputPath = parsed.String("output", defaultOutput)
+        OutputPath = parsed.String("output", defaultOutput),
+        DecisionScope = parsed.String("scope", parsed.String("decision-scope", LiveTotalDecisionScope.FullModel)),
+        CompareScopes = parsed.Bool("compare-scopes", false)
     };
     if (string.IsNullOrWhiteSpace(options.InputPath))
         throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
@@ -320,13 +322,14 @@ static async Task<int> RunEvaluateLiveTotalModel(string[] args)
     Console.WriteLine($"Rows read: {result.RowsRead}");
     Console.WriteLine($"Test rows: {result.TestRows}");
     Console.WriteLine($"Supported rows evaluated: {result.SupportedRows}");
+    Console.WriteLine($"Scopes: {string.Join(", ", result.ScopesEvaluated)}");
     Console.WriteLine($"Output: {result.OutputPath}");
 
     Console.WriteLine();
-    Console.WriteLine("Trigger        Rows  Matches  BaseMAE  StateMAE  BaseBias  StateBias");
+    Console.WriteLine("Scope                    Trigger        Rows  Matches  BaseMAE  StateMAE  BaseBias  StateBias");
     foreach (LiveTotalModelEvaluationSummary summary in result.Summaries)
     {
-        Console.WriteLine($"{summary.StateTrigger,-13} {summary.Rows,5}  {summary.Matches,7}  {summary.BaselineMae,7:0.###}  {summary.StateCorrectedMae,8:0.###}  {summary.BaselineBias,8:0.###}  {summary.StateCorrectedBias,9:0.###}");
+        Console.WriteLine($"{summary.Scope,-24} {summary.StateTrigger,-13} {summary.Rows,5}  {summary.Matches,7}  {summary.BaselineMae,7:0.###}  {summary.StateCorrectedMae,8:0.###}  {summary.BaselineBias,8:0.###}  {summary.StateCorrectedBias,9:0.###}");
     }
 
     return 0;
@@ -360,7 +363,9 @@ static async Task<int> RunEvaluateLiveTotalBettingMetrics(string[] args)
         StateCorrectionPath = parsed.String("state-correction", defaultStateCorrection),
         OutputPath = parsed.String("output", defaultOutput),
         EdgeBucketOutputPath = parsed.String("edge-output", string.Empty),
-        EdgeBucketStep = parsed.Double("edge-bucket-step", 0.02)
+        EdgeBucketStep = parsed.Double("edge-bucket-step", 0.02),
+        DecisionScope = parsed.String("scope", parsed.String("decision-scope", LiveTotalDecisionScope.FullModel)),
+        CompareScopes = parsed.Bool("compare-scopes", false)
     };
 
     if (string.IsNullOrWhiteSpace(options.InputPath))
@@ -395,14 +400,15 @@ static async Task<int> RunEvaluateLiveTotalBettingMetrics(string[] args)
     Console.WriteLine($"Rows read: {result.RowsRead}");
     Console.WriteLine($"Test rows: {result.TestRows}");
     Console.WriteLine($"Line rows: {result.LineRows}");
+    Console.WriteLine($"Scopes: {string.Join(", ", result.ScopesEvaluated)}");
     Console.WriteLine($"Summary CSV: {result.OutputPath}");
     Console.WriteLine($"Edge bucket CSV: {result.EdgeBucketOutputPath}");
 
     Console.WriteLine();
-    Console.WriteLine("Trigger       Line  Rows   BaseBr  CorrBr  BrImp%  BaseLL  CorrLL  LLImp%  BaseAcc  CorrAcc  AccDiff");
+    Console.WriteLine("Scope                    Trigger       Line  Rows   BaseBr  CorrBr  BrImp%  BaseLL  CorrLL  LLImp%  BaseAcc  CorrAcc  AccDiff");
     foreach (LiveTotalBettingMetricSummary row in result.Summaries.Where(x => x.StateTrigger == "All" || x.StateTrigger == LiveTotalStateTrigger.FixedMinute || x.StateTrigger == LiveTotalStateTrigger.AfterGoal))
     {
-        Console.WriteLine($"{row.StateTrigger,-13} {row.Line,4:0.##} {row.Rows,5}  {row.BaselineBrier,6:0.###}  {row.CorrectedBrier,6:0.###}  {row.BrierImprovementPct,6:0.#}  {row.BaselineLogLoss,6:0.###}  {row.CorrectedLogLoss,6:0.###}  {row.LogLossImprovementPct,6:0.#}  {row.BaselineDirectionAccuracy,7:P1}  {row.CorrectedDirectionAccuracy,7:P1}  {row.DirectionAccuracyDiffPctPoints,7:0.#}");
+        Console.WriteLine($"{row.Scope,-24} {row.StateTrigger,-13} {row.Line,4:0.##} {row.Rows,5}  {row.BaselineBrier,6:0.###}  {row.CorrectedBrier,6:0.###}  {row.BrierImprovementPct,6:0.#}  {row.BaselineLogLoss,6:0.###}  {row.CorrectedLogLoss,6:0.###}  {row.LogLossImprovementPct,6:0.#}  {row.BaselineDirectionAccuracy,7:P1}  {row.CorrectedDirectionAccuracy,7:P1}  {row.DirectionAccuracyDiffPctPoints,7:0.#}");
     }
 
     return 0;

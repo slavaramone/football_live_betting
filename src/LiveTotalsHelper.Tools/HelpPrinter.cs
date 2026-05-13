@@ -151,6 +151,9 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-model --profile allsvenskan --validation true");
         Console.WriteLine();
         Console.WriteLine("Validation mode uses profile validationCalibrationDatasetPath, validationStateCorrectionPath, validationTestSeasonIds, validationModelEvaluationPath.");
+        Console.WriteLine("Scope comparison:");
+        Console.WriteLine("  --compare-scopes true             Print/write FullModel, AfterGoalOnly and SecondHalfAfterGoalOnly in one run.");
+        Console.WriteLine("  --scope full-model|after-goal-only|2h-after-goal-only");
         Console.WriteLine("Overrides remain available: --input, --state-correction, --test-season-ids, --output.");
     }
 
@@ -171,10 +174,12 @@ public static class HelpPrinter
         Console.WriteLine("  --target-lines                   Optional comma-separated lines. Defaults to profile targetLines.");
         Console.WriteLine("  --output                         Summary CSV path.");
         Console.WriteLine("  --edge-output                    Edge-bucket CSV path.");
+        Console.WriteLine("  --compare-scopes true            Print/write FullModel, AfterGoalOnly and SecondHalfAfterGoalOnly in one run.");
+        Console.WriteLine("  --scope full-model|after-goal-only|2h-after-goal-only");
         Console.WriteLine();
         Console.WriteLine("Output metrics:");
-        Console.WriteLine("  Per line and trigger: Brier, log loss, direction accuracy, actual over rate.");
-        Console.WriteLine("  Edge bucket CSV groups by corrected probability move vs baseline probability.");
+        Console.WriteLine("  Per scope, line and trigger: Brier, log loss, direction accuracy, actual over rate.");
+        Console.WriteLine("  Edge bucket CSV groups by scope and corrected probability move vs baseline probability.");
     }
 
     public static void PrintFitWeibull()
