@@ -18,6 +18,8 @@ public sealed class MainWindowViewModel : ObservableObject
     };
     private LiveBettingProfile? _selectedProfile;
     private string _paperLogPath = string.Empty;
+    private LiveBettingCheckInput _liveInput = new();
+    private readonly Dictionary<string, LiveBettingCheckInput> _fixtureInputs = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindowViewModel(IMatchRepository matchRepository, IBettingModelService modelService, ILiveBettingSessionService liveSessionService)
     {
@@ -50,7 +52,12 @@ public sealed class MainWindowViewModel : ObservableObject
     public ObservableCollection<LiveBettingProfile> Profiles { get; } = [];
     public ObservableCollection<MatchSnapshot> Matches { get; } = [];
     public OddsInput Odds { get; } = new();
-    public LiveBettingCheckInput LiveInput { get; } = new();
+
+    public LiveBettingCheckInput LiveInput
+    {
+        get => _liveInput;
+        private set => SetProperty(ref _liveInput, value);
+    }
     public ObservableCollection<LiveBettingDecisionRow> LiveDecisions { get; } = [];
     public IReadOnlyList<string> StateTriggers { get; } = ["fixed-minute", "after-goal", "after-red-card"];
     public IReadOnlyList<string> BetSides { get; } = ["OVER", "UNDER"];
@@ -116,6 +123,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 if (profile is not null)
                     SelectedProfile = profile;
 
+                SaveCurrentFixtureInput();
+                _fixtureInputs.Clear();
                 Matches.Clear();
                 SelectedMatch = null;
                 LiveDecisions.Clear();
@@ -133,18 +142,25 @@ public sealed class MainWindowViewModel : ObservableObject
         get => _selectedMatch;
         set
         {
-            if (SetProperty(ref _selectedMatch, value))
-            {
-                OnPropertyChanged(nameof(SelectedMatchTitle));
-                SyncLiveInputFromSelectedMatch();
+            if (ReferenceEquals(_selectedMatch, value))
+                return;
 
-                // Do not auto-price here. Auto-pricing can freeze UI if model files/DB volume are slow.
-                LiveResult = new LiveBettingCheckResult
-                {
-                    Status = "READY - click Price live total"
-                };
-                LiveDecisions.Clear();
-            }
+            SaveCurrentFixtureInput();
+
+            _selectedMatch = value;
+            OnPropertyChanged(nameof(SelectedMatch));
+            OnPropertyChanged(nameof(SelectedMatchTitle));
+
+            LoadFixtureInputForSelectedMatch();
+
+            // Do not auto-price here. Auto-pricing can freeze UI if model files/DB volume are slow.
+            LiveResult = new LiveBettingCheckResult
+            {
+                Status = value is null
+                    ? "READY - select fixture and click Price live total"
+                    : "READY - fixture input restored; click Price live total"
+            };
+            LiveDecisions.Clear();
         }
     }
 
@@ -188,17 +204,78 @@ public sealed class MainWindowViewModel : ObservableObject
         PaperLogPath = _liveSessionService.LogBet(LiveInput, LiveResult);
     }
 
-    private void SyncLiveInputFromSelectedMatch()
+    private void SaveCurrentFixtureInput()
+    {
+        if (_selectedMatch is null)
+            return;
+
+        _fixtureInputs[GetFixtureInputKey(_selectedMatch)] = CloneInput(LiveInput);
+    }
+
+    private void LoadFixtureInputForSelectedMatch()
     {
         if (SelectedMatch is null)
             return;
 
-        LiveInput.MatchName = SelectedMatch.MatchName;
-        LiveInput.Minute = SelectedMatch.Minute;
-        LiveInput.HomeGoals = SelectedMatch.HomeGoals;
-        LiveInput.AwayGoals = SelectedMatch.AwayGoals;
-        LiveInput.HomeRedCards = SelectedMatch.HomeRedCards;
-        LiveInput.AwayRedCards = SelectedMatch.AwayRedCards;
+        string key = GetFixtureInputKey(SelectedMatch);
+        if (_fixtureInputs.TryGetValue(key, out LiveBettingCheckInput? saved))
+        {
+            LiveInput = CloneInput(saved);
+            return;
+        }
+
+        LiveBettingCheckInput input = CloneInput(LiveInput);
+        SyncMatchState(input, SelectedMatch);
+        _fixtureInputs[key] = CloneInput(input);
+        LiveInput = input;
+    }
+
+    private static void SyncMatchState(LiveBettingCheckInput input, MatchSnapshot match)
+    {
+        input.MatchName = match.MatchName;
+        input.Minute = match.Minute;
+        input.HomeGoals = match.HomeGoals;
+        input.AwayGoals = match.AwayGoals;
+        input.HomeRedCards = match.HomeRedCards;
+        input.AwayRedCards = match.AwayRedCards;
+    }
+
+    private static string GetFixtureInputKey(MatchSnapshot match)
+    {
+        if (!string.IsNullOrWhiteSpace(match.MatchId))
+            return match.MatchId;
+
+        return $"{match.League}|{match.HomeTeam}|{match.AwayTeam}";
+    }
+
+    private static LiveBettingCheckInput CloneInput(LiveBettingCheckInput source)
+    {
+        return new LiveBettingCheckInput
+        {
+            ProfileKey = source.ProfileKey,
+            MatchName = source.MatchName,
+            StateTrigger = source.StateTrigger,
+            Minute = source.Minute,
+            HomeGoals = source.HomeGoals,
+            AwayGoals = source.AwayGoals,
+            HomeRedCards = source.HomeRedCards,
+            AwayRedCards = source.AwayRedCards,
+            LastGoalMinute = source.LastGoalMinute,
+            RecentGoalMinutes = source.RecentGoalMinutes,
+            BeforeRound = source.BeforeRound,
+            StartingLine = source.StartingLine,
+            StartingOverOdds = source.StartingOverOdds,
+            StartingUnderOdds = source.StartingUnderOdds,
+            LiveOverOddsText = source.LiveOverOddsText,
+            LiveUnderOddsText = source.LiveUnderOddsText,
+            TargetLinesText = source.TargetLinesText,
+            SelectedBetLineText = source.SelectedBetLineText,
+            SelectedBetSide = source.SelectedBetSide,
+            SelectedBetOdds = source.SelectedBetOdds,
+            Stake = source.Stake,
+            BetMode = source.BetMode,
+            BetNotes = source.BetNotes
+        };
     }
 
     private void ReloadMatches()
