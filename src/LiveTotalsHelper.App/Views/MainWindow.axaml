@@ -89,14 +89,13 @@
     <Grid Grid.Row="1" Grid.Column="1" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="6">
 
       <Border Grid.Row="0" Classes="panel">
-        <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="4">
+        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="4">
           <StackPanel>
             <TextBlock Text="{Binding SelectedMatchTitle}" FontSize="16" FontWeight="Bold" />
             <TextBlock Text="{Binding Notes}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
           </StackPanel>
           <Button Grid.Column="1" Classes="compact" Content="Price" Click="BuildCheck_Click" />
-          <Button Grid.Column="2" Classes="compact" Content="Log state" Click="AppendPaperLog_Click" />
-          <Button Grid.Column="3" Classes="compact" Content="Log bet" Click="LogBet_Click" />
+          <Button Grid.Column="2" Classes="compact" Content="Log bet" Click="LogBet_Click" />
         </Grid>
       </Border>
 

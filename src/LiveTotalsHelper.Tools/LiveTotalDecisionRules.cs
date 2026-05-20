@@ -118,33 +118,55 @@ public static class LiveTotalDecisionRulesHandler
         if (profileRule is null && useProbabilityMoveFilter && sideUpper.Equals("UNDER", StringComparison.OrdinalIgnoreCase) && !underSignalsBettingAllowed)
             return No("NO BET - under disabled", "Global probability-move filter is active and under-side fallback is disabled.");
 
-        if ((profileRule is not null || useProbabilityMoveFilter) && !probabilityMoveAllowed)
-            return No(
-                $"NO BET - move {probabilityMove:+0.0%;-0.0%;0.0%}",
-                sideUpper.Equals("OVER", StringComparison.OrdinalIgnoreCase)
-                    ? $"Over probability move {probabilityMove:+0.0%;-0.0%;0.0%} is below required {minProbabilityMove:+0.0%;-0.0%;0.0%}."
-                    : $"Over probability move {probabilityMove:+0.0%;-0.0%;0.0%} is above required under threshold {minProbabilityMove:+0.0%;-0.0%;0.0%}.");
-
         string rulePart = profileRule is not null
             ? $"matched profile rule ({profileRule.StateTrigger}/{profileRule.Side} {profileRule.Line:0.##})"
             : $"scope {rules.Summary()}";
         string edgeText = edge.Value.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture);
         string minEdgeText = minEdge.ToString("P0", CultureInfo.InvariantCulture);
+        string leanEdgeText = (minEdge / 2.0).ToString("P0", CultureInfo.InvariantCulture);
+
+        // Decision priority is intentionally edge-first. Probability-move filters are secondary;
+        // otherwise a negative-value price can produce a misleading "move below threshold" reason.
+        if (edge.Value <= 0)
+            return No("NO BET - negative edge", $"{rulePart}; {sideUpper} edge {edgeText} is not positive and is below required {minEdgeText}.");
 
         if (hasRedCard)
         {
-            if (edge >= minEdge)
-                return new LiveTotalSideDecision { Decision = "MANUAL REVIEW", Explanation = $"{rulePart}; edge {edgeText} >= {minEdgeText}, but red card requires manual review." };
-            return No("NO BET", $"{rulePart}; edge {edgeText} below {minEdgeText}; red card also requires caution.");
+            if (edge.Value >= minEdge)
+                return new LiveTotalSideDecision { Decision = "MANUAL REVIEW", Explanation = $"{rulePart}; {sideUpper} edge {edgeText} >= required {minEdgeText}, but red card requires manual review." };
+            return No("NO BET", $"{rulePart}; {sideUpper} edge {edgeText} below required {minEdgeText}; red card also requires caution.");
         }
 
-        if (edge >= minEdge)
-            return new LiveTotalSideDecision { Decision = $"BET {sideUpper}", Explanation = $"{rulePart}; edge {edgeText} >= required {minEdgeText}." };
+        if (edge.Value < minEdge)
+        {
+            if (edge.Value >= minEdge / 2.0 && ProbabilityMoveFilterNotActiveOrAllowed(profileRule, useProbabilityMoveFilter, probabilityMoveAllowed))
+            {
+                return new LiveTotalSideDecision
+                {
+                    Decision = $"LEAN {sideUpper}",
+                    Explanation = $"{rulePart}; {sideUpper} edge {edgeText} is positive but below bet threshold {minEdgeText} and above lean threshold {leanEdgeText}."
+                };
+            }
 
-        if (edge >= minEdge / 2.0 && (profileRule is null || probabilityMoveAllowed))
-            return new LiveTotalSideDecision { Decision = $"LEAN {sideUpper}", Explanation = $"{rulePart}; edge {edgeText} is below bet threshold {minEdgeText} but above lean threshold {(minEdge / 2.0):P0}." };
+            return No("NO BET - edge below threshold", $"{rulePart}; {sideUpper} edge {edgeText} is below required {minEdgeText}.");
+        }
 
-        return No("NO BET", $"{rulePart}; edge {edgeText} below required {minEdgeText}.");
+        if ((profileRule is not null || useProbabilityMoveFilter) && !probabilityMoveAllowed)
+            return No(
+                $"NO BET - move {probabilityMove:+0.0%;-0.0%;0.0%}",
+                sideUpper.Equals("OVER", StringComparison.OrdinalIgnoreCase)
+                    ? $"{rulePart}; {sideUpper} edge {edgeText} passed required {minEdgeText}, but Over probability move {probabilityMove:+0.0%;-0.0%;0.0%} is below required {minProbabilityMove:+0.0%;-0.0%;0.0%}."
+                    : $"{rulePart}; {sideUpper} edge {edgeText} passed required {minEdgeText}, but Under requires Over probability move <= {minProbabilityMove:+0.0%;-0.0%;0.0%}; current move is {probabilityMove:+0.0%;-0.0%;0.0%}.");
+
+        return new LiveTotalSideDecision { Decision = $"BET {sideUpper}", Explanation = $"{rulePart}; {sideUpper} edge {edgeText} >= required {minEdgeText}." };
+    }
+
+    private static bool ProbabilityMoveFilterNotActiveOrAllowed(
+        LiveTotalProfileBettingRule? profileRule,
+        bool useProbabilityMoveFilter,
+        bool probabilityMoveAllowed)
+    {
+        return profileRule is null && !useProbabilityMoveFilter || probabilityMoveAllowed;
     }
 
     private static string? ScopeBlockReason(LiveTotalDecisionRuleOptions rules, string mode, string normalizedTrigger, int minute, double line)

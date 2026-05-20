@@ -58,35 +58,42 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         var warnings = new List<string>();
         bool allowed = true;
         string status = "READY";
+        string gateReason = string.Empty;
 
         if (input.HomeRedCards + input.AwayRedCards > 0 || trigger == "after-red-card")
         {
             allowed = false;
             status = "NO BET - red card/manual review";
-            warnings.Add("Red-card states are manual review/no-bet in current paper-test rules.");
+            gateReason = "Red-card states are manual review/no-bet in current paper-test rules.";
+            warnings.Add(gateReason);
         }
         else if (trigger == "after-goal" && !profile.AllowAfterGoalBetting)
         {
             allowed = false;
             status = "LOG ONLY - after-goal not enabled for this profile";
-            warnings.Add("This profile is configured to log AfterGoal only.");
+            gateReason = "This profile is configured to log AfterGoal only.";
+            warnings.Add(gateReason);
         }
         else if (trigger == "fixed-minute" && !profile.AllowFixedMinuteBetting)
         {
             allowed = false;
             status = "NO BET - fixed-minute disabled for this profile";
+            gateReason = "Fixed-minute betting is disabled for this profile.";
+            warnings.Add(gateReason);
         }
         else if (trigger == "fixed-minute" && input.LastGoalMinute >= 0 && input.Minute - input.LastGoalMinute <= input.RecentGoalMinutes)
         {
             allowed = false;
             status = "WAIT - recent goal";
-            warnings.Add($"Fixed-minute check is within {input.RecentGoalMinutes} minutes after a goal.");
+            gateReason = $"Fixed-minute check is within {input.RecentGoalMinutes} minutes after a goal; rerun as AfterGoal or wait for the check window.";
+            warnings.Add(gateReason);
         }
         else if (!IsCheckMinuteAllowed(trigger, input.Minute))
         {
             allowed = false;
             status = "NO BET - outside check window";
-            warnings.Add("Use fixed minutes or immediate after-event checks only.");
+            gateReason = BuildCheckWindowReason(trigger, input.Minute);
+            warnings.Add(gateReason);
         }
 
         Dictionary<double, double> overOdds = ParseOddsMap(input.LiveOverOddsText, warnings, "Over");
@@ -103,7 +110,7 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             LiveTotalPriceResult priced = await pricer.PriceAsync(cancellationToken);
 
             IReadOnlyList<LiveBettingDecisionRow> decisions = priced.Lines
-                .SelectMany(line => ToDecisionRows(line, allowed, status))
+                .SelectMany(line => ToDecisionRows(line, allowed, status, gateReason))
                 .ToList();
 
             string finalStatus = allowed
@@ -357,9 +364,22 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         }
     }
 
-    private static IReadOnlyList<LiveBettingDecisionRow> ToDecisionRows(LiveTotalLinePrice line, bool allowed, string blockedStatus)
+    private static IReadOnlyList<LiveBettingDecisionRow> ToDecisionRows(
+        LiveTotalLinePrice line,
+        bool allowed,
+        string blockedStatus,
+        string gateReason)
     {
         var rows = new List<LiveBettingDecisionRow>();
+
+        LiveTotalSideDecisionView over = ApplyAppGateToSide(
+            allowed,
+            blockedStatus,
+            gateReason,
+            line.OverDecision,
+            line.OverDecisionExplanation,
+            line.OverEdge,
+            "OVER");
 
         rows.Add(new LiveBettingDecisionRow
         {
@@ -372,9 +392,18 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             BaselineOverProbability = line.BaselineOverNoPushProbability,
             CorrectedOverProbability = line.CorrectedOverNoPushProbability,
             ProbabilityMove = line.OverProbabilityMove,
-            Decision = allowed ? line.OverDecision : blockedStatus,
-            Reason = allowed ? line.OverDecisionExplanation : "Rule gate blocked betting before model edge decision."
+            Decision = over.Decision,
+            Reason = over.Reason
         });
+
+        LiveTotalSideDecisionView under = ApplyAppGateToSide(
+            allowed,
+            blockedStatus,
+            gateReason,
+            line.UnderDecision,
+            line.UnderDecisionExplanation,
+            line.UnderEdge,
+            "UNDER");
 
         rows.Add(new LiveBettingDecisionRow
         {
@@ -387,12 +416,55 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             BaselineOverProbability = line.BaselineOverNoPushProbability,
             CorrectedOverProbability = line.CorrectedOverNoPushProbability,
             ProbabilityMove = line.OverProbabilityMove,
-            Decision = allowed ? line.UnderDecision : blockedStatus,
-            Reason = allowed ? line.UnderDecisionExplanation : "Rule gate blocked betting before model edge decision."
+            Decision = under.Decision,
+            Reason = under.Reason
         });
 
         return rows;
     }
+
+    private static LiveTotalSideDecisionView ApplyAppGateToSide(
+        bool allowed,
+        string blockedStatus,
+        string gateReason,
+        string modelDecision,
+        string modelReason,
+        double? edge,
+        string side)
+    {
+        if (allowed)
+            return new LiveTotalSideDecisionView(modelDecision, modelReason);
+
+        // Do not hide model-side no-bet reasons. A negative edge or edge-below-threshold row
+        // should explain the price/value problem, not only the app check-window gate.
+        if (IsModelNoBetReasonMoreImportant(modelDecision, edge))
+            return new LiveTotalSideDecisionView(modelDecision, modelReason);
+
+        string reason = string.IsNullOrWhiteSpace(gateReason)
+            ? blockedStatus
+            : $"{modelReason} App gate blocked the otherwise actionable {side} decision: {gateReason}";
+
+        return new LiveTotalSideDecisionView(blockedStatus, reason);
+    }
+
+    private static bool IsModelNoBetReasonMoreImportant(string modelDecision, double? edge)
+    {
+        if (!edge.HasValue)
+            return true;
+
+        if (edge.Value <= 0)
+            return true;
+
+        // Keep explicit model/rules no-bet explanations such as edge below threshold,
+        // probability-move filter, disabled profile rule, unsupported sparse bucket, etc.
+        if (modelDecision.StartsWith("NO BET", StringComparison.OrdinalIgnoreCase) &&
+            !modelDecision.Contains("outside check window", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
+    }
+
+    private readonly record struct LiveTotalSideDecisionView(string Decision, string Reason);
 
     private static IReadOnlyList<LiveBettingDecisionRow> BuildGateOnlyRows(
         IReadOnlyDictionary<double, double> overOdds,
@@ -426,6 +498,14 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
 
         int[] fixedMinutes = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85];
         return fixedMinutes.Contains(minute);
+    }
+
+    private static string BuildCheckWindowReason(string trigger, int minute)
+    {
+        if (trigger == "after-goal" || trigger == "after-red-card")
+            return $"After-event checks are allowed only during minutes 1-90; current minute is {minute}.";
+
+        return $"Fixed-minute checks are allowed only at 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, or 85. Current minute is {minute}.";
     }
 
     private static Dictionary<double, double> ParseOddsMap(string text, List<string> warnings, string side)
