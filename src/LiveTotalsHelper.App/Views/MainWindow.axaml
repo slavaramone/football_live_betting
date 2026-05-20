@@ -142,25 +142,28 @@
       </Border>
 
       <Border Grid.Row="2" Classes="panel">
-        <Grid ColumnDefinitions="90,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="6" RowSpacing="2">
+        <Grid ColumnDefinitions="90,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="6" RowSpacing="2">
           <TextBlock Grid.Row="0" Text="Model" Classes="label" />
           <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding ModelSummaryText}" FontSize="12" TextTrimming="CharacterEllipsis" />
 
-          <TextBlock Grid.Row="1" Text="Warnings" Classes="label" />
-          <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Warnings}" FontSize="12" TextWrapping="Wrap" MaxHeight="34" />
+          <TextBlock Grid.Row="1" Text="Rules" Classes="label" />
+          <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding DecisionRulesText}" FontSize="12" TextWrapping="Wrap" MaxHeight="34" />
 
-          <TextBlock Grid.Row="2" Text="State corr." Classes="label" />
-          <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding StateCorrectionText}" FontSize="12" TextWrapping="Wrap" MaxHeight="34" />
+          <TextBlock Grid.Row="2" Text="Warnings" Classes="label" />
+          <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Warnings}" FontSize="12" TextWrapping="Wrap" MaxHeight="34" />
 
-          <TextBlock Grid.Row="3" Text="Volume" Classes="label" />
-          <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding VolumeText}" FontSize="12" TextWrapping="Wrap" MaxHeight="34" />
+          <TextBlock Grid.Row="3" Text="State corr." Classes="label" />
+          <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding StateCorrectionText}" FontSize="12" TextWrapping="Wrap" MaxHeight="34" />
+
+          <TextBlock Grid.Row="4" Text="Volume" Classes="label" />
+          <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding VolumeText}" FontSize="12" TextWrapping="Wrap" MaxHeight="34" />
         </Grid>
       </Border>
 
       <Grid Grid.Row="3" ColumnDefinitions="*,260" ColumnSpacing="6">
         <Border Grid.Column="0" Classes="panel">
           <Grid RowDefinitions="Auto,*">
-            <Grid Grid.Row="0" ColumnDefinitions="45,55,58,58,58,70,62,70,*" Margin="0,0,0,4">
+            <Grid Grid.Row="0" ColumnDefinitions="45,55,58,58,58,70,62,70,150,*" Margin="0,0,0,4">
               <TextBlock Text="Line" Classes="label" />
               <TextBlock Grid.Column="1" Text="Side" Classes="label" />
               <TextBlock Grid.Column="2" Text="BaseO" Classes="label" />
@@ -170,13 +173,14 @@
               <TextBlock Grid.Column="6" Text="Edge" Classes="label" />
               <TextBlock Grid.Column="7" Text="Fair" Classes="label" />
               <TextBlock Grid.Column="8" Text="Decision" Classes="label" />
+              <TextBlock Grid.Column="9" Text="Reason" Classes="label" />
             </Grid>
             <ScrollViewer Grid.Row="1">
               <ItemsControl ItemsSource="{Binding LiveDecisions}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="models:LiveBettingDecisionRow">
                     <Border BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="0,1,0,0" Padding="0,4">
-                      <Grid ColumnDefinitions="45,55,58,58,58,70,62,70,*">
+                      <Grid ColumnDefinitions="45,55,58,58,58,70,62,70,150,*">
                         <TextBlock Text="{Binding LineText}" FontSize="12" FontWeight="SemiBold" />
                         <TextBlock Grid.Column="1" Text="{Binding Side}" FontSize="12" />
                         <TextBlock Grid.Column="2" Text="{Binding BaseOverText}" FontSize="12" />
@@ -185,7 +189,8 @@
                         <TextBlock Grid.Column="5" Text="{Binding BookOddsText}" FontSize="12" />
                         <TextBlock Grid.Column="6" Text="{Binding EdgeText}" FontSize="12" Classes="positive" />
                         <TextBlock Grid.Column="7" Text="{Binding FairOddsText}" FontSize="12" />
-                        <TextBlock Grid.Column="8" Text="{Binding Decision}" FontSize="12" FontWeight="Bold" />
+                        <TextBlock Grid.Column="8" Text="{Binding Decision}" FontSize="12" FontWeight="Bold" TextWrapping="Wrap" />
+                        <TextBlock Grid.Column="9" Text="{Binding Reason}" FontSize="11" TextWrapping="Wrap" />
                       </Grid>
                     </Border>
                   </DataTemplate>

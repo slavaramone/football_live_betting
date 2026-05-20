@@ -579,6 +579,9 @@ static async Task<int> RunPriceLiveTotal(string[] args)
             options.LiveBettingRules.Add(rule);
     }
 
+    ApplyProfileDecisionRules(options.DecisionRules, profile);
+    ApplyDecisionRuleOverrides(options.DecisionRules, parsed);
+
     bool explicitTargetLines = parsed.Has("target-lines");
     if (!explicitTargetLines && profile?.TargetLines is { Count: > 0 })
     {
@@ -673,6 +676,9 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     Console.WriteLine($"Blend: Empirical {result.EmpiricalWeight:P0}, Weibull {result.WeibullWeight:P0}");
     Console.WriteLine($"Edge threshold: {options.EdgeThreshold:P0}");
     Console.WriteLine($"Probability move filter: {options.UseProbabilityMoveFilter}; over >= {options.MinOverProbabilityMove:+0%;-0%;0%}, under <= {options.MinUnderProbabilityMove:+0%;-0%;0%}; under allowed: {options.UnderSignalsBettingAllowed}");
+    Console.WriteLine($"Decision rules: {result.DecisionRulesSummary}");
+    if (!string.IsNullOrWhiteSpace(profile?.DecisionRulesNotes))
+        Console.WriteLine($"Decision rules notes: {profile.DecisionRulesNotes}");
     if (options.LiveBettingRules.Count > 0)
         Console.WriteLine($"Profile betting rules loaded: {options.LiveBettingRules.Count}");
     Console.WriteLine($"Remaining share: Weibull {result.WeibullRemainingShare:P1}, Empirical {result.EmpiricalRemainingShare:P1}, Used {result.TimingRemainingShare:P1}");
@@ -721,9 +727,51 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         Console.WriteLine($"{line.Line,4:0.##}  {line.BaselineOverNoPushProbability,5:P0}  {line.CorrectedOverNoPushProbability,5:P0}  {line.OverProbabilityMove,6:+0.0%;-0.0%;0.0%}  {line.WinProbability,6:P1}  {line.PushProbability,6:P1}  {line.UnderWinProbability,6:P1}  {fairOver,5}  {bookOver,5}  {overEdge,7}  {overEv,7}  {fairUnder,6}  {bookUnder,5}  {underEdge,7}  {underEv,7}  {line.Decision}");
     }
 
+    Console.WriteLine();
+    Console.WriteLine("Decision explanations:");
+    foreach (LiveTotalLinePrice line in result.Lines)
+    {
+        if (line.BookOverOdds.HasValue)
+            Console.WriteLine($"- Over {line.Line:0.##}: {line.OverDecision} — {line.OverDecisionExplanation}");
+        if (line.BookUnderOdds.HasValue)
+            Console.WriteLine($"- Under {line.Line:0.##}: {line.UnderDecision} — {line.UnderDecisionExplanation}");
+    }
+
     return 0;
 }
 
+
+static void ApplyProfileDecisionRules(LiveTotalDecisionRuleOptions target, LeagueProfile? profile)
+{
+    if (profile is null)
+        return;
+
+    target.DecisionMode = profile.DecisionMode;
+    target.MinMinute = profile.MinMinute;
+    target.RequireGoalTrigger = profile.RequireGoalTrigger;
+    target.MinLine = profile.MinLine;
+    target.AllowedLines.Clear();
+    foreach (double line in profile.AllowedLines)
+        target.AllowedLines.Add(line);
+    target.FallbackBettingEnabled = profile.FallbackBettingEnabled;
+    target.Notes = profile.DecisionRulesNotes;
+}
+
+static void ApplyDecisionRuleOverrides(LiveTotalDecisionRuleOptions target, ParsedArgs parsed)
+{
+    if (parsed.Has("decision-mode"))
+        target.DecisionMode = parsed.RequiredString("decision-mode");
+    if (parsed.Has("min-minute"))
+        target.MinMinute = parsed.RequiredInt("min-minute");
+    if (parsed.Has("require-goal-trigger"))
+        target.RequireGoalTrigger = parsed.Bool("require-goal-trigger", target.RequireGoalTrigger);
+    if (parsed.Has("min-line"))
+        target.MinLine = parsed.RequiredDouble("min-line");
+    if (parsed.Has("allowed-lines"))
+        AddOptionalDoubleList(target.AllowedLines, parsed, "allowed-lines", clearExisting: true);
+    if (parsed.Has("fallback-betting-enabled"))
+        target.FallbackBettingEnabled = parsed.Bool("fallback-betting-enabled", target.FallbackBettingEnabled);
+}
 
 static string FormatFairOdds(double odds)
 {

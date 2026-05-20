@@ -69,6 +69,7 @@ public sealed class MainWindowViewModel : ObservableObject
             {
                 LiveInput.ProfileKey = value.Key;
                 OnPropertyChanged(nameof(ProfileNotes));
+                OnPropertyChanged(nameof(DecisionRulesText));
             }
         }
     }
@@ -85,6 +86,7 @@ public sealed class MainWindowViewModel : ObservableObject
                 OnPropertyChanged(nameof(LiveStatus));
                 OnPropertyChanged(nameof(Warnings));
                 OnPropertyChanged(nameof(ModelSummaryText));
+                OnPropertyChanged(nameof(DecisionRulesText));
                 OnPropertyChanged(nameof(StateCorrectionText));
                 OnPropertyChanged(nameof(VolumeText));
             }
@@ -94,6 +96,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public string LiveStatus => LiveResult.Status;
     public string Warnings => LiveResult.Warnings;
     public string ModelSummaryText => LiveResult.ModelSummary;
+    public string DecisionRulesText => string.IsNullOrWhiteSpace(LiveResult.DecisionRulesSummary) ? SelectedProfile?.Notes ?? string.Empty : LiveResult.DecisionRulesSummary;
     public string StateCorrectionText => $"{(LiveResult.StateCorrectionSupported ? "supported" : "unsupported")} | {LiveResult.StateCorrectionFactor:0.###} | {LiveResult.StateCorrectionSource}";
     public string VolumeText => $"{LiveResult.VolumeFactor:0.###} | {LiveResult.VolumeFactorSource}";
     public string PaperLogPath

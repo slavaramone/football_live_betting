@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using LiveTotalsHelper.App.ViewModels;
 using LiveTotalsHelper.App.Views;
 using LiveTotalsHelper.Infrastructure;
@@ -22,18 +23,26 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        AppStartupTrace.Write("OnFrameworkInitializationCompleted entered");
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            AppStartupTrace.Write("Classic desktop lifetime detected");
             try
             {
+                AppStartupTrace.Write("Loading startup settings");
                 AppStartupSettings settings = LoadStartupSettings();
+                AppStartupTrace.Write("Startup settings loaded");
 
                 var dbOptions = new DbContextOptionsBuilder<LiveTotalsDbContext>()
                     .UseNpgsql(settings.LiveTotalsDbConnectionString)
                     .Options;
                 var dbContext = new LiveTotalsDbContext(dbOptions);
 
-                LeagueProfileStore profileStore = LeagueProfileStore.LoadAsync(settings.ProfilesFile, CancellationToken.None).GetAwaiter().GetResult();
+                AppStartupTrace.Write($"Loading profiles synchronously: {settings.ProfilesFile}");
+                string resolvedProfilesFile = LeagueProfileStore.ResolvePath(settings.ProfilesFile);
+                AppStartupTrace.Write($"Resolved profiles path: {resolvedProfilesFile}");
+                LeagueProfileStore profileStore = LeagueProfileStore.Load(settings.ProfilesFile);
+                AppStartupTrace.Write($"Profiles loaded: {profileStore.Profiles.Count}");
                 string logsFolder = settings.LogsFolder;
 
                 var matchRepository = new LiveTotalsHelper.Infrastructure.DbMatchRepository(dbContext);
@@ -46,13 +55,23 @@ public partial class App : Application
                 {
                     DataContext = new MainWindowViewModel(matchRepository, bettingModel, liveSessionService)
                 };
-                desktop.MainWindow.Show();
+                AppStartupTrace.Write("MainWindow assigned");
+
+                // Robust explicit display. Some debug/startup paths may assign MainWindow
+                // but not visibly activate it, so post Show/Activate after the UI loop starts.
+                Dispatcher.UIThread.Post(() =>
+                {
+                    AppStartupTrace.Write("Showing MainWindow");
+                    desktop.MainWindow.Show();
+                    desktop.MainWindow.Activate();
+                });
             }
             catch (Exception ex)
             {
                 string errorText = ex.ToString();
                 TryWriteStartupError(errorText);
 
+                AppStartupTrace.Write("Startup exception caught: " + errorText);
                 desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
                 desktop.MainWindow = new Window
                 {
@@ -68,11 +87,19 @@ public partial class App : Application
                         TextWrapping = Avalonia.Media.TextWrapping.Wrap
                     }
                 };
-                desktop.MainWindow.Show();
+
+                Dispatcher.UIThread.Post(() =>
+                {
+                    AppStartupTrace.Write("Showing startup error window");
+                    desktop.MainWindow.Show();
+                    desktop.MainWindow.Activate();
+                });
             }
         }
 
+        AppStartupTrace.Write("Calling base.OnFrameworkInitializationCompleted");
         base.OnFrameworkInitializationCompleted();
+        AppStartupTrace.Write("OnFrameworkInitializationCompleted finished");
     }
 
 

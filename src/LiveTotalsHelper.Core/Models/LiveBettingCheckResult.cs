@@ -7,6 +7,7 @@ public sealed class LiveBettingCheckResult
     public string Status { get; init; } = string.Empty;
     public string Warnings { get; init; } = string.Empty;
     public string ModelSummary { get; init; } = string.Empty;
+    public string DecisionRulesSummary { get; init; } = string.Empty;
     public double RemainingXg { get; init; }
     public double StateCorrectionFactor { get; init; }
     public string StateCorrectionSource { get; init; } = string.Empty;

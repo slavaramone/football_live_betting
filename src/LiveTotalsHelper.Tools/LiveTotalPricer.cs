@@ -21,6 +21,7 @@ public sealed class LiveTotalPriceOptions
     public double MinOverProbabilityMove { get; set; } = 0.10;
     public double MinUnderProbabilityMove { get; set; } = -0.12;
     public bool UnderSignalsBettingAllowed { get; set; }
+    public LiveTotalDecisionRuleOptions DecisionRules { get; } = new();
     public List<LiveTotalProfileBettingRule> LiveBettingRules { get; } = [];
     public int HomeRedCards { get; set; }
     public int AwayRedCards { get; set; }
@@ -64,6 +65,7 @@ public sealed class LiveTotalPriceResult
     public double RemainingXgBeforeVolume { get; set; }
     public double VolumeFactor { get; set; } = 1.0;
     public string VolumeFactorSource { get; set; } = string.Empty;
+    public string DecisionRulesSummary { get; set; } = string.Empty;
     public double RemainingXg { get; set; }
     public int HomeRedCards { get; set; }
     public int AwayRedCards { get; set; }
@@ -97,8 +99,11 @@ public sealed class LiveTotalLinePrice
     public double? UnderEdge { get; set; }
     public double? UnderExpectedValue { get; set; }
     public string OverDecision { get; set; } = string.Empty;
+    public string OverDecisionExplanation { get; set; } = string.Empty;
     public string UnderDecision { get; set; } = string.Empty;
+    public string UnderDecisionExplanation { get; set; } = string.Empty;
     public string Decision { get; set; } = string.Empty;
+    public string DecisionExplanation { get; set; } = string.Empty;
 }
 
 public sealed class LiveTotalPricer
@@ -165,6 +170,7 @@ public sealed class LiveTotalPricer
             RemainingXgBeforeVolume = remainingXgBeforeVolume,
             VolumeFactor = volumeFactor,
             VolumeFactorSource = _options.VolumeFactorSource,
+            DecisionRulesSummary = _options.DecisionRules.Summary(),
             RemainingXg = remainingXg,
             HomeRedCards = _options.HomeRedCards,
             AwayRedCards = _options.AwayRedCards,
@@ -211,33 +217,33 @@ public sealed class LiveTotalPricer
 
             double? overEdge = null;
             double? overEv = null;
-            string overDecision;
+            LiveTotalSideDecision overSideDecision;
             if (!hasBookOverOdds)
             {
-                overDecision = "NO ODDS";
+                overSideDecision = new LiveTotalSideDecision { Decision = "NO ODDS", Explanation = "No over odds were entered for this line." };
             }
             else
             {
                 overEdge = fairOverOdds > 0 && !double.IsInfinity(fairOverOdds) ? bookOverOdds / fairOverOdds - 1.0 : null;
                 overEv = probabilities.WinProbability * (bookOverOdds - 1.0) - probabilities.LossProbability;
-                overDecision = BuildSideDecision(line, overEdge, overProbabilityMove, result.StateCorrectionSupported, result.StateTrigger, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "OVER");
+                overSideDecision = BuildSideDecision(line, overEdge, overProbabilityMove, result.StateCorrectionSupported, result.StateTrigger, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "OVER");
             }
 
             double? underEdge = null;
             double? underEv = null;
-            string underDecision;
+            LiveTotalSideDecision underSideDecision;
             if (!hasBookUnderOdds)
             {
-                underDecision = "NO ODDS";
+                underSideDecision = new LiveTotalSideDecision { Decision = "NO ODDS", Explanation = "No under odds were entered for this line." };
             }
             else
             {
                 underEdge = fairUnderOdds > 0 && !double.IsInfinity(fairUnderOdds) ? bookUnderOdds / fairUnderOdds - 1.0 : null;
                 underEv = probabilities.LossProbability * (bookUnderOdds - 1.0) - probabilities.WinProbability;
-                underDecision = BuildSideDecision(line, underEdge, overProbabilityMove, result.StateCorrectionSupported, result.StateTrigger, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "UNDER");
+                underSideDecision = BuildSideDecision(line, underEdge, overProbabilityMove, result.StateCorrectionSupported, result.StateTrigger, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "UNDER");
             }
 
-            string decision = SelectBestDecision(overEdge, overDecision, underEdge, underDecision);
+            LiveTotalSideDecision selectedDecision = SelectBestDecision(overEdge, overSideDecision, underEdge, underSideDecision);
 
             result.Lines.Add(new LiveTotalLinePrice
             {
@@ -256,9 +262,12 @@ public sealed class LiveTotalPricer
                 OverExpectedValue = overEv,
                 UnderEdge = underEdge,
                 UnderExpectedValue = underEv,
-                OverDecision = overDecision,
-                UnderDecision = underDecision,
-                Decision = decision
+                OverDecision = overSideDecision.Decision,
+                OverDecisionExplanation = overSideDecision.Explanation,
+                UnderDecision = underSideDecision.Decision,
+                UnderDecisionExplanation = underSideDecision.Explanation,
+                Decision = selectedDecision.Decision,
+                DecisionExplanation = selectedDecision.Explanation
             });
         }
 
@@ -292,51 +301,26 @@ public sealed class LiveTotalPricer
         return LiveTotalStateCorrectionResolver.Resolve(correction, _options.StateTrigger, _options.Minute, _options.HomeGoals, _options.AwayGoals);
     }
 
-    private string BuildSideDecision(double line, double? edge, double probabilityMove, bool stateCorrectionSupported, string stateTrigger, bool hasRecentGoal, bool hasRedCard, string side)
+    private LiveTotalSideDecision BuildSideDecision(double line, double? edge, double probabilityMove, bool stateCorrectionSupported, string stateTrigger, bool hasRecentGoal, bool hasRedCard, string side)
     {
-        if (!edge.HasValue)
-            return "NO ODDS";
-        if (!stateCorrectionSupported)
-            return "NO BET - unsupported sparse state bucket";
-        if (hasRecentGoal && !LiveTotalStateTrigger.Normalize(stateTrigger).Equals(LiveTotalStateTrigger.AfterGoal, StringComparison.OrdinalIgnoreCase))
-            return "WAIT";
-
-        LiveTotalProfileBettingRule? rule = FindBettingRule(line, stateTrigger, side);
-        if (_options.LiveBettingRules.Count > 0 && rule is null)
-            return "NO BET - no profile rule";
-
-        double minEdge = rule?.MinEdge > 0 ? rule.MinEdge : _options.EdgeThreshold;
-        double minProbabilityMove = rule is not null
-            ? rule.MinProbabilityMove
-            : side.Equals("OVER", StringComparison.OrdinalIgnoreCase)
-                ? _options.MinOverProbabilityMove
-                : _options.MinUnderProbabilityMove;
-
-        bool probabilityMoveAllowed;
-        if (side.Equals("OVER", StringComparison.OrdinalIgnoreCase))
-            probabilityMoveAllowed = probabilityMove >= minProbabilityMove;
-        else
-            probabilityMoveAllowed = probabilityMove <= minProbabilityMove;
-
-        if (rule is not null && !rule.AllowBet)
-            return "NO BET - profile rule disabled";
-
-        if (rule is null && _options.UseProbabilityMoveFilter && side.Equals("UNDER", StringComparison.OrdinalIgnoreCase) && !_options.UnderSignalsBettingAllowed)
-            return "NO BET - under disabled";
-
-        if ((rule is not null || _options.UseProbabilityMoveFilter) && !probabilityMoveAllowed)
-            return $"NO BET - move {probabilityMove:+0.0%;-0.0%;0.0%}";
-
-        if (hasRedCard)
-            return edge >= minEdge ? "MANUAL REVIEW" : "NO BET";
-
-        if (edge >= minEdge)
-            return $"BET {side}";
-
-        if (edge >= minEdge / 2.0 && (rule is null || probabilityMoveAllowed))
-            return $"LEAN {side}";
-
-        return "NO BET";
+        return LiveTotalDecisionRulesHandler.BuildSideDecision(
+            _options.DecisionRules,
+            _options.LiveBettingRules,
+            FindBettingRule,
+            _options.UseProbabilityMoveFilter,
+            _options.UnderSignalsBettingAllowed,
+            _options.EdgeThreshold,
+            _options.MinOverProbabilityMove,
+            _options.MinUnderProbabilityMove,
+            line,
+            edge,
+            probabilityMove,
+            stateCorrectionSupported,
+            stateTrigger,
+            _options.Minute,
+            hasRecentGoal,
+            hasRedCard,
+            side);
     }
 
     private LiveTotalProfileBettingRule? FindBettingRule(double line, string stateTrigger, string side)
@@ -374,10 +358,10 @@ public sealed class LiveTotalPricer
         return Math.Clamp(probabilities.WinProbability / decisive, 0.0, 1.0);
     }
 
-    private static string SelectBestDecision(double? overEdge, string overDecision, double? underEdge, string underDecision)
+    private static LiveTotalSideDecision SelectBestDecision(double? overEdge, LiveTotalSideDecision overDecision, double? underEdge, LiveTotalSideDecision underDecision)
     {
-        bool overAction = overDecision.StartsWith("BET ", StringComparison.OrdinalIgnoreCase) || overDecision.StartsWith("LEAN ", StringComparison.OrdinalIgnoreCase) || overDecision.Equals("MANUAL REVIEW", StringComparison.OrdinalIgnoreCase);
-        bool underAction = underDecision.StartsWith("BET ", StringComparison.OrdinalIgnoreCase) || underDecision.StartsWith("LEAN ", StringComparison.OrdinalIgnoreCase) || underDecision.Equals("MANUAL REVIEW", StringComparison.OrdinalIgnoreCase);
+        bool overAction = overDecision.IsAction;
+        bool underAction = underDecision.IsAction;
 
         if (overAction && underAction)
         {
@@ -388,11 +372,13 @@ public sealed class LiveTotalPricer
 
         if (overAction) return overDecision;
         if (underAction) return underDecision;
-        if (overDecision == "WAIT" || underDecision == "WAIT") return "WAIT";
-        if (overDecision == "NO BET - unsupported sparse state bucket" || underDecision == "NO BET - unsupported sparse state bucket")
-            return "NO BET - unsupported sparse state bucket";
-        if (overDecision == "NO ODDS" && underDecision == "NO ODDS") return "NO ODDS";
-        return "NO BET";
+        if (overDecision.Decision == "WAIT" || underDecision.Decision == "WAIT") return overDecision.Decision == "WAIT" ? overDecision : underDecision;
+        if (overDecision.Decision == "NO BET - unsupported sparse state bucket" || underDecision.Decision == "NO BET - unsupported sparse state bucket")
+            return overDecision.Decision == "NO BET - unsupported sparse state bucket" ? overDecision : underDecision;
+        if (overDecision.Decision == "NO ODDS" && underDecision.Decision == "NO ODDS") return overDecision;
+        if (overDecision.Decision.StartsWith("NO BET - rules", StringComparison.OrdinalIgnoreCase)) return overDecision;
+        if (underDecision.Decision.StartsWith("NO BET - rules", StringComparison.OrdinalIgnoreCase)) return underDecision;
+        return new LiveTotalSideDecision { Decision = "NO BET", Explanation = "Neither side passed edge/rule thresholds." };
     }
 
     private void ValidateOptions()

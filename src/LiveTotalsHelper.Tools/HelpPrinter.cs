@@ -249,8 +249,12 @@ public static class HelpPrinter
         Console.WriteLine("  --before-round       Needed for current-season volume unless defaultBeforeRound is maintained in the profile.");
         Console.WriteLine("  --home-red-cards / --away-red-cards Optional; red-card states remain warning/manual-review states.");
         Console.WriteLine("  --last-goal-minute   Optional; fixed-minute checks shortly after a goal become WAIT.");
+        Console.WriteLine("  --decision-mode      Optional override: FullModel, AfterGoalOnly, SecondHalfAfterGoalOnly.");
+        Console.WriteLine("  --min-minute / --min-line / --allowed-lines Optional overrides for profile decision rules.");
+        Console.WriteLine("  --require-goal-trigger true|false and --fallback-betting-enabled true|false override profile gates.");
         Console.WriteLine();
         Console.WriteLine("All stable league/model settings should live in the profile: modelPath, stateCorrectionPath, league, seasons, empirical weight, target lines, current-season volume settings, thresholds.");
+        Console.WriteLine("Profile decision-rule fields are also honored: decisionMode, minMinute, requireGoalTrigger, minLine, allowedLines, fallbackBettingEnabled.");
     }
 
     

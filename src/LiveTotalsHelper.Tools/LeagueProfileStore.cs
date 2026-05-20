@@ -71,6 +71,15 @@ public sealed class LeagueProfile
     public double MinUnderProbabilityMove { get; set; } = -0.12;
     public bool UnderSignalsBettingAllowed { get; set; }
     public List<LiveTotalProfileBettingRule> LiveBettingRules { get; set; } = [];
+    // Decision/rules gate used by price-live-total and Avalonia.
+    public string DecisionMode { get; set; } = LiveTotalDecisionMode.FullModel;
+    public int? MinMinute { get; set; }
+    public bool RequireGoalTrigger { get; set; }
+    public double? MinLine { get; set; }
+    public List<double> AllowedLines { get; set; } = [];
+    public bool FallbackBettingEnabled { get; set; } = true;
+    public string DecisionRulesNotes { get; set; } = string.Empty;
+
     public int PriorStrengthMatches { get; set; } = 100;
     public List<double> TargetLines { get; set; } = [];
     public string RiskLevel { get; set; } = string.Empty;
@@ -87,6 +96,24 @@ public sealed class LeagueProfileStore
     }
 
     public IReadOnlyList<LeagueProfile> Profiles => _profiles;
+
+
+    public static LeagueProfileStore Load(string path)
+    {
+        string resolvedPath = ResolvePath(path);
+        if (!File.Exists(resolvedPath))
+            throw new FileNotFoundException($"League profiles file was not found: {resolvedPath}", resolvedPath);
+
+        string json = File.ReadAllText(resolvedPath);
+        LeagueProfilesConfig config = JsonSerializer.Deserialize<LeagueProfilesConfig>(json, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            ReadCommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true
+        }) ?? new LeagueProfilesConfig();
+
+        return new LeagueProfileStore(config.Profiles);
+    }
 
     public static async Task<LeagueProfileStore> LoadAsync(string path, CancellationToken cancellationToken)
     {

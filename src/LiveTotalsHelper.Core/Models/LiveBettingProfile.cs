@@ -12,6 +12,12 @@ public sealed class LiveBettingProfile
     public int? DefaultBeforeRound { get; init; }
     public double EdgeThreshold { get; init; } = 0.10;
     public bool UseProbabilityMoveFilter { get; init; }
+    public string DecisionMode { get; init; } = "FullModel";
+    public int? MinMinute { get; init; }
+    public bool RequireGoalTrigger { get; init; }
+    public double? MinLine { get; init; }
+    public IReadOnlyList<double> AllowedLines { get; init; } = [];
+    public bool FallbackBettingEnabled { get; init; } = true;
     public int LiveBettingRulesCount { get; init; }
     public string Notes { get; init; } = string.Empty;
 }

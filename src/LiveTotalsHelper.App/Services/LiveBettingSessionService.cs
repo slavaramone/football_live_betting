@@ -119,6 +119,7 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
                 Status = finalStatus,
                 Warnings = string.Join(Environment.NewLine, warnings.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct()),
                 ModelSummary = $"Remaining xG {priced.RemainingXg:0.###}; timing {priced.TimingRemainingShare:P1}; state {priced.StateCorrectionFactor:0.###}; volume {priced.VolumeFactor:0.###}",
+                DecisionRulesSummary = priced.DecisionRulesSummary,
                 RemainingXg = priced.RemainingXg,
                 StateCorrectionFactor = priced.StateCorrectionFactor,
                 StateCorrectionSource = priced.StateCorrectionSource,
@@ -151,7 +152,7 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
 
         if (writeHeader)
         {
-            writer.WriteLine("CheckedAt,Profile,Match,Trigger,Minute,Score,StartingLine,StartingOver,StartingUnder,LiveOverOdds,LiveUnderOdds,Status,Warnings,RemainingXg,StateCorrectionSupported,StateCorrectionSource,VolumeFactor,VolumeFactorSource,Line,Side,BookOdds,ModelProbability,FairOdds,Edge,BaseOverProbability,CorrectedOverProbability,ProbabilityMove,Decision,Reason");
+            writer.WriteLine("CheckedAt,Profile,Match,Trigger,Minute,Score,StartingLine,StartingOver,StartingUnder,LiveOverOdds,LiveUnderOdds,Status,DecisionRules,Warnings,RemainingXg,StateCorrectionSupported,StateCorrectionSource,VolumeFactor,VolumeFactorSource,Line,Side,BookOdds,ModelProbability,FairOdds,Edge,BaseOverProbability,CorrectedOverProbability,ProbabilityMove,Decision,DecisionReason");
         }
 
         foreach (LiveBettingDecisionRow decision in result.Decisions.DefaultIfEmpty(new LiveBettingDecisionRow()))
@@ -169,6 +170,7 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
                 Csv(input.LiveOverOddsText),
                 Csv(input.LiveUnderOddsText),
                 Csv(result.Status),
+                Csv(result.DecisionRulesSummary),
                 Csv(result.Warnings),
                 D(result.RemainingXg),
                 result.StateCorrectionSupported ? "1" : "0",
@@ -201,7 +203,7 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
 
         if (writeHeader)
         {
-            writer.WriteLine("BetLoggedAt,Mode,Profile,Match,Trigger,Minute,Score,Line,Side,BookOdds,Stake,ModelProbability,FairOdds,Edge,BaseOverProbability,CorrectedOverProbability,ProbabilityMove,Decision,RemainingXg,Notes");
+            writer.WriteLine("BetLoggedAt,Mode,Profile,Match,Trigger,Minute,Score,Line,Side,BookOdds,Stake,ModelProbability,FairOdds,Edge,BaseOverProbability,CorrectedOverProbability,ProbabilityMove,Decision,DecisionReason,DecisionRules,RemainingXg,Notes");
         }
 
         double.TryParse(input.SelectedBetLineText, NumberStyles.Float, CultureInfo.InvariantCulture, out double selectedLine);
@@ -230,6 +232,8 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             row?.CorrectedOverProbability.HasValue == true ? D(row.CorrectedOverProbability.Value) : "",
             row?.ProbabilityMove.HasValue == true ? D(row.ProbabilityMove.Value) : "",
             Csv(row?.Decision ?? "MANUAL"),
+            Csv(row?.Reason ?? string.Empty),
+            Csv(result.DecisionRulesSummary),
             D(result.RemainingXg),
             Csv(input.BetNotes)));
 
@@ -251,6 +255,12 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             DefaultBeforeRound = profile.DefaultBeforeRound,
             EdgeThreshold = profile.EdgeThreshold,
             UseProbabilityMoveFilter = profile.UseProbabilityMoveFilter,
+            DecisionMode = profile.DecisionMode,
+            MinMinute = profile.MinMinute,
+            RequireGoalTrigger = profile.RequireGoalTrigger,
+            MinLine = profile.MinLine,
+            AllowedLines = profile.AllowedLines,
+            FallbackBettingEnabled = profile.FallbackBettingEnabled,
             LiveBettingRulesCount = profile.LiveBettingRules.Count,
             Notes = BuildProfileNotes(profile)
         };
@@ -290,6 +300,8 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
 
         foreach (LiveTotalProfileBettingRule rule in profile.LiveBettingRules)
             options.LiveBettingRules.Add(rule);
+
+        ApplyProfileDecisionRules(options.DecisionRules, profile);
 
         options.TargetLines.Clear();
         foreach (double line in ParseLines(input.TargetLinesText, profile.TargetLines.Count > 0 ? profile.TargetLines : overOdds.Keys.Concat(underOdds.Keys)))
@@ -361,7 +373,7 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             CorrectedOverProbability = line.CorrectedOverNoPushProbability,
             ProbabilityMove = line.OverProbabilityMove,
             Decision = allowed ? line.OverDecision : blockedStatus,
-            Reason = allowed ? line.OverDecision : "Rule gate blocked betting before model edge decision."
+            Reason = allowed ? line.OverDecisionExplanation : "Rule gate blocked betting before model edge decision."
         });
 
         rows.Add(new LiveBettingDecisionRow
@@ -376,7 +388,7 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             CorrectedOverProbability = line.CorrectedOverNoPushProbability,
             ProbabilityMove = line.OverProbabilityMove,
             Decision = allowed ? line.UnderDecision : blockedStatus,
-            Reason = allowed ? line.UnderDecision : "Rule gate blocked betting before model edge decision."
+            Reason = allowed ? line.UnderDecisionExplanation : "Rule gate blocked betting before model edge decision."
         });
 
         return rows;
@@ -477,6 +489,20 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         if (!string.IsNullOrWhiteSpace(profile.Notes))
             parts.Add(profile.Notes);
 
+        var decisionRules = new LiveTotalDecisionRuleOptions
+        {
+            DecisionMode = profile.DecisionMode,
+            MinMinute = profile.MinMinute,
+            RequireGoalTrigger = profile.RequireGoalTrigger,
+            MinLine = profile.MinLine,
+            AllowedLines = profile.AllowedLines,
+            FallbackBettingEnabled = profile.FallbackBettingEnabled,
+            Notes = profile.DecisionRulesNotes
+        };
+        parts.Add($"Decision rules: {decisionRules.Summary()}");
+        if (!string.IsNullOrWhiteSpace(profile.DecisionRulesNotes))
+            parts.Add(profile.DecisionRulesNotes);
+
         if (profile.UseProbabilityMoveFilter || profile.LiveBettingRules.Count > 0)
         {
             string rules = profile.LiveBettingRules.Count > 0
@@ -486,6 +512,19 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         }
 
         return string.Join(" | ", parts);
+    }
+
+    private static void ApplyProfileDecisionRules(LiveTotalDecisionRuleOptions target, LeagueProfile profile)
+    {
+        target.DecisionMode = profile.DecisionMode;
+        target.MinMinute = profile.MinMinute;
+        target.RequireGoalTrigger = profile.RequireGoalTrigger;
+        target.MinLine = profile.MinLine;
+        target.AllowedLines.Clear();
+        foreach (double line in profile.AllowedLines)
+            target.AllowedLines.Add(line);
+        target.FallbackBettingEnabled = profile.FallbackBettingEnabled;
+        target.Notes = profile.DecisionRulesNotes;
     }
 
     private static string NormalizeLeagueKey(string value)
