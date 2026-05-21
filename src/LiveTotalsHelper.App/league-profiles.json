@@ -1,6 +1,93 @@
 {
   "profiles": [
     {
+      "key": "m-league-division-a",
+      "name": "M-League, Division A",
+      "league": "M-League, Division A",
+      "modelPath": "C:\\Temp\\football_data\\m-league-division-a-2022-2026.json",
+      "stateCorrectionPath": "C:\\Temp\\football_data\\m-league-division-a-state-correction-2022-2026.json",
+      "calibrationDatasetPath": "C:\\Temp\\football_data\\m-league-division-a-live-total-calibration-2022-2026.csv",
+
+      "trainingSeasonIds": [ 52516, 58327, 72384 ],
+      "validationTrainingSeasonIds": [ 52516, 58327 ],
+      "validationTestSeasonIds": [ 72384 ],
+
+      "validationModelPath": "C:\\Temp\\football_data\\m-league-division-a-validation-weibull.json",
+      "validationCalibrationDatasetPath": "C:\\Temp\\football_data\\m-league-division-a-validation-live-total-calibration.csv",
+      "validationStateCorrectionPath": "C:\\Temp\\football_data\\m-league-division-a-validation-state-correction.json",
+      "calibrationAnalysisPath": "C:\\Temp\\football_data\\m-league-division-a-live-total-calibration-analysis.csv",
+      "validationCalibrationAnalysisPath": "C:\\Temp\\football_data\\m-league-division-a-validation-live-total-calibration-analysis.csv",
+      "modelEvaluationPath": "C:\\Temp\\football_data\\m-league-division-a-live-total-model-evaluation.csv",
+      "validationModelEvaluationPath": "C:\\Temp\\football_data\\m-league-division-a-validation-live-total-model-evaluation.csv",
+
+      "maxMinute": 90,
+      "groupByColumn": "ScoreStateBefore",
+      "minGroupGoals": 30,
+      "maxIterations": 100,
+      "tolerance": 1e-9,
+      "blendWeibullWeight": 0.3,
+      "includeUnreliableMatches": false,
+      "includeEventTriggers": true,
+
+      "snapshotMinutes": [
+        10,
+        15,
+        20,
+        25,
+        30,
+        35,
+        40,
+        45,
+        50,
+        55,
+        60,
+        65,
+        70,
+        75,
+        80,
+        85
+      ],
+
+      "stateCorrectionMinBucketMatches": 100,
+      "stateCorrectionMinFactor": 0.5,
+      "stateCorrectionMaxFactor": 2.5,
+
+      "baseSeasonIds": [ 52516, 58327, 72384 ],
+      "currentSeasonId": 89900,
+      "defaultBeforeRound": null,
+      "useCurrentSeasonVolume": false,
+
+      "defaultEmpiricalWeight": 0.8,
+      "edgeThreshold": 0.1,
+      "priorStrengthMatches": 100,
+
+      "targetLines": [
+        0.5,
+        1.0,
+        1.5,
+        2.0,
+        2.5,
+        3.0,
+        3.5,
+        4.0,
+        4.5,
+        5.0,
+        5.5
+      ],
+
+      "riskLevel": "Validation first",
+      "notes": "M-League, Division A profile. SofaScore unique tournament id 879. Russia youth league, spring-autumn calendar. Public page shows 2026 average goals around 3.07. Validate before live betting.",
+
+      "useProbabilityMoveFilter": false,
+      "underSignalsBettingAllowed": true,
+      "liveBettingRules": [],
+
+      "decisionMode": "FullModel",
+      "fallbackBettingEnabled": false,
+      "decisionRulesNotes": "Template only. Use FullModel for validation first. After scope comparison, decide whether this league belongs to FullModel, AfterGoalOnly, or SecondHalfAfterGoalOnly and then add line-specific rules.",
+      "requireGoalTrigger": false
+    },
+    {
       "key": "chinese-super-league",
       "name": "Chinese Super League",
       "league": "Chinese Super League",
