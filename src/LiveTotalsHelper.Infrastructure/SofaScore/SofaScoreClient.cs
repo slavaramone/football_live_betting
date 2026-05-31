@@ -52,6 +52,8 @@ public sealed class SofaScoreClient : IAsyncDisposable
 
             page = await context.NewPageAsync();
 
+            page.SetDefaultTimeout(120000);
+
             // Important: go to the main site first. This allows SofaScore to initialise the
             // browser session/cookies before we call API endpoints from the same browser page.
             await log.WriteLineAsync($"Opening warmup page: {options.WarmupUrl}");
