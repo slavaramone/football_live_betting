@@ -138,6 +138,21 @@ public sealed class FlashscoreDownloader
                 {
                     string eventFolder = Path.Combine(eventsFolder, calendarEvent.Id.ToString(CultureInfo.InvariantCulture));
                     Count(await _fileStore.WriteObjectAsync(Path.Combine(eventFolder, "event-meta.json"), calendarEvent, options.Overwrite, cancellationToken), result);
+
+                    if (options.DownloadIncidents && IsFinished(calendarEvent))
+                    {
+                        await DownloadIncidentsAsync(
+                            page,
+                            calendarEvent,
+                            Path.Combine(eventFolder, "incidents.json"),
+                            options,
+                            result,
+                            log,
+                            cancellationToken);
+                    }
+
+                    if (options.DelayMs > 0)
+                        await Task.Delay(options.DelayMs, cancellationToken);
                 }
 
                 result.RoundsDownloaded++;
@@ -149,6 +164,51 @@ public sealed class FlashscoreDownloader
         }
 
         return result;
+    }
+
+    private async Task DownloadIncidentsAsync(
+        IPage page,
+        FlashscoreCalendarEvent calendarEvent,
+        string targetPath,
+        FlashscoreDownloadOptions options,
+        FlashscoreDownloadResult result,
+        TextWriter log,
+        CancellationToken cancellationToken)
+    {
+        if (File.Exists(targetPath) && !options.Overwrite)
+        {
+            result.FilesSkipped++;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(calendarEvent.SourceUrl))
+        {
+            result.Warnings.Add($"event {calendarEvent.Id}: missing Flashscore detail URL; incidents skipped");
+            return;
+        }
+
+        try
+        {
+            await page.GotoAsync(calendarEvent.SourceUrl, new PageGotoOptions
+            {
+                WaitUntil = WaitUntilState.DOMContentLoaded,
+                Timeout = 90_000
+            });
+
+            if (options.DetailWaitMs > 0)
+                await Task.Delay(options.DetailWaitMs, cancellationToken);
+
+            IReadOnlyList<FlashscoreIncident> incidents = await ExtractIncidentsAsync(page, calendarEvent, cancellationToken);
+            string json = JsonSerializer.Serialize(new { incidents }, JsonOptions);
+            Count(await _fileStore.WriteJsonAsync(targetPath, json, options.Overwrite, cancellationToken), result);
+            await log.WriteLineAsync($"    saved incidents: {targetPath} ({incidents.Count})");
+        }
+        catch (Exception ex) when (ex is PlaywrightException or TimeoutException or JsonException)
+        {
+            string warning = $"event {calendarEvent.Id} {calendarEvent.HomeTeam.Name} vs {calendarEvent.AwayTeam.Name}: incidents failed: {ex.Message}";
+            result.Warnings.Add(warning);
+            await log.WriteLineAsync($"    WARN incidents: {warning}");
+        }
     }
 
     private static async Task<int> ClickShowMoreUntilDoneAsync(
@@ -284,6 +344,177 @@ public sealed class FlashscoreDownloader
             """);
 
         return JsonSerializer.Deserialize<List<FlashscoreRenderedMatch>>(json, JsonOptions) ?? [];
+    }
+
+    private static async Task<IReadOnlyList<FlashscoreIncident>> ExtractIncidentsAsync(
+        IPage page,
+        FlashscoreCalendarEvent calendarEvent,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        string json = await page.EvaluateAsync<string>(
+            """
+            () => {
+                const text = (node) => (node?.textContent || "").replace(/\s+/g, " ").trim();
+                const hrefId = (node) => {
+                    const href = node?.getAttribute("href") || "";
+                    const parts = href.split("/").filter(Boolean);
+                    return parts.length ? parts[parts.length - 1] : "";
+                };
+
+                return JSON.stringify(Array.from(document.querySelectorAll(".smv__participantRow")).map(row => {
+                    const icon = row.querySelector(".smv__incidentIcon");
+                    const title = text(icon?.querySelector("title"));
+                    const player = row.querySelector("a.smv__playerName");
+                    const assist = row.querySelector(".smv__assist a");
+                    const score = text(row.querySelector(".smv__incidentHomeScore, .smv__incidentAwayScore"));
+
+                    return {
+                        timeText: text(row.querySelector(".smv__timeBox")),
+                        title,
+                        score,
+                        isHome: row.classList.contains("smv__homeParticipant"),
+                        playerName: text(player),
+                        playerSourceId: hrefId(player),
+                        assistName: text(assist),
+                        assistSourceId: hrefId(assist),
+                        rowText: text(row)
+                    };
+                }));
+            }
+            """);
+
+        List<FlashscoreRenderedIncident> rendered = JsonSerializer.Deserialize<List<FlashscoreRenderedIncident>>(json, JsonOptions) ?? [];
+        var incidents = new List<FlashscoreIncident>();
+
+        foreach (FlashscoreRenderedIncident row in rendered)
+        {
+            if (!TryMapIncident(row, calendarEvent, out FlashscoreIncident? incident))
+                continue;
+
+            incidents.Add(incident);
+        }
+
+        return incidents
+            .OrderBy(x => x.Time)
+            .ThenBy(x => x.AddedTime ?? 0)
+            .ThenBy(x => x.Id)
+            .ToList();
+    }
+
+    private static bool TryMapIncident(
+        FlashscoreRenderedIncident row,
+        FlashscoreCalendarEvent calendarEvent,
+        out FlashscoreIncident? incident)
+    {
+        incident = null;
+
+        if (!TryParseIncidentTime(row.TimeText, out int minute, out int? addedTime))
+            return false;
+
+        string title = row.Title.Trim();
+        string normalizedTitle = title.ToLowerInvariant();
+        string incidentType;
+        string incidentClass;
+
+        if (normalizedTitle.Contains("goal disallowed", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (normalizedTitle.Contains("goal", StringComparison.OrdinalIgnoreCase))
+        {
+            incidentType = "goal";
+            incidentClass = normalizedTitle.Contains("penalty", StringComparison.OrdinalIgnoreCase)
+                ? "penalty"
+                : normalizedTitle.Contains("own", StringComparison.OrdinalIgnoreCase)
+                    ? "ownGoal"
+                    : "regular";
+        }
+        else if (normalizedTitle.Contains("yellow card", StringComparison.OrdinalIgnoreCase))
+        {
+            incidentType = "card";
+            incidentClass = normalizedTitle.Contains("second", StringComparison.OrdinalIgnoreCase)
+                ? "yellowRed"
+                : "yellow";
+        }
+        else if (normalizedTitle.Contains("red card", StringComparison.OrdinalIgnoreCase))
+        {
+            incidentType = "card";
+            incidentClass = "red";
+        }
+        else
+        {
+            return false;
+        }
+
+        ParseScore(row.Score, out int? homeScore, out int? awayScore);
+
+        long incidentId = StablePositiveId(
+            $"flashscore:incident:{calendarEvent.FlashscoreId}:{row.TimeText}:{title}:{row.IsHome}:{row.PlayerName}:{row.Score}");
+
+        incident = new FlashscoreIncident
+        {
+            Id = incidentId,
+            IncidentType = incidentType,
+            IncidentClass = incidentClass,
+            Time = minute,
+            AddedTime = addedTime,
+            TimeSeconds = ((minute + (addedTime ?? 0)) * 60),
+            IsHome = row.IsHome,
+            HomeScore = homeScore,
+            AwayScore = awayScore,
+            Player = string.IsNullOrWhiteSpace(row.PlayerName)
+                ? null
+                : new FlashscoreIncidentPerson
+                {
+                    Name = row.PlayerName,
+                    Id = StablePositiveId($"flashscore:player:{Coalesce(row.PlayerSourceId, row.PlayerName)}")
+                },
+            Assist1 = string.IsNullOrWhiteSpace(row.AssistName)
+                ? null
+                : new FlashscoreIncidentPerson
+                {
+                    Name = row.AssistName,
+                    Id = StablePositiveId($"flashscore:player:{Coalesce(row.AssistSourceId, row.AssistName)}")
+                },
+            Reason = title
+        };
+
+        return true;
+    }
+
+    private static bool TryParseIncidentTime(string value, out int minute, out int? addedTime)
+    {
+        minute = 0;
+        addedTime = null;
+
+        string normalized = (value ?? string.Empty).Replace("'", string.Empty, StringComparison.Ordinal).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        string[] parts = normalized.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0 || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out minute))
+            return false;
+
+        if (parts.Length > 1 && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedAddedTime))
+            addedTime = parsedAddedTime;
+
+        return minute > 0;
+    }
+
+    private static void ParseScore(string value, out int? homeScore, out int? awayScore)
+    {
+        homeScore = null;
+        awayScore = null;
+
+        string[] parts = (value ?? string.Empty).Split('-', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2)
+            return;
+
+        if (int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedHome))
+            homeScore = parsedHome;
+        if (int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedAway))
+            awayScore = parsedAway;
     }
 
     private static async Task TryAcceptCookiesAsync(IPage page)
@@ -444,6 +675,12 @@ public sealed class FlashscoreDownloader
     private static string BuildSlug(string homeTeam, string awayTeam, string sourceId)
         => $"{FileNameSanitizer.Slugify(homeTeam)}-{FileNameSanitizer.Slugify(awayTeam)}-{sourceId}".Trim('-');
 
+    private static bool IsFinished(FlashscoreCalendarEvent calendarEvent)
+        => calendarEvent.Status.Type.Equals("finished", StringComparison.OrdinalIgnoreCase);
+
+    private static string Coalesce(params string[] values)
+        => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty;
+
     private static long StablePositiveId(string value)
     {
         const ulong offset = 14695981039346656037;
@@ -479,10 +716,14 @@ public sealed class FlashscoreDownloader
             throw new ArgumentException("SeasonId must be positive.");
         if (options.RenderWaitMs < 0)
             throw new ArgumentException("RenderWaitMs cannot be negative.");
+        if (options.DetailWaitMs < 0)
+            throw new ArgumentException("DetailWaitMs cannot be negative.");
         if (options.ShowMoreWaitMs < 0)
             throw new ArgumentException("ShowMoreWaitMs cannot be negative.");
         if (options.MaxShowMoreClicks < 0)
             throw new ArgumentException("MaxShowMoreClicks cannot be negative.");
+        if (options.DelayMs < 0)
+            throw new ArgumentException("DelayMs cannot be negative.");
         if (options.DefaultYear < 1900 || options.DefaultYear > 2200)
             throw new ArgumentException("DefaultYear must be a four-digit year.");
     }
@@ -498,6 +739,41 @@ public sealed class FlashscoreRenderedMatch
     public string HomeScore { get; init; } = string.Empty;
     public string AwayScore { get; init; } = string.Empty;
     public string Url { get; init; } = string.Empty;
+}
+
+public sealed class FlashscoreRenderedIncident
+{
+    public string TimeText { get; init; } = string.Empty;
+    public string Title { get; init; } = string.Empty;
+    public string Score { get; init; } = string.Empty;
+    public bool IsHome { get; init; }
+    public string PlayerName { get; init; } = string.Empty;
+    public string PlayerSourceId { get; init; } = string.Empty;
+    public string AssistName { get; init; } = string.Empty;
+    public string AssistSourceId { get; init; } = string.Empty;
+    public string RowText { get; init; } = string.Empty;
+}
+
+public sealed class FlashscoreIncident
+{
+    public long Id { get; init; }
+    public string IncidentType { get; init; } = string.Empty;
+    public string IncidentClass { get; init; } = string.Empty;
+    public int Time { get; init; }
+    public int? AddedTime { get; init; }
+    public int? TimeSeconds { get; init; }
+    public bool IsHome { get; init; }
+    public int? HomeScore { get; init; }
+    public int? AwayScore { get; init; }
+    public FlashscoreIncidentPerson? Player { get; init; }
+    public FlashscoreIncidentPerson? Assist1 { get; init; }
+    public string Reason { get; init; } = string.Empty;
+}
+
+public sealed class FlashscoreIncidentPerson
+{
+    public long Id { get; init; }
+    public string Name { get; init; } = string.Empty;
 }
 
 public sealed class FlashscoreCalendarEvent

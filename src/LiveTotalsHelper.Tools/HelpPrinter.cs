@@ -75,9 +75,12 @@ public static class HelpPrinter
         Console.WriteLine("  --to-round           Optional last round filter.");
         Console.WriteLine("  --output             Output root. Default: data/flashscore");
         Console.WriteLine("  --overwrite          true/false. Default: false");
+        Console.WriteLine("  --incidents          true/false. Download match-summary incidents into incidents.json. Default: true");
+        Console.WriteLine("  --delay-ms           Delay between detail page requests. Default: 450");
         Console.WriteLine("  --headless           true/false. Default: true");
         Console.WriteLine("  --show-browser       Debug shortcut. Runs Chromium visible.");
         Console.WriteLine("  --render-wait-ms     Delay after opening page before parsing. Default: 8000");
+        Console.WriteLine("  --detail-wait-ms     Delay after opening each match summary before parsing incidents. Default: 3000");
         Console.WriteLine("  --show-more-wait-ms  Delay after each Show more click. Default: 2000");
         Console.WriteLine("  --max-show-more-clicks Maximum Show more clicks. Default: 40");
         Console.WriteLine("  --default-year       Year used for Flashscore dates that omit year. Default: current UTC year.");

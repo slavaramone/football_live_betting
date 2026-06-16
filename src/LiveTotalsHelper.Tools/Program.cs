@@ -68,10 +68,13 @@ static async Task<int> RunDownloadFlashscore(string[] args)
         CountryCode = parsed.String("country-code", string.Empty),
         OutputRoot = parsed.String("output", "data/flashscore"),
         Overwrite = parsed.Bool("overwrite", false),
+        DownloadIncidents = parsed.Bool("incidents", true),
         Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
         RenderWaitMs = parsed.Int("render-wait-ms", 8_000),
+        DetailWaitMs = parsed.Int("detail-wait-ms", 3_000),
         ShowMoreWaitMs = parsed.Int("show-more-wait-ms", 2_000),
         MaxShowMoreClicks = parsed.Int("max-show-more-clicks", 40),
+        DelayMs = parsed.Int("delay-ms", 450),
         DefaultYear = parsed.Int("default-year", DateTimeOffset.UtcNow.Year)
     };
 
