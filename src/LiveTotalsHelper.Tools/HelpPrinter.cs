@@ -13,6 +13,7 @@ public static class HelpPrinter
         Console.WriteLine("  build-live-total-calibration-dataset  Build correction rows from the shared live-total timing core.");
         Console.WriteLine("  analyze-live-total-calibration        Compare correction factors by trigger/state.");
         Console.WriteLine("  fit-live-total-state-correction       Fit trigger/state correction factors.");
+        Console.WriteLine("  fit-live-total-empirical-settlement   Fit empirical remaining-goals settlement tables.");
         Console.WriteLine("  evaluate-live-total-model             Evaluate baseline vs exact trigger/state correction.");
         Console.WriteLine("  evaluate-live-total-betting-metrics   Evaluate line-specific Brier/log-loss/direction metrics.");
         Console.WriteLine("  fit-weibull                           Fit a league-wide Weibull timing model from imported DB events.");
@@ -29,6 +30,8 @@ public static class HelpPrinter
         PrintAnalyzeLiveTotalCalibration();
         Console.WriteLine();
         PrintFitLiveTotalStateCorrection();
+        Console.WriteLine();
+        PrintFitLiveTotalEmpiricalSettlement();
         Console.WriteLine();
         PrintEvaluateLiveTotalModel();
         Console.WriteLine();
@@ -144,6 +147,16 @@ public static class HelpPrinter
         Console.WriteLine("Overrides remain available: --input, --training-season-ids, --output, --min-bucket-matches, --min-factor, --max-factor.");
     }
 
+    public static void PrintFitLiveTotalEmpiricalSettlement()
+    {
+        Console.WriteLine("Fit empirical settlement usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-empirical-settlement --profile allsvenskan");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-empirical-settlement --profile allsvenskan --validation true");
+        Console.WriteLine();
+        Console.WriteLine("Fits remaining-goals distributions from the calibration dataset and writes empiricalSettlementPath / validationEmpiricalSettlementPath.");
+        Console.WriteLine("Overrides remain available: --input, --training-season-ids, --output, --min-bucket-rows, --min-bucket-matches, --max-remaining-goals, --smoothing.");
+    }
+
     
     public static void PrintEvaluateLiveTotalModel()
     {
@@ -242,6 +255,7 @@ public static class HelpPrinter
         Console.WriteLine("  --home-goals         Required current home goals.");
         Console.WriteLine("  --away-goals         Required current away goals.");
         Console.WriteLine("  --live-over-odds / --live-under-odds Optional bookmaker live odds, needed for edge/bet decisions.");
+        Console.WriteLine("  --empirical-settlement Optional empirical remaining-goals settlement JSON. Defaults to profile empiricalSettlementPath.");
         Console.WriteLine("  --use-probability-move-filter true|false Optional; require probability move threshold before BET/LEAN.");
         Console.WriteLine("  --min-over-probability-move 0.10      Optional global Over move threshold.");
         Console.WriteLine("  --min-under-probability-move -0.12    Optional global Under move threshold.");

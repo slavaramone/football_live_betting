@@ -284,6 +284,7 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         {
             ModelPath = profile.ModelPath,
             StateCorrectionPath = profile.StateCorrectionPath,
+            EmpiricalSettlementPath = profile.GetEmpiricalSettlementPath(),
             StateTrigger = trigger,
             StartingLine = input.StartingLine,
             StartingOverOdds = input.StartingOverOdds,

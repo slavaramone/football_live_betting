@@ -8,6 +8,7 @@ public sealed class LiveTotalPriceOptions
 {
     public string ModelPath { get; set; } = string.Empty;
     public string StateCorrectionPath { get; set; } = string.Empty;
+    public string EmpiricalSettlementPath { get; set; } = string.Empty;
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public double StartingLine { get; set; }
     public double StartingOverOdds { get; set; }
@@ -38,6 +39,7 @@ public sealed class LiveTotalPriceResult
 {
     public string ModelPath { get; set; } = string.Empty;
     public string StateCorrectionPath { get; set; } = string.Empty;
+    public string EmpiricalSettlementPath { get; set; } = string.Empty;
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string League { get; set; } = string.Empty;
     public int Minute { get; set; }
@@ -67,6 +69,8 @@ public sealed class LiveTotalPriceResult
     public string VolumeFactorSource { get; set; } = string.Empty;
     public string DecisionRulesSummary { get; set; } = string.Empty;
     public double RemainingXg { get; set; }
+    public bool EmpiricalSettlementSupported { get; set; } = true;
+    public string EmpiricalSettlementSource { get; set; } = "poisson fallback - no empirical settlement table configured";
     public int HomeRedCards { get; set; }
     public int AwayRedCards { get; set; }
     public string RedCardWarning { get; set; } = string.Empty;
@@ -140,11 +144,13 @@ public sealed class LiveTotalPricer
         double remainingXgBeforeVolume = remainingXgBeforeStateCorrection * stateCorrection.Factor;
         double volumeFactor = Math.Clamp(_options.VolumeFactor, 0.20, 2.50);
         double remainingXg = remainingXgBeforeVolume * volumeFactor;
+        LiveTotalEmpiricalSettlementResolution empiricalSettlement = await ResolveEmpiricalSettlementAsync(cancellationToken);
 
         var result = new LiveTotalPriceResult
         {
             ModelPath = _options.ModelPath,
             StateCorrectionPath = _options.StateCorrectionPath,
+            EmpiricalSettlementPath = _options.EmpiricalSettlementPath,
             StateTrigger = LiveTotalStateTrigger.Normalize(_options.StateTrigger),
             League = model.League,
             Minute = _options.Minute,
@@ -172,6 +178,10 @@ public sealed class LiveTotalPricer
             VolumeFactorSource = _options.VolumeFactorSource,
             DecisionRulesSummary = _options.DecisionRules.Summary(),
             RemainingXg = remainingXg,
+            EmpiricalSettlementSupported = empiricalSettlement.IsSupported || string.IsNullOrWhiteSpace(_options.EmpiricalSettlementPath),
+            EmpiricalSettlementSource = empiricalSettlement.IsSupported
+                ? empiricalSettlement.Source
+                : "poisson fallback - " + empiricalSettlement.Source,
             HomeRedCards = _options.HomeRedCards,
             AwayRedCards = _options.AwayRedCards,
             LastGoalMinute = _options.LastGoalMinute
@@ -179,6 +189,11 @@ public sealed class LiveTotalPricer
 
         if (!string.IsNullOrWhiteSpace(timing.TimingFallback))
             result.Warnings.Add(timing.TimingFallback);
+
+        if (!empiricalSettlement.IsSupported)
+            result.Warnings.Add(string.IsNullOrWhiteSpace(_options.EmpiricalSettlementPath)
+                ? "POISSON FALLBACK - no empirical settlement table configured."
+                : $"POISSON FALLBACK - {empiricalSettlement.Source}");
 
         if (_options.HomeRedCards + _options.AwayRedCards > 0)
         {
@@ -197,8 +212,8 @@ public sealed class LiveTotalPricer
 
         foreach (double line in _options.TargetLines.Distinct().OrderBy(x => x))
         {
-            OverSettlementProbabilities baselineProbabilities = TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(line, result.CurrentGoals, baselineRemainingXgForMove);
-            OverSettlementProbabilities probabilities = TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(line, result.CurrentGoals, remainingXg);
+            OverSettlementProbabilities baselineProbabilities = CalculateSettlementProbabilities(line, result.CurrentGoals, baselineRemainingXgForMove, empiricalSettlement);
+            OverSettlementProbabilities probabilities = CalculateSettlementProbabilities(line, result.CurrentGoals, remainingXg, empiricalSettlement);
             double baselineOverNoPushProbability = NoPushOverProbability(baselineProbabilities);
             double correctedOverNoPushProbability = NoPushOverProbability(probabilities);
             double overProbabilityMove = correctedOverNoPushProbability - baselineOverNoPushProbability;
@@ -272,6 +287,41 @@ public sealed class LiveTotalPricer
         }
 
         return result;
+    }
+
+    private async Task<LiveTotalEmpiricalSettlementResolution> ResolveEmpiricalSettlementAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_options.EmpiricalSettlementPath))
+            return new LiveTotalEmpiricalSettlementResolution { IsSupported = false, Source = "no empirical settlement table configured" };
+
+        if (!File.Exists(_options.EmpiricalSettlementPath))
+            return new LiveTotalEmpiricalSettlementResolution { IsSupported = false, Source = $"empirical settlement table not found: {_options.EmpiricalSettlementPath}" };
+
+        await using FileStream stream = File.OpenRead(_options.EmpiricalSettlementPath);
+        LiveTotalEmpiricalSettlementFile settlement = await JsonSerializer.DeserializeAsync<LiveTotalEmpiricalSettlementFile>(stream, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        }, cancellationToken) ?? throw new InvalidOperationException("Could not read empirical settlement JSON.");
+
+        return LiveTotalEmpiricalSettlementResolver.Resolve(settlement, _options.StateTrigger, _options.Minute, _options.HomeGoals, _options.AwayGoals);
+    }
+
+    private static OverSettlementProbabilities CalculateSettlementProbabilities(
+        double line,
+        int currentGoals,
+        double remainingGoalsMean,
+        LiveTotalEmpiricalSettlementResolution empiricalSettlement)
+    {
+        if (empiricalSettlement.IsSupported)
+        {
+            return TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(
+                line,
+                currentGoals,
+                empiricalSettlement.Probabilities,
+                remainingGoalsMean);
+        }
+
+        return TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(line, currentGoals, remainingGoalsMean);
     }
 
     private async Task<LiveTotalStateCorrectionResolution> ResolveStateCorrectionAsync(CancellationToken cancellationToken)

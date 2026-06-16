@@ -27,6 +27,7 @@ public sealed class LeagueProfile
     // Production/live artifacts and seasons.
     public string ModelPath { get; set; } = string.Empty;
     public string StateCorrectionPath { get; set; } = string.Empty;
+    public string EmpiricalSettlementPath { get; set; } = string.Empty;
     public string CalibrationDatasetPath { get; set; } = string.Empty;
     public List<int> TrainingSeasonIds { get; set; } = [];
 
@@ -36,6 +37,7 @@ public sealed class LeagueProfile
     public string ValidationModelPath { get; set; } = string.Empty;
     public string ValidationCalibrationDatasetPath { get; set; } = string.Empty;
     public string ValidationStateCorrectionPath { get; set; } = string.Empty;
+    public string ValidationEmpiricalSettlementPath { get; set; } = string.Empty;
     public string CalibrationAnalysisPath { get; set; } = string.Empty;
     public string ValidationCalibrationAnalysisPath { get; set; } = string.Empty;
     public string ModelEvaluationPath { get; set; } = string.Empty;
@@ -84,6 +86,21 @@ public sealed class LeagueProfile
     public List<double> TargetLines { get; set; } = [];
     public string RiskLevel { get; set; } = string.Empty;
     public string Notes { get; set; } = string.Empty;
+
+    public string GetEmpiricalSettlementPath(bool validationMode = false)
+    {
+        string configured = validationMode ? ValidationEmpiricalSettlementPath : EmpiricalSettlementPath;
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured;
+
+        string datasetPath = validationMode ? ValidationCalibrationDatasetPath : CalibrationDatasetPath;
+        if (string.IsNullOrWhiteSpace(datasetPath))
+            return string.Empty;
+
+        string directory = Path.GetDirectoryName(datasetPath) ?? ".";
+        string fileName = Path.GetFileNameWithoutExtension(datasetPath);
+        return Path.Combine(directory, $"{fileName}-empirical-settlement.json");
+    }
 }
 
 public sealed class LeagueProfileStore

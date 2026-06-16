@@ -25,6 +25,7 @@ try
         "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
         "analyze-live-total-calibration" => await RunAnalyzeLiveTotalCalibration(commandArgs),
         "fit-live-total-state-correction" => await RunFitLiveTotalStateCorrection(commandArgs),
+        "fit-live-total-empirical-settlement" => await RunFitLiveTotalEmpiricalSettlement(commandArgs),
         "evaluate-live-total-model" => await RunEvaluateLiveTotalModel(commandArgs),
         "evaluate-live-total-betting-metrics" => await RunEvaluateLiveTotalBettingMetrics(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
@@ -272,6 +273,63 @@ static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
     Console.WriteLine("Trigger       Band    ScoreState            Rows  Matches  Raw    Used   Usable");
     foreach (LiveTotalStateCorrectionBucket bucket in result.Buckets)
         Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-7} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.RawFactor,5:0.###}  {bucket.Factor,5:0.###}  {bucket.IsUsable}");
+
+    return 0;
+}
+
+static async Task<int> RunFitLiveTotalEmpiricalSettlement(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+    string defaultOutput = validationMode
+        ? profile?.ValidationEmpiricalSettlementPath ?? string.Empty
+        : profile?.EmpiricalSettlementPath ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(defaultOutput) && profile is not null)
+        defaultOutput = profile.GetEmpiricalSettlementPath(validationMode);
+
+    var options = new LiveTotalEmpiricalSettlementFitOptions
+    {
+        InputPath = parsed.String("input", defaultInput),
+        OutputPath = parsed.String("output", defaultOutput),
+        MinBucketRows = parsed.Int("min-bucket-rows", 80),
+        MinBucketMatches = parsed.Int("min-bucket-matches", 40),
+        MaxRemainingGoals = parsed.Int("max-remaining-goals", 8),
+        Smoothing = parsed.Double("smoothing", 0.25)
+    };
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
+
+    if (parsed.Has("training-season-ids"))
+        AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
+    else if (profile is not null)
+        AddProfileSeasonIds(options.TrainingSeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
+    if (options.TrainingSeasonIds.Count == 0)
+        throw new ArgumentException("Missing required argument --training-season-ids, or provide --profile with training season ids.");
+
+    var fitter = new LiveTotalEmpiricalSettlementFitter(options);
+    LiveTotalEmpiricalSettlementFitResult result = await fitter.FitAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Live total empirical settlement fit done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"Output: {result.OutputPath}");
+    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? "unknown" : result.League)}");
+    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
+    Console.WriteLine($"Rows used: {result.TrainingRowsUsed}");
+    Console.WriteLine($"Matches used: {result.TrainingMatchesUsed}");
+    Console.WriteLine($"Buckets written: {result.Buckets.Count}");
+    Console.WriteLine();
+    Console.WriteLine("Level        Usable  Buckets  AvgRows  AvgMatches");
+    foreach (IGrouping<string, LiveTotalEmpiricalSettlementBucket> group in result.Buckets.GroupBy(x => x.BucketLevel).OrderBy(x => x.Key))
+    {
+        List<LiveTotalEmpiricalSettlementBucket> buckets = group.ToList();
+        Console.WriteLine($"{group.Key,-12} {buckets.Count(x => x.IsUsable),6}  {buckets.Count,7}  {buckets.Average(x => x.Rows),7:0.#}  {buckets.Average(x => x.Matches),10:0.#}");
+    }
 
     return 0;
 }
@@ -552,6 +610,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     {
         ModelPath = modelPath,
         StateCorrectionPath = parsed.String("state-correction", profile?.StateCorrectionPath ?? string.Empty),
+        EmpiricalSettlementPath = parsed.String("empirical-settlement", profile?.GetEmpiricalSettlementPath() ?? string.Empty),
         StateTrigger = LiveTotalStateTrigger.Normalize(parsed.String("state-trigger", LiveTotalStateTrigger.FixedMinute)),
         StartingLine = parsed.RequiredDouble("starting-line"),
         StartingOverOdds = parsed.RequiredDouble("starting-over"),
@@ -665,6 +724,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
             Console.WriteLine($"Profile notes: {profile.Notes}");
     }
     Console.WriteLine($"Model: {result.ModelPath}");
+    Console.WriteLine($"Settlement: {result.EmpiricalSettlementSource}");
     Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? (profile?.League ?? "unknown") : result.League)}");
     Console.WriteLine($"Minute/score: {result.Minute}'  {result.HomeGoals}-{result.AwayGoals} ({result.ScoreState}; {result.DetailedScoreState}; {result.StateTrigger})");
     Console.WriteLine($"Timing group: {result.SelectedTimingGroup}");
