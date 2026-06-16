@@ -1,4 +1,5 @@
 using System.Globalization;
+using LiveTotalsHelper.Infrastructure.Flashscore;
 using LiveTotalsHelper.Infrastructure.Persistence;
 using LiveTotalsHelper.Infrastructure.Persistence.SofaScore;
 using LiveTotalsHelper.Infrastructure.SofaScore;
@@ -19,6 +20,7 @@ try
 
     return command switch
     {
+        "download-flashscore" => await RunDownloadFlashscore(commandArgs),
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
         "import-sofascore" => await RunImportSofaScore(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
@@ -48,6 +50,38 @@ catch (Exception ex)
     Console.Error.WriteLine(ex.ToString());
     Console.ResetColor();
     return 1;
+}
+
+static async Task<int> RunDownloadFlashscore(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    var options = new FlashscoreDownloadOptions
+    {
+        Url = parsed.RequiredString("url"),
+        League = parsed.RequiredString("league"),
+        TournamentId = parsed.RequiredInt("tournament-id"),
+        SeasonId = parsed.RequiredInt("season-id"),
+        SeasonName = parsed.String("season-name", string.Empty),
+        SeasonYear = parsed.String("season-year", string.Empty),
+        CountryName = parsed.String("country", string.Empty),
+        CountryCode = parsed.String("country-code", string.Empty),
+        OutputRoot = parsed.String("output", "data/flashscore"),
+        Overwrite = parsed.Bool("overwrite", false),
+        Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
+        RenderWaitMs = parsed.Int("render-wait-ms", 8_000),
+        ShowMoreWaitMs = parsed.Int("show-more-wait-ms", 2_000),
+        MaxShowMoreClicks = parsed.Int("max-show-more-clicks", 40),
+        DefaultYear = parsed.Int("default-year", DateTimeOffset.UtcNow.Year)
+    };
+
+    AddOptionalRounds(options.Rounds, parsed);
+
+    var downloader = new FlashscoreDownloader(new SofaScoreJsonFileStore());
+    FlashscoreDownloadResult result = await downloader.DownloadAsync(options, Console.Out, CancellationToken.None);
+    PrintFlashscoreDownloadResult(result);
+
+    return result.Failures.Count == 0 ? 0 : 1;
 }
 
 static async Task<int> RunDownloadSofaScore(string[] args)
@@ -1427,6 +1461,12 @@ static void AddRounds(ICollection<int> target, ParsedArgs parsed)
     }
 }
 
+static void AddOptionalRounds(ICollection<int> target, ParsedArgs parsed)
+{
+    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("round-from") || parsed.Has("to-round"))
+        AddRounds(target, parsed);
+}
+
 static string FindRoundFolder(string seasonFolder, int round)
 {
     string padded = Path.Combine(seasonFolder, $"round-{round:00}");
@@ -1451,6 +1491,34 @@ static bool TryParseRoundFromFolder(string folder, out int round)
 }
 
 static void PrintDownloadResult(SofaScoreDownloadResult result)
+{
+    Console.WriteLine();
+    Console.WriteLine("Download done.");
+    Console.WriteLine($"Rounds: {result.RoundsDownloaded}");
+    Console.WriteLine($"Events discovered: {result.EventsDiscovered}");
+    Console.WriteLine($"Files written: {result.FilesWritten}");
+    Console.WriteLine($"Files skipped: {result.FilesSkipped}");
+    Console.WriteLine($"Warnings: {result.Warnings.Count}");
+    Console.WriteLine($"Failures: {result.Failures.Count}");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
+    }
+
+    if (result.Failures.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Failures:");
+        foreach (string failure in result.Failures)
+            Console.WriteLine($"- {failure}");
+    }
+}
+
+static void PrintFlashscoreDownloadResult(FlashscoreDownloadResult result)
 {
     Console.WriteLine();
     Console.WriteLine("Download done.");

@@ -7,6 +7,7 @@ public static class HelpPrinter
         Console.WriteLine("LiveTotalsHelper.Tools");
         Console.WriteLine();
         Console.WriteLine("Commands:");
+        Console.WriteLine("  download-flashscore  Download rendered Flashscore results into SofaScore-compatible calendar JSON.");
         Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON only.");
         Console.WriteLine("  import-sofascore     Import saved SofaScore JSON into PostgreSQL and apply pending migrations.");
         Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
@@ -18,6 +19,8 @@ public static class HelpPrinter
         Console.WriteLine("  evaluate-live-total-betting-metrics   Evaluate line-specific Brier/log-loss/direction metrics.");
         Console.WriteLine("  fit-weibull                           Fit a league-wide Weibull timing model from imported DB events.");
         Console.WriteLine("  price-live-total                      Price live Over totals from starting odds, score state and fitted timing model.");
+        Console.WriteLine();
+        PrintDownloadFlashscore();
         Console.WriteLine();
         PrintDownloadSofaScore();
         Console.WriteLine();
@@ -48,6 +51,39 @@ public static class HelpPrinter
         Console.Error.WriteLine();
         Print();
         return 2;
+    }
+
+    public static void PrintDownloadFlashscore()
+    {
+        Console.WriteLine("Download Flashscore usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- download-flashscore \\");
+        Console.WriteLine("    --url \"https://www.flashscore.co.ke/football/china/super-league/results/\" \\");
+        Console.WriteLine("    --league \"China Super League\" --tournament-id 900001 --season-id 2026 \\");
+        Console.WriteLine("    --season-year 2026 --country China --country-code CHN --output data/flashscore");
+        Console.WriteLine();
+        Console.WriteLine("Flashscore arguments:");
+        Console.WriteLine("  --url                Flashscore results page URL.");
+        Console.WriteLine("  --league             League name used in folder structure and calendar JSON.");
+        Console.WriteLine("  --tournament-id      Numeric id stored in SofaScore-compatible fields. Use a stable project-local id.");
+        Console.WriteLine("  --season-id          Numeric season id stored in SofaScore-compatible fields. Use a stable project-local id.");
+        Console.WriteLine("  --season-name        Optional season name. Defaults to --season-year/default year.");
+        Console.WriteLine("  --season-year        Optional season year string. Defaults to --default-year.");
+        Console.WriteLine("  --country            Optional country name.");
+        Console.WriteLine("  --country-code       Optional country code.");
+        Console.WriteLine("  --round              Optional single round filter.");
+        Console.WriteLine("  --round-from         Optional first round filter. Alias: --from-round.");
+        Console.WriteLine("  --to-round           Optional last round filter.");
+        Console.WriteLine("  --output             Output root. Default: data/flashscore");
+        Console.WriteLine("  --overwrite          true/false. Default: false");
+        Console.WriteLine("  --headless           true/false. Default: true");
+        Console.WriteLine("  --show-browser       Debug shortcut. Runs Chromium visible.");
+        Console.WriteLine("  --render-wait-ms     Delay after opening page before parsing. Default: 8000");
+        Console.WriteLine("  --show-more-wait-ms  Delay after each Show more click. Default: 2000");
+        Console.WriteLine("  --max-show-more-clicks Maximum Show more clicks. Default: 40");
+        Console.WriteLine("  --default-year       Year used for Flashscore dates that omit year. Default: current UTC year.");
+        Console.WriteLine();
+        Console.WriteLine("Output layout matches the SofaScore downloader: <output>/<league-slug>/season-<season-id>/round-XX/calendar.json.");
+        Console.WriteLine("The calendar JSON is SofaScore-compatible, so import-sofascore can import these calendars.");
     }
 
     public static void PrintDownloadSofaScore()
