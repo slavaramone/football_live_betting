@@ -292,8 +292,8 @@ public sealed class WeibullModelFitter
             parsed.Add(new WeibullGoalTimingRow
             {
                 Minute = minute,
-                SeasonId = GetInt(row, "SofaScoreSeasonId"),
-                MatchId = GetString(row, "SofaScoreEventId", GetString(row, "MatchId", string.Empty)),
+                SeasonId = GetInt(row, "SeasonId"),
+                MatchId = GetString(row, "EventId", GetString(row, "MatchId", string.Empty)),
                 League = GetString(row, "LeagueName", string.Empty),
                 GroupValue = groupValue
             });

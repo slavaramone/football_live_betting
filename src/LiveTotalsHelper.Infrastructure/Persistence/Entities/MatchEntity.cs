@@ -3,25 +3,26 @@ namespace LiveTotalsHelper.Infrastructure.Persistence.Entities;
 public sealed class MatchEntity
 {
     public int Id { get; set; }
-    public long SofaScoreEventId { get; set; }
+    public string EventId { get; set; } = string.Empty;
+    public string FlashscoreId { get; set; } = string.Empty;
 
-    public int SofaScoreUniqueTournamentId { get; set; }
+    public int TournamentId { get; set; }
     public string LeagueName { get; set; } = string.Empty;
     public string LeagueSlug { get; set; } = string.Empty;
     public string CountryName { get; set; } = string.Empty;
     public string CountryCode { get; set; } = string.Empty;
 
-    public int SofaScoreSeasonId { get; set; }
+    public int SeasonId { get; set; }
     public string SeasonName { get; set; } = string.Empty;
     public string SeasonYear { get; set; } = string.Empty;
     public int RoundNumber { get; set; }
 
-    public long HomeTeamSofaScoreId { get; set; }
+    public string HomeTeamId { get; set; } = string.Empty;
     public string HomeTeamName { get; set; } = string.Empty;
     public string HomeTeamSlug { get; set; } = string.Empty;
     public string HomeTeamShortName { get; set; } = string.Empty;
 
-    public long AwayTeamSofaScoreId { get; set; }
+    public string AwayTeamId { get; set; } = string.Empty;
     public string AwayTeamName { get; set; } = string.Empty;
     public string AwayTeamSlug { get; set; } = string.Empty;
     public string AwayTeamShortName { get; set; } = string.Empty;
@@ -43,5 +44,6 @@ public sealed class MatchEntity
     public DateTimeOffset CalendarUpdatedAtUtc { get; set; }
 
     public List<MatchEventEntity> Events { get; set; } = [];
-    public List<MatchTeamStatEntity> TeamStats { get; set; } = [];
+    public List<MatchStatEntity> Stats { get; set; } = [];
+    public List<FlashscoreOddsEntity> FlashscoreOdds { get; set; } = [];
 }

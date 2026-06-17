@@ -23,14 +23,13 @@ public sealed class DbValidationRunner
             matchQuery = matchQuery.Where(x => x.LeagueName == _options.League || x.LeagueSlug == _options.League);
 
         if (_options.SeasonId > 0)
-            matchQuery = matchQuery.Where(x => x.SofaScoreSeasonId == _options.SeasonId);
+            matchQuery = matchQuery.Where(x => x.SeasonId == _options.SeasonId);
 
         if (_options.Rounds.Count > 0)
             matchQuery = matchQuery.Where(x => _options.Rounds.Contains(x.RoundNumber));
 
         List<MatchEntity> matches = await matchQuery.OrderBy(x => x.RoundNumber).ThenBy(x => x.StartTimeUtc).ThenBy(x => x.Id).ToListAsync(cancellationToken);
         HashSet<int> matchIds = matches.Select(x => x.Id).ToHashSet();
-        HashSet<long> eventIds = matches.Select(x => x.SofaScoreEventId).ToHashSet();
 
         List<MatchEventEntity> events = await _db.MatchEvents.AsNoTracking()
             .Where(x => matchIds.Contains(x.MatchId))
@@ -39,22 +38,29 @@ public sealed class DbValidationRunner
             .ThenBy(x => x.Id)
             .ToListAsync(cancellationToken);
 
-        List<MatchTeamStatEntity> stats = await _db.MatchTeamStats.AsNoTracking()
+        List<MatchStatEntity> stats = await _db.MatchStats.AsNoTracking()
             .Where(x => matchIds.Contains(x.MatchId))
             .OrderBy(x => x.MatchId)
             .ThenBy(x => x.Period)
-            .ThenBy(x => x.GroupName)
-            .ThenBy(x => x.Key)
+            .ToListAsync(cancellationToken);
+
+        List<FlashscoreOddsEntity> odds = await _db.FlashscoreOdds.AsNoTracking()
+            .Where(x => matchIds.Contains(x.MatchId))
+            .OrderBy(x => x.MatchId)
+            .ThenBy(x => x.Market)
+            .ThenBy(x => x.Line)
+            .ThenBy(x => x.Selection)
             .ToListAsync(cancellationToken);
 
         var result = new DbValidationResult
         {
             MatchesChecked = matches.Count,
             EventsChecked = events.Count,
-            TeamStatsChecked = stats.Count
+            MatchStatsChecked = stats.Count,
+            OddsChecked = odds.Count
         };
 
-        AddDatasetSummary(result, matches, events, stats);
+        AddDatasetSummary(result, matches, events, stats, odds);
         CheckRequiredMatchFields(result, matches);
         CheckFinishedScoreMatchesGoalEvents(result, matches, events);
         CheckGoalEventScoreProgression(result, matches, events);
@@ -69,7 +75,7 @@ public sealed class DbValidationRunner
         return result;
     }
 
-    private static void AddDatasetSummary(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events, List<MatchTeamStatEntity> stats)
+    private static void AddDatasetSummary(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events, List<MatchStatEntity> stats, List<FlashscoreOddsEntity> odds)
     {
         var byStatus = matches
             .GroupBy(x => Normalize(x.StatusType))
@@ -89,6 +95,12 @@ public sealed class DbValidationRunner
             .Select(x => $"{x.Key}: {x.Count()}")
             .ToList();
 
+        var byOddsMarket = odds
+            .GroupBy(x => Normalize(x.Market))
+            .OrderByDescending(x => x.Count())
+            .Select(x => $"{x.Key}: {x.Count()}")
+            .ToList();
+
         var check = new DbValidationCheckResult
         {
             Name = "Dataset summary",
@@ -97,10 +109,12 @@ public sealed class DbValidationRunner
         };
         check.Examples.Add($"Matches: {matches.Count}");
         check.Examples.Add($"MatchEvents: {events.Count}");
-        check.Examples.Add($"MatchTeamStats: {stats.Count}");
+        check.Examples.Add($"MatchStats: {stats.Count}");
+        check.Examples.Add($"FlashscoreOdds: {odds.Count}");
         check.Examples.Add("Status counts: " + (byStatus.Count == 0 ? "none" : string.Join(", ", byStatus)));
         check.Examples.Add("Event type counts: " + (byEventType.Count == 0 ? "none" : string.Join(", ", byEventType)));
         check.Examples.Add("Stats period counts: " + (byStatsPeriod.Count == 0 ? "none" : string.Join(", ", byStatsPeriod)));
+        check.Examples.Add("Odds market counts: " + (byOddsMarket.Count == 0 ? "none" : string.Join(", ", byOddsMarket)));
         result.Add(check);
     }
 
@@ -110,15 +124,15 @@ public sealed class DbValidationRunner
 
         foreach (MatchEntity match in matches)
         {
-            if (match.SofaScoreEventId <= 0)
-                examples.Add($"Match dbId={match.Id}: missing SofaScore event id");
-            if (match.SofaScoreSeasonId <= 0)
+            if (string.IsNullOrWhiteSpace(match.EventId))
+                examples.Add($"Match dbId={match.Id}: missing event id");
+            if (match.SeasonId <= 0)
                 examples.Add(Describe(match) + ": missing season id");
             if (match.RoundNumber <= 0)
                 examples.Add(Describe(match) + ": missing/invalid round number");
-            if (match.HomeTeamSofaScoreId <= 0 || match.AwayTeamSofaScoreId <= 0)
+            if (string.IsNullOrWhiteSpace(match.HomeTeamId) || string.IsNullOrWhiteSpace(match.AwayTeamId))
                 examples.Add(Describe(match) + ": missing team id");
-            if (match.HomeTeamSofaScoreId == match.AwayTeamSofaScoreId && match.HomeTeamSofaScoreId > 0)
+            if (match.HomeTeamId == match.AwayTeamId && !string.IsNullOrWhiteSpace(match.HomeTeamId))
                 examples.Add(Describe(match) + ": home and away team ids are the same");
             if (string.IsNullOrWhiteSpace(match.HomeTeamName) || string.IsNullOrWhiteSpace(match.AwayTeamName))
                 examples.Add(Describe(match) + ": missing team name");
@@ -208,7 +222,7 @@ public sealed class DbValidationRunner
         foreach (MatchEventEntity matchEvent in events.Where(x => IsGoal(x) || IsCard(x)))
         {
             if (matchEvent.Minute < 0 || matchEvent.Minute > 130)
-                examples.Add($"{Describe(matchById, matchEvent.MatchId)} {matchEvent.IncidentType} incidentId={matchEvent.SofaScoreIncidentId}: invalid minute {matchEvent.Minute}");
+                examples.Add($"{Describe(matchById, matchEvent.MatchId)} {matchEvent.IncidentType} incidentId={matchEvent.IncidentId}: invalid minute {matchEvent.Minute}");
 
             if (matchEvent.TimeSeconds is < 0 or > 7800)
                 examples.Add($"{Describe(matchById, matchEvent.MatchId)} {matchEvent.IncidentType} minute {matchEvent.Minute}: invalid timeSeconds {matchEvent.TimeSeconds}");
@@ -218,7 +232,7 @@ public sealed class DbValidationRunner
             examples.Count == 0 ? "Goal/card event minutes are inside expected football ranges." : $"{examples.Count} invalid event times found.", examples);
     }
 
-    private static void CheckNotStartedFixturesHaveNoDetails(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events, List<MatchTeamStatEntity> stats)
+    private static void CheckNotStartedFixturesHaveNoDetails(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events, List<MatchStatEntity> stats)
     {
         var eventsByMatch = events.GroupBy(x => x.MatchId).ToDictionary(x => x.Key, x => x.Count());
         var statsByMatch = stats.GroupBy(x => x.MatchId).ToDictionary(x => x.Key, x => x.Count());
@@ -236,7 +250,7 @@ public sealed class DbValidationRunner
             examples.Count == 0 ? "Not-started fixtures do not have incidents/statistics imported." : $"{examples.Count} not-started fixtures contain detail rows.", examples);
     }
 
-    private static void CheckFinishedMatchesHaveDetails(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events, List<MatchTeamStatEntity> stats)
+    private static void CheckFinishedMatchesHaveDetails(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events, List<MatchStatEntity> stats)
     {
         var eventsByMatch = events.GroupBy(x => x.MatchId).ToDictionary(x => x.Key, x => x.ToList());
         var statsByMatch = stats.GroupBy(x => x.MatchId).ToDictionary(x => x.Key, x => x.Count());
@@ -264,28 +278,28 @@ public sealed class DbValidationRunner
     private static void CheckDuplicateExternalIncidentIds(DbValidationResult result, List<MatchEventEntity> events)
     {
         var examples = events
-            .Where(x => x.SofaScoreIncidentId.HasValue)
-            .GroupBy(x => new { x.SofaScoreEventId, x.SofaScoreIncidentId, Type = Normalize(x.IncidentType) })
+            .Where(x => !string.IsNullOrWhiteSpace(x.IncidentId))
+            .GroupBy(x => new { x.EventId, x.IncidentId, Type = Normalize(x.IncidentType) })
             .Where(x => x.Count() > 1)
-            .Select(x => $"event {x.Key.SofaScoreEventId}, incident {x.Key.SofaScoreIncidentId}, type {x.Key.Type}: {x.Count()} rows")
+            .Select(x => $"event {x.Key.EventId}, incident {x.Key.IncidentId}, type {x.Key.Type}: {x.Count()} rows")
             .ToList();
 
         AddCheck(result, "Duplicate external incident ids", examples.Count == 0 ? DbValidationSeverity.Info : DbValidationSeverity.Error,
-            examples.Count == 0 ? "No duplicated SofaScore incident ids found." : $"{examples.Count} duplicated incident ids found.", examples);
+            examples.Count == 0 ? "No duplicated incident ids found." : $"{examples.Count} duplicated incident ids found.", examples);
     }
 
-    private static void CheckRedCardsAgainstStats(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events, List<MatchTeamStatEntity> stats)
+    private static void CheckRedCardsAgainstStats(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events, List<MatchStatEntity> stats)
     {
         Dictionary<int, MatchEntity> matchById = matches.ToDictionary(x => x.Id);
         var cardRowsByMatch = events.Where(IsCard).GroupBy(x => x.MatchId).ToDictionary(x => x.Key, x => x.ToList());
         var redCardStats = stats
-            .Where(x => Normalize(x.Period) == "all" && Normalize(x.Key) == "redcards")
+            .Where(x => Normalize(x.Period) == "all" && (x.HomeRedCards.HasValue || x.AwayRedCards.HasValue))
             .GroupBy(x => x.MatchId)
             .Select(x => x.First())
             .ToList();
 
         var examples = new List<string>();
-        foreach (MatchTeamStatEntity stat in redCardStats)
+        foreach (MatchStatEntity stat in redCardStats)
         {
             if (!matchById.TryGetValue(stat.MatchId, out MatchEntity? match))
                 continue;
@@ -293,8 +307,8 @@ public sealed class DbValidationRunner
             cardRowsByMatch.TryGetValue(stat.MatchId, out List<MatchEventEntity>? cards);
             int homeRedCards = cards?.Count(IsHomeRedCard) ?? 0;
             int awayRedCards = cards?.Count(IsAwayRedCard) ?? 0;
-            int statHome = Convert.ToInt32(stat.HomeValue ?? 0);
-            int statAway = Convert.ToInt32(stat.AwayValue ?? 0);
+            int statHome = Convert.ToInt32(stat.HomeRedCards ?? 0);
+            int statAway = Convert.ToInt32(stat.AwayRedCards ?? 0);
 
             if (homeRedCards != statHome || awayRedCards != statAway)
                 examples.Add($"{Describe(match)}: redCards stat {statHome}-{statAway}, card events {homeRedCards}-{awayRedCards}");
@@ -304,7 +318,7 @@ public sealed class DbValidationRunner
             examples.Count == 0 ? "Red-card stat rows match red-card incidents where available." : $"{examples.Count} red-card stat/event mismatches found.", examples);
     }
 
-    private static void CheckModelUsefulStats(DbValidationResult result, List<MatchEntity> matches, List<MatchTeamStatEntity> stats)
+    private static void CheckModelUsefulStats(DbValidationResult result, List<MatchEntity> matches, List<MatchStatEntity> stats)
     {
         var statsByMatch = stats.GroupBy(x => x.MatchId).ToDictionary(x => x.Key, x => x.ToList());
         var examples = new List<string>();
@@ -312,11 +326,14 @@ public sealed class DbValidationRunner
         string[] usefulKeys = ["expectedgoals", "totalshotsongoal", "shotsongoal", "cornerkicks", "ballpossession"];
         foreach (MatchEntity match in matches.Where(IsFinished))
         {
-            if (!statsByMatch.TryGetValue(match.Id, out List<MatchTeamStatEntity>? matchStats) || matchStats.Count == 0)
+            if (!statsByMatch.TryGetValue(match.Id, out List<MatchStatEntity>? matchStats) || matchStats.Count == 0)
                 continue;
 
-            HashSet<string> keys = matchStats.Select(x => Normalize(x.Key)).ToHashSet();
-            List<string> missing = usefulKeys.Where(key => !keys.Contains(key)).ToList();
+            MatchStatEntity? allStats = matchStats.FirstOrDefault(x => Normalize(x.Period) == "all");
+            if (allStats is null)
+                continue;
+
+            List<string> missing = usefulKeys.Where(key => !HasUsefulStat(allStats, key)).ToList();
             if (missing.Count > 0)
                 examples.Add($"{Describe(match)}: missing useful stat keys: {string.Join(", ", missing)}");
         }
@@ -330,7 +347,7 @@ public sealed class DbValidationRunner
         var examples = new List<string>();
 
         var groups = matches
-            .GroupBy(x => new { x.SofaScoreSeasonId, x.RoundNumber })
+            .GroupBy(x => new { x.SeasonId, x.RoundNumber })
             .OrderBy(x => x.Key.RoundNumber)
             .ToList();
 
@@ -341,7 +358,7 @@ public sealed class DbValidationRunner
                 continue;
 
             if (count < 2)
-                examples.Add($"season {group.Key.SofaScoreSeasonId} round {group.Key.RoundNumber}: only {count} match imported");
+                examples.Add($"season {group.Key.SeasonId} round {group.Key.RoundNumber}: only {count} match imported");
         }
 
         AddCheck(result, "Round calendar completeness", examples.Count == 0 ? DbValidationSeverity.Info : DbValidationSeverity.Warning,
@@ -383,11 +400,22 @@ public sealed class DbValidationRunner
     private static bool IsAwayRedCard(MatchEventEntity matchEvent)
         => IsCard(matchEvent) && !matchEvent.IsHome && Normalize(matchEvent.IncidentClass).Contains("red");
 
+    private static bool HasUsefulStat(MatchStatEntity stat, string key)
+        => key switch
+        {
+            "expectedgoals" => stat.HomeExpectedGoals.HasValue || stat.AwayExpectedGoals.HasValue,
+            "totalshotsongoal" => stat.HomeTotalShots.HasValue || stat.AwayTotalShots.HasValue,
+            "shotsongoal" => stat.HomeShotsOnTarget.HasValue || stat.AwayShotsOnTarget.HasValue,
+            "cornerkicks" => stat.HomeCornerKicks.HasValue || stat.AwayCornerKicks.HasValue,
+            "ballpossession" => stat.HomeBallPossession.HasValue || stat.AwayBallPossession.HasValue,
+            _ => false
+        };
+
     private static string Normalize(string? value)
         => string.IsNullOrWhiteSpace(value) ? "" : value.Trim().Replace(" ", "", StringComparison.Ordinal).Replace("_", "", StringComparison.Ordinal).ToLowerInvariant();
 
     private static string Describe(MatchEntity match)
-        => $"event {match.SofaScoreEventId} r{match.RoundNumber} {match.HomeTeamName} vs {match.AwayTeamName}";
+        => $"event {match.EventId} r{match.RoundNumber} {match.HomeTeamName} vs {match.AwayTeamName}";
 
     private static string Describe(Dictionary<int, MatchEntity> matchesById, int matchId)
         => matchesById.TryGetValue(matchId, out MatchEntity? match) ? Describe(match) : $"matchId {matchId}";
@@ -406,7 +434,8 @@ public sealed class DbValidationResult
 {
     public int MatchesChecked { get; set; }
     public int EventsChecked { get; set; }
-    public int TeamStatsChecked { get; set; }
+    public int MatchStatsChecked { get; set; }
+    public int OddsChecked { get; set; }
     public List<DbValidationCheckResult> Checks { get; } = [];
     public int ErrorCount => Checks.Count(x => x.Severity == DbValidationSeverity.Error);
     public int WarningCount => Checks.Count(x => x.Severity == DbValidationSeverity.Warning);

@@ -157,7 +157,7 @@ public sealed class LiveTotalEmpiricalSettlementFitter
 
         List<InputRow> rows = await ReadRowsAsync(_options.InputPath, cancellationToken);
         List<InputRow> trainingRows = rows
-            .Where(x => _options.TrainingSeasonIds.Contains(x.SofaScoreSeasonId))
+            .Where(x => _options.TrainingSeasonIds.Contains(x.SeasonId))
             .ToList();
 
         if (trainingRows.Count == 0)
@@ -312,7 +312,7 @@ public sealed class LiveTotalEmpiricalSettlementFitter
         var index = headers.Select((name, position) => new { name, position })
             .ToDictionary(x => x.name, x => x.position, StringComparer.OrdinalIgnoreCase);
 
-        foreach (string required in new[] { "LeagueName", "SofaScoreSeasonId", "MatchId", "StateTrigger", "Minute", "DetailedScoreState", "CurrentTotalGoals", "ActualRemainingGoals" })
+        foreach (string required in new[] { "LeagueName", "SeasonId", "MatchId", "StateTrigger", "Minute", "DetailedScoreState", "CurrentTotalGoals", "ActualRemainingGoals" })
         {
             if (!index.ContainsKey(required))
                 throw new ArgumentException($"Input CSV is missing required column '{required}'. Rebuild the calibration dataset with the latest builder.");
@@ -324,7 +324,7 @@ public sealed class LiveTotalEmpiricalSettlementFitter
             if (record.Count == 1 && string.IsNullOrWhiteSpace(record[0]))
                 continue;
 
-            if (!TryGetInt(record, index, "SofaScoreSeasonId", out int seasonId) ||
+            if (!TryGetInt(record, index, "SeasonId", out int seasonId) ||
                 !TryGetInt(record, index, "MatchId", out int matchId) ||
                 !TryGetInt(record, index, "Minute", out int minute) ||
                 !TryGetInt(record, index, "CurrentTotalGoals", out int currentTotalGoals) ||
@@ -334,7 +334,7 @@ public sealed class LiveTotalEmpiricalSettlementFitter
             rows.Add(new InputRow
             {
                 LeagueName = GetString(record, index, "LeagueName"),
-                SofaScoreSeasonId = seasonId,
+                SeasonId = seasonId,
                 MatchId = matchId,
                 StateTrigger = LiveTotalStateTrigger.Normalize(GetString(record, index, "StateTrigger")),
                 Minute = minute,
@@ -425,7 +425,7 @@ public sealed class LiveTotalEmpiricalSettlementFitter
     private sealed class InputRow
     {
         public string LeagueName { get; set; } = string.Empty;
-        public int SofaScoreSeasonId { get; set; }
+        public int SeasonId { get; set; }
         public int MatchId { get; set; }
         public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
         public int Minute { get; set; }

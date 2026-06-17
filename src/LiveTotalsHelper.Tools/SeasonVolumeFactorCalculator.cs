@@ -43,11 +43,11 @@ public sealed class SeasonVolumeFactorCalculator
         Validate(options);
 
         List<MatchEntity> baseMatches = await BuildFinishedQuery(options.League)
-            .Where(x => options.BaseSeasonIds.Contains(x.SofaScoreSeasonId))
+            .Where(x => options.BaseSeasonIds.Contains(x.SeasonId))
             .ToListAsync(cancellationToken);
 
         List<MatchEntity> currentMatches = await BuildFinishedQuery(options.League)
-            .Where(x => x.SofaScoreSeasonId == options.CurrentSeasonId && x.RoundNumber < options.BeforeRound)
+            .Where(x => x.SeasonId == options.CurrentSeasonId && x.RoundNumber < options.BeforeRound)
             .ToListAsync(cancellationToken);
 
         var result = new SeasonVolumeFactorResult

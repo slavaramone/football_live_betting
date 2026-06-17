@@ -122,10 +122,10 @@ public sealed class LiveTotalCalibrationAnalyzer
     private void BuildTrainTestAnalysis(LiveTotalCalibrationAnalysisResult result, IReadOnlyList<RowWithBand> analyzedRows)
     {
         List<RowWithBand> train = analyzedRows
-            .Where(x => _options.TrainingSeasonIds.Contains(x.Row.SofaScoreSeasonId))
+            .Where(x => _options.TrainingSeasonIds.Contains(x.Row.SeasonId))
             .ToList();
         List<RowWithBand> test = analyzedRows
-            .Where(x => _options.TestSeasonIds.Contains(x.Row.SofaScoreSeasonId))
+            .Where(x => _options.TestSeasonIds.Contains(x.Row.SeasonId))
             .ToList();
 
         Dictionary<(string StateTrigger, string MinuteBand, string DetailedScoreState), LiveTotalCalibrationBucketResult> trainBuckets = BuildBucketResults(
@@ -299,7 +299,7 @@ public sealed class LiveTotalCalibrationAnalyzer
             .Select((name, position) => new { name, position })
             .ToDictionary(x => x.name, x => x.position, StringComparer.OrdinalIgnoreCase);
 
-        Require(index, "SofaScoreSeasonId");
+        Require(index, "SeasonId");
         Require(index, "MatchId");
         Require(index, "Minute");
         Require(index, "DetailedScoreState");
@@ -313,7 +313,7 @@ public sealed class LiveTotalCalibrationAnalyzer
             if (record.Count == 1 && string.IsNullOrWhiteSpace(record[0]))
                 continue;
 
-            if (!TryGetInt(record, index, "SofaScoreSeasonId", out int seasonId) ||
+            if (!TryGetInt(record, index, "SeasonId", out int seasonId) ||
                 !TryGetInt(record, index, "MatchId", out int matchId) ||
                 !TryGetInt(record, index, "Minute", out int minute) ||
                 !TryGetDouble(record, index, "TimingRemainingShare", out double timingRemainingShare) ||
@@ -330,7 +330,7 @@ public sealed class LiveTotalCalibrationAnalyzer
                 StateTrigger = index.ContainsKey("StateTrigger")
                     ? LiveTotalStateTrigger.Normalize(GetString(record, index, "StateTrigger"))
                     : LiveTotalStateTrigger.FixedMinute,
-                SofaScoreSeasonId = seasonId,
+                SeasonId = seasonId,
                 MatchId = matchId,
                 Minute = minute,
                 DetailedScoreState = detailedScoreState,
@@ -500,7 +500,7 @@ public sealed class LiveTotalCalibrationAnalyzer
     private sealed class LiveTotalCalibrationInputRow
     {
         public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
-        public int SofaScoreSeasonId { get; set; }
+        public int SeasonId { get; set; }
         public int MatchId { get; set; }
         public int Minute { get; set; }
         public string DetailedScoreState { get; set; } = string.Empty;

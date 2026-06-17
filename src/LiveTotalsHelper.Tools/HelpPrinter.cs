@@ -9,7 +9,7 @@ public static class HelpPrinter
         Console.WriteLine("Commands:");
         Console.WriteLine("  download-flashscore  Download rendered Flashscore calendar, incidents, stats and odds JSON.");
         Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON only.");
-        Console.WriteLine("  import-sofascore     Import saved SofaScore JSON into PostgreSQL and apply pending migrations.");
+        Console.WriteLine("  import-flashscore    Import saved Flashscore JSON into PostgreSQL and apply pending migrations.");
         Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
         Console.WriteLine("  build-live-total-calibration-dataset  Build correction rows from the shared live-total timing core.");
         Console.WriteLine("  analyze-live-total-calibration        Compare correction factors by trigger/state.");
@@ -24,7 +24,7 @@ public static class HelpPrinter
         Console.WriteLine();
         PrintDownloadSofaScore();
         Console.WriteLine();
-        PrintImportSofaScore();
+        PrintImportFlashscore();
         Console.WriteLine();
         PrintValidateDb();
         Console.WriteLine();
@@ -64,8 +64,8 @@ public static class HelpPrinter
         Console.WriteLine("Flashscore arguments:");
         Console.WriteLine("  --url                Flashscore results page URL.");
         Console.WriteLine("  --league             League name used in folder structure and calendar JSON.");
-        Console.WriteLine("  --tournament-id      Numeric id stored in SofaScore-compatible fields. Use a stable project-local id.");
-        Console.WriteLine("  --season-id          Numeric season id stored in SofaScore-compatible fields. Use a stable project-local id.");
+        Console.WriteLine("  --tournament-id      Numeric tournament id. Use a stable project-local id.");
+        Console.WriteLine("  --season-id          Numeric season id. Use a stable project-local id.");
         Console.WriteLine("  --season-name        Optional season name. Defaults to --season-year/default year.");
         Console.WriteLine("  --season-year        Optional season year string. Defaults to --default-year.");
         Console.WriteLine("  --country            Optional country name.");
@@ -88,8 +88,8 @@ public static class HelpPrinter
         Console.WriteLine("  --max-show-more-clicks Maximum Show more clicks. Default: 40");
         Console.WriteLine("  --default-year       Year used for Flashscore dates that omit year. Default: current UTC year.");
         Console.WriteLine();
-        Console.WriteLine("Output layout matches the SofaScore downloader: <output>/<league-slug>/season-<season-id>/round-XX/calendar.json.");
-        Console.WriteLine("Calendar and statistics JSON are SofaScore-compatible for the current importer; odds are stored as Flashscore-specific odds.json.");
+        Console.WriteLine("Output layout: <output>/<league-slug>/season-<season-id>/round-XX/calendar.json.");
+        Console.WriteLine("Calendar, incidents, statistics and odds JSON are imported by import-flashscore.");
     }
 
     public static void PrintDownloadSofaScore()
@@ -123,30 +123,30 @@ public static class HelpPrinter
         Console.WriteLine("  --warmup-delay-ms    Delay after opening sofascore.com before API calls. Default: 1000");
     }
 
-    public static void PrintImportSofaScore()
+    public static void PrintImportFlashscore()
     {
-        Console.WriteLine("Import usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-sofascore \\");
-        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --round 2 --input data/sofascore");
+        Console.WriteLine("Import Flashscore usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore \\");
+        Console.WriteLine("    --league \"China Super League\" --tournament-id 900001 --season-id 2026 --round 2 --input data/flashscore");
         Console.WriteLine();
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-sofascore \\");
-        Console.WriteLine("    --league \"NPL NSW\" --tournament-id 1274 --season-id 88562 --round-from 1 --to-round 30 --input data/sofascore");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore \\");
+        Console.WriteLine("    --league \"China Super League\" --tournament-id 900001 --season-id 2026 --round-from 1 --to-round 30 --input data/flashscore");
         Console.WriteLine();
         Console.WriteLine("Import arguments:");
         Console.WriteLine("  --league             League name used in folder structure.");
-        Console.WriteLine("  --tournament-id      SofaScore unique tournament id fallback. Optional, default: 0.");
-        Console.WriteLine("  --season-id          SofaScore season id.");
+        Console.WriteLine("  --tournament-id      Tournament id fallback. Optional, default: 0.");
+        Console.WriteLine("  --season-id          Season id.");
         Console.WriteLine("  --round              Single round to import.");
         Console.WriteLine("  --round-from         First round when importing a range. Alias: --from-round.");
         Console.WriteLine("  --to-round           Last round when importing a range.");
-        Console.WriteLine("  --input              Input root where JSON was downloaded. Default: data/sofascore");
+        Console.WriteLine("  --input              Input root where JSON was downloaded. Default: data/flashscore");
         Console.WriteLine("  --debug-import       true/false. Prints every file before importing and returns detailed DB errors. Default: false");
         Console.WriteLine();
         Console.WriteLine("Database:");
         Console.WriteLine("  Connection string: src/LiveTotalsHelper.Tools/appsettings.json");
-        Console.WriteLine("  Pending migrations are applied automatically only when import-sofascore starts.");
+        Console.WriteLine("  Pending migrations are applied automatically only when import-flashscore starts.");
         Console.WriteLine();
-        Console.WriteLine("Before first run, install Playwright browser binaries for download-sofascore:");
+        Console.WriteLine("Before first run, install Playwright browser binaries for download-flashscore:");
         Console.WriteLine("  dotnet build src/LiveTotalsHelper.Tools/LiveTotalsHelper.Tools.csproj");
         Console.WriteLine("  powershell -ExecutionPolicy Bypass -File src/LiveTotalsHelper.Tools/bin/Debug/net8.0/playwright.ps1 install chromium");
     }
@@ -262,7 +262,7 @@ public static class HelpPrinter
         Console.WriteLine();
         Console.WriteLine("Validate DB arguments:");
         Console.WriteLine("  --league             Optional league name filter.");
-        Console.WriteLine("  --season-id          Optional SofaScore season id filter.");
+        Console.WriteLine("  --season-id          Optional season id filter.");
         Console.WriteLine("  --round              Optional single round filter.");
         Console.WriteLine("  --from-round         Optional first round filter.");
         Console.WriteLine("  --to-round           Optional last round filter.");

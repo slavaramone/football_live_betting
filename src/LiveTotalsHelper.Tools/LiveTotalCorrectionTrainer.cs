@@ -89,7 +89,7 @@ public sealed class LiveTotalCorrectionTrainer
         List<CorrectionPredictionRow> predictions = test.Select(row => new CorrectionPredictionRow
         {
             SeasonId = row.SeasonId,
-            SofaScoreEventId = row.SofaScoreEventId,
+            EventId = row.EventId,
             Minute = row.Minute,
             Line = row.Line,
             DetailedScoreState = row.DetailedScoreState,
@@ -243,12 +243,12 @@ public sealed class LiveTotalCorrectionTrainer
     private static string ToCsv(IEnumerable<CorrectionPredictionRow> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("SeasonId,SofaScoreEventId,Minute,Line,DetailedScoreState,CurrentTotalGoals,ActualOverWin,BaselineProbability,BaselineOnlyModelProbability,CorrectedModelProbability");
+        sb.AppendLine("SeasonId,EventId,Minute,Line,DetailedScoreState,CurrentTotalGoals,ActualOverWin,BaselineProbability,BaselineOnlyModelProbability,CorrectedModelProbability");
         foreach (CorrectionPredictionRow row in rows)
         {
             sb.AppendLine(string.Join(',',
                 row.SeasonId.ToString(CultureInfo.InvariantCulture),
-                row.SofaScoreEventId.ToString(CultureInfo.InvariantCulture),
+                row.EventId,
                 row.Minute.ToString(CultureInfo.InvariantCulture),
                 row.Line.ToString("0.######", CultureInfo.InvariantCulture),
                 row.DetailedScoreState,
@@ -265,7 +265,7 @@ public sealed class LiveTotalCorrectionTrainer
 internal sealed class CorrectionRow
 {
     public int SeasonId { get; set; }
-    public long SofaScoreEventId { get; set; }
+    public string EventId { get; set; } = string.Empty;
     public int Minute { get; set; }
     public double Line { get; set; }
     public string DetailedScoreState { get; set; } = string.Empty;
@@ -278,7 +278,7 @@ internal sealed class CorrectionRow
 internal sealed class CorrectionPredictionRow
 {
     public int SeasonId { get; set; }
-    public long SofaScoreEventId { get; set; }
+    public string EventId { get; set; } = string.Empty;
     public int Minute { get; set; }
     public double Line { get; set; }
     public string DetailedScoreState { get; set; } = string.Empty;
@@ -298,8 +298,8 @@ internal static class CorrectionCsvReader
             throw new ArgumentException("Calibration dataset CSV is empty.");
 
         string[] header = ParseCsvLine(lines[0]).ToArray();
-        int season = FindRequiredColumn(header, "SofaScoreSeasonId");
-        int eventId = FindRequiredColumn(header, "SofaScoreEventId");
+        int season = FindRequiredColumn(header, "SeasonId");
+        int eventId = FindRequiredColumn(header, "EventId");
         int minute = FindRequiredColumn(header, "Minute");
         int line = FindRequiredColumn(header, "Line");
         int detailedState = FindRequiredColumn(header, "DetailedScoreState");
@@ -321,8 +321,8 @@ internal static class CorrectionCsvReader
             double actualFraction = ParseDouble(cells[actual], "ActualOverWinFraction", i + 1);
             result.Add(new CorrectionRow
             {
-                SeasonId = ParseInt(cells[season], "SofaScoreSeasonId", i + 1),
-                SofaScoreEventId = ParseLong(cells[eventId], "SofaScoreEventId", i + 1),
+                SeasonId = ParseInt(cells[season], "SeasonId", i + 1),
+                EventId = cells[eventId],
                 Minute = ParseInt(cells[minute], "Minute", i + 1),
                 Line = ParseDouble(cells[line], "Line", i + 1),
                 DetailedScoreState = cells[detailedState],
@@ -345,11 +345,6 @@ internal static class CorrectionCsvReader
 
     private static int ParseInt(string value, string column, int row) =>
         int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)
-            ? parsed
-            : throw new ArgumentException($"Calibration dataset row {row}: {column} must be an integer.");
-
-    private static long ParseLong(string value, string column, int row) =>
-        long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed)
             ? parsed
             : throw new ArgumentException($"Calibration dataset row {row}: {column} must be an integer.");
 

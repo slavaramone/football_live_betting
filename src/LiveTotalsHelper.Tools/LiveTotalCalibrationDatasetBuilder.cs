@@ -59,17 +59,17 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         if (!string.IsNullOrWhiteSpace(_options.League))
             query = query.Where(x => x.LeagueName == _options.League || x.LeagueSlug == _options.League);
         if (_options.SeasonIds.Count > 0)
-            query = query.Where(x => _options.SeasonIds.Contains(x.SofaScoreSeasonId));
+            query = query.Where(x => _options.SeasonIds.Contains(x.SeasonId));
         if (_options.Rounds.Count > 0)
             query = query.Where(x => _options.Rounds.Contains(x.RoundNumber));
 
         List<MatchEntity> matches = await query
             .OrderBy(x => x.StartTimeUtc)
-            .ThenBy(x => x.SofaScoreEventId)
+            .ThenBy(x => x.EventId)
             .ToListAsync(cancellationToken);
 
         result.MatchesChecked = matches.Count;
-        result.SeasonsIncluded.AddRange(matches.Select(x => x.SofaScoreSeasonId).Distinct().OrderBy(x => x));
+        result.SeasonsIncluded.AddRange(matches.Select(x => x.SeasonId).Distinct().OrderBy(x => x));
 
         HashSet<int> matchIds = matches.Select(x => x.Id).ToHashSet();
         List<MatchEventEntity> events = await _db.MatchEvents.AsNoTracking()
@@ -113,7 +113,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
             {
                 result.UnreliableFinishedMatches++;
                 if (unreliableExamples.Count < _options.MaxExamples)
-                    unreliableExamples.Add($"event {match.SofaScoreEventId}: final {finalHome}-{finalAway}, goal events {goals.Count(x => x.IsHome)}-{goals.Count(x => !x.IsHome)}");
+                    unreliableExamples.Add($"event {match.EventId}: final {finalHome}-{finalAway}, goal events {goals.Count(x => x.IsHome)}-{goals.Count(x => !x.IsHome)}");
                 if (!_options.IncludeUnreliableMatches)
                     continue;
             }
@@ -230,12 +230,12 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         {
             LeagueName = match.LeagueName,
             LeagueSlug = match.LeagueSlug,
-            SofaScoreSeasonId = match.SofaScoreSeasonId,
+            SeasonId = match.SeasonId,
             SeasonName = match.SeasonName,
             SeasonYear = match.SeasonYear,
             RoundNumber = match.RoundNumber,
             MatchId = match.Id,
-            SofaScoreEventId = match.SofaScoreEventId,
+            EventId = match.EventId,
             StartTimeUtc = match.StartTimeUtc,
             HomeTeamName = match.HomeTeamName,
             AwayTeamName = match.AwayTeamName,
@@ -368,7 +368,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
 
     private static readonly string[] Header =
     [
-        "LeagueName", "LeagueSlug", "SofaScoreSeasonId", "SeasonName", "SeasonYear", "RoundNumber", "MatchId", "SofaScoreEventId", "StartTimeUtc",
+        "LeagueName", "LeagueSlug", "SeasonId", "SeasonName", "SeasonYear", "RoundNumber", "MatchId", "EventId", "StartTimeUtc",
         "HomeTeamName", "AwayTeamName",
         "StateTrigger", "TriggerEventMinute", "TriggerEventSide",
         "Minute", "HomeGoals", "AwayGoals", "CurrentTotalGoals", "GoalDifference", "ScoreState", "DetailedScoreState",
@@ -400,12 +400,12 @@ internal sealed class LiveTotalCalibrationDatasetRow
 {
     public string LeagueName { get; set; } = string.Empty;
     public string LeagueSlug { get; set; } = string.Empty;
-    public int SofaScoreSeasonId { get; set; }
+    public int SeasonId { get; set; }
     public string SeasonName { get; set; } = string.Empty;
     public string SeasonYear { get; set; } = string.Empty;
     public int RoundNumber { get; set; }
     public int MatchId { get; set; }
-    public long SofaScoreEventId { get; set; }
+    public string EventId { get; set; } = string.Empty;
     public DateTimeOffset? StartTimeUtc { get; set; }
     public string HomeTeamName { get; set; } = string.Empty;
     public string AwayTeamName { get; set; } = string.Empty;
@@ -445,7 +445,7 @@ internal sealed class LiveTotalCalibrationDatasetRow
 
         return
         [
-            LeagueName, LeagueSlug, SofaScoreSeasonId.ToString(CultureInfo.InvariantCulture), SeasonName, SeasonYear, RoundNumber.ToString(CultureInfo.InvariantCulture), MatchId.ToString(CultureInfo.InvariantCulture), SofaScoreEventId.ToString(CultureInfo.InvariantCulture), StartTimeUtc?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
+            LeagueName, LeagueSlug, SeasonId.ToString(CultureInfo.InvariantCulture), SeasonName, SeasonYear, RoundNumber.ToString(CultureInfo.InvariantCulture), MatchId.ToString(CultureInfo.InvariantCulture), EventId, StartTimeUtc?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
             HomeTeamName, AwayTeamName,
             StateTrigger, TriggerEventMinute.ToString(CultureInfo.InvariantCulture), TriggerEventSide,
             Minute.ToString(CultureInfo.InvariantCulture), HomeGoals.ToString(CultureInfo.InvariantCulture), AwayGoals.ToString(CultureInfo.InvariantCulture), CurrentTotalGoals.ToString(CultureInfo.InvariantCulture), GoalDifference.ToString(CultureInfo.InvariantCulture), ScoreState, DetailedScoreState,

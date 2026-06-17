@@ -49,17 +49,17 @@ public sealed class WeibullDbSampleLoader
         if (!string.IsNullOrWhiteSpace(_options.League))
             query = query.Where(x => x.LeagueName == _options.League || x.LeagueSlug == _options.League);
         if (_options.SeasonIds.Count > 0)
-            query = query.Where(x => _options.SeasonIds.Contains(x.SofaScoreSeasonId));
+            query = query.Where(x => _options.SeasonIds.Contains(x.SeasonId));
         if (_options.Rounds.Count > 0)
             query = query.Where(x => _options.Rounds.Contains(x.RoundNumber));
 
         List<MatchEntity> matches = await query
             .OrderBy(x => x.StartTimeUtc)
-            .ThenBy(x => x.SofaScoreEventId)
+            .ThenBy(x => x.EventId)
             .ToListAsync(cancellationToken);
 
         result.MatchesChecked = matches.Count;
-        result.SeasonsIncluded.AddRange(matches.Select(x => x.SofaScoreSeasonId).Distinct().OrderBy(x => x));
+        result.SeasonsIncluded.AddRange(matches.Select(x => x.SeasonId).Distinct().OrderBy(x => x));
 
         HashSet<int> matchIds = matches.Select(x => x.Id).ToHashSet();
         List<MatchEventEntity> events = await _db.MatchEvents.AsNoTracking()
@@ -101,7 +101,7 @@ public sealed class WeibullDbSampleLoader
             {
                 result.UnreliableFinishedMatches++;
                 if (unreliableExamples.Count < _options.MaxExamples)
-                    unreliableExamples.Add($"event {match.SofaScoreEventId}: final {finalHome}-{finalAway}, goal events {goals.Count(x => x.IsHome)}-{goals.Count(x => !x.IsHome)}");
+                    unreliableExamples.Add($"event {match.EventId}: final {finalHome}-{finalAway}, goal events {goals.Count(x => x.IsHome)}-{goals.Count(x => !x.IsHome)}");
                 if (!_options.IncludeUnreliableMatches)
                     continue;
             }
@@ -119,8 +119,8 @@ public sealed class WeibullDbSampleLoader
                 result.Rows.Add(new WeibullGoalTimingRow
                 {
                     Minute = Math.Min(minute, _options.MaxMinute),
-                    SeasonId = match.SofaScoreSeasonId,
-                    MatchId = match.SofaScoreEventId.ToString(),
+                    SeasonId = match.SeasonId,
+                    MatchId = match.EventId.ToString(),
                     League = match.LeagueName,
                     GroupValue = groupValue
                 });

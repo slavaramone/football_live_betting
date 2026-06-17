@@ -61,7 +61,7 @@ public sealed class LiveTotalModelEvaluator
         }, cancellationToken) ?? throw new InvalidOperationException("Could not read state correction JSON.");
 
         List<InputRow> testRows = rows
-            .Where(x => _options.TestSeasonIds.Contains(x.SofaScoreSeasonId))
+            .Where(x => _options.TestSeasonIds.Contains(x.SeasonId))
             .ToList();
 
         string[] scopes = _options.CompareScopes
@@ -187,7 +187,7 @@ public sealed class LiveTotalModelEvaluator
 
         foreach (string required in new[]
         {
-            "SofaScoreSeasonId", "MatchId", "StateTrigger", "Minute", "HomeGoals", "AwayGoals",
+            "SeasonId", "MatchId", "StateTrigger", "Minute", "HomeGoals", "AwayGoals",
             "TimingRemainingShare", "ActualRemainingGoals"
         })
         {
@@ -201,7 +201,7 @@ public sealed class LiveTotalModelEvaluator
             if (record.Count == 1 && string.IsNullOrWhiteSpace(record[0]))
                 continue;
 
-            if (!TryGetInt(record, index, "SofaScoreSeasonId", out int seasonId) ||
+            if (!TryGetInt(record, index, "SeasonId", out int seasonId) ||
                 !TryGetInt(record, index, "MatchId", out int matchId) ||
                 !TryGetInt(record, index, "Minute", out int minute) ||
                 !TryGetInt(record, index, "HomeGoals", out int homeGoals) ||
@@ -212,7 +212,7 @@ public sealed class LiveTotalModelEvaluator
 
             rows.Add(new InputRow
             {
-                SofaScoreSeasonId = seasonId,
+                SeasonId = seasonId,
                 MatchId = matchId,
                 StateTrigger = LiveTotalStateTrigger.Normalize(GetString(record, index, "StateTrigger")),
                 Minute = minute,
@@ -353,7 +353,7 @@ public sealed class LiveTotalModelEvaluator
 
     private sealed class InputRow
     {
-        public int SofaScoreSeasonId { get; set; }
+        public int SeasonId { get; set; }
         public int MatchId { get; set; }
         public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
         public int Minute { get; set; }

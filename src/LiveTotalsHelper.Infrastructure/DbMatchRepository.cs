@@ -39,7 +39,7 @@ public sealed class DbMatchRepository : IMatchRepository
             .Take(120)
             .Select(x => new MatchSnapshot
             {
-                MatchId = x.SofaScoreEventId.ToString(),
+                MatchId = x.EventId,
                 League = x.LeagueName,
                 HomeTeam = x.HomeTeamName,
                 AwayTeam = x.AwayTeamName,
@@ -69,7 +69,7 @@ public sealed class DbMatchRepository : IMatchRepository
         if (dbKey == requestedKey)
             return true;
 
-        // Handles UI names like "Latvia 1. Liga" versus SofaScore DB names like "1.Liga" / "1. Liga".
+        // Handles UI names like "Latvia 1. Liga" versus stored league names like "1.Liga" / "1. Liga".
         if (requestedKey.EndsWith(dbKey, StringComparison.OrdinalIgnoreCase))
             return true;
 
@@ -83,7 +83,7 @@ public sealed class DbMatchRepository : IMatchRepository
     {
         value = (value ?? string.Empty).Trim().ToLowerInvariant();
 
-        // Country prefixes are useful in UI but often not stored in SofaScore league name.
+        // Country prefixes are useful in UI but often not stored in the league name.
         value = value
             .Replace("latvia", string.Empty)
             .Replace("norwegian", string.Empty)

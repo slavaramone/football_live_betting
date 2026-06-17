@@ -1,7 +1,7 @@
 using System.Globalization;
 using LiveTotalsHelper.Infrastructure.Flashscore;
 using LiveTotalsHelper.Infrastructure.Persistence;
-using LiveTotalsHelper.Infrastructure.Persistence.SofaScore;
+using LiveTotalsHelper.Infrastructure.Persistence.Flashscore;
 using LiveTotalsHelper.Infrastructure.SofaScore;
 using LiveTotalsHelper.Tools;
 using Microsoft.Extensions.Configuration;
@@ -22,7 +22,7 @@ try
     {
         "download-flashscore" => await RunDownloadFlashscore(commandArgs),
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
-        "import-sofascore" => await RunImportSofaScore(commandArgs),
+        "import-flashscore" => await RunImportFlashscore(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
         "analyze-live-total-calibration" => await RunAnalyzeLiveTotalCalibration(commandArgs),
@@ -908,7 +908,8 @@ static async Task<int> RunValidateDb(string[] args)
     Console.WriteLine("Database validation done.");
     Console.WriteLine($"Matches checked: {result.MatchesChecked}");
     Console.WriteLine($"Events checked: {result.EventsChecked}");
-    Console.WriteLine($"Team stats checked: {result.TeamStatsChecked}");
+    Console.WriteLine($"Match stats checked: {result.MatchStatsChecked}");
+    Console.WriteLine($"Odds checked: {result.OddsChecked}");
     Console.WriteLine($"Errors: {result.ErrorCount}");
     Console.WriteLine($"Warnings: {result.WarningCount}");
     Console.WriteLine($"Info: {result.InfoCount}");
@@ -945,14 +946,14 @@ static LiveTotalsDbContext CreateDbContext(IConfiguration configuration)
     return new LiveTotalsDbContext(options);
 }
 
-static async Task<int> RunImportSofaScore(string[] args)
+static async Task<int> RunImportFlashscore(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
 
     string league = parsed.RequiredString("league");
     int tournamentId = parsed.Int("tournament-id", 0);
     int seasonId = parsed.RequiredInt("season-id");
-    string inputRoot = parsed.String("input", parsed.String("output", "data/sofascore"));
+    string inputRoot = parsed.String("input", parsed.String("output", "data/flashscore"));
     bool debugImport = parsed.Bool("debug-import", false);
 
     var rounds = new List<int>();
@@ -965,9 +966,9 @@ static async Task<int> RunImportSofaScore(string[] args)
         .Build();
 
     await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
-    var importer = new SofaScoreDbImporter(dbContext);
+    var importer = new FlashscoreDbImporter(dbContext);
 
-    SofaScoreImportResult result = await ImportSofaScoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, debugImport, Console.Out, CancellationToken.None);
+    FlashscoreImportResult result = await ImportFlashscoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, debugImport, Console.Out, CancellationToken.None);
 
     Console.WriteLine();
     Console.WriteLine("Import done.");
@@ -975,6 +976,7 @@ static async Task<int> RunImportSofaScore(string[] args)
     Console.WriteLine($"Calendars imported: {result.CalendarsImported}");
     Console.WriteLine($"Incidents files imported: {result.IncidentsImported}");
     Console.WriteLine($"Statistics files imported: {result.StatisticsImported}");
+    Console.WriteLine($"Odds files imported: {result.OddsImported}");
     Console.WriteLine($"Warnings: {result.Warnings.Count}");
     Console.WriteLine($"Failures: {result.Failures.Count}");
 
@@ -997,8 +999,8 @@ static async Task<int> RunImportSofaScore(string[] args)
     return result.Failures.Count == 0 ? 0 : 1;
 }
 
-static async Task<SofaScoreImportResult> ImportSofaScoreFolderAsync(
-    SofaScoreDbImporter importer,
+static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
+    FlashscoreDbImporter importer,
     string inputRoot,
     string league,
     int tournamentId,
@@ -1008,12 +1010,12 @@ static async Task<SofaScoreImportResult> ImportSofaScoreFolderAsync(
     TextWriter log,
     CancellationToken cancellationToken)
 {
-    var result = new SofaScoreImportResult();
+    var result = new FlashscoreImportResult();
     string leagueSlug = FileNameSanitizer.Slugify(league);
     string seasonFolder = Path.Combine(inputRoot, leagueSlug, $"season-{seasonId}");
 
     if (!Directory.Exists(seasonFolder))
-        throw new ArgumentException($"SofaScore season folder was not found: {seasonFolder}");
+        throw new ArgumentException($"Flashscore season folder was not found: {seasonFolder}");
 
     List<(int Round, string Folder)> roundFolders = [];
     if (requestedRounds.Count > 0)
@@ -1078,8 +1080,8 @@ static async Task<SofaScoreImportResult> ImportSofaScoreFolderAsync(
 
         foreach (string eventFolder in Directory.GetDirectories(eventsFolder).OrderBy(x => x))
         {
-            string eventFolderName = Path.GetFileName(eventFolder);
-            if (!long.TryParse(eventFolderName, out long eventId))
+            string eventId = Path.GetFileName(eventFolder);
+            if (string.IsNullOrWhiteSpace(eventId))
             {
                 result.Warnings.Add($"round {round}: skipped non-event folder: {eventFolder}");
                 continue;
@@ -1118,6 +1120,24 @@ static async Task<SofaScoreImportResult> ImportSofaScoreFolderAsync(
                 catch (Exception ex)
                 {
                     result.Warnings.Add($"event {eventId}: statistics import failed:{Environment.NewLine}{FormatImportException(ex)}");
+                }
+            }
+
+            string oddsPath = Path.Combine(eventFolder, "odds.json");
+            if (File.Exists(oddsPath))
+            {
+                try
+                {
+                    string json = await File.ReadAllTextAsync(oddsPath, cancellationToken);
+                    if (debugImport)
+                        await log.WriteLineAsync($"  event {eventId}: odds {oddsPath}");
+
+                    await importer.ImportOddsAsync(eventId, json, oddsPath, cancellationToken);
+                    result.OddsImported++;
+                }
+                catch (Exception ex)
+                {
+                    result.Warnings.Add($"event {eventId}: odds import failed:{Environment.NewLine}{FormatImportException(ex)}");
                 }
             }
         }
@@ -1551,12 +1571,13 @@ static void PrintFlashscoreDownloadResult(FlashscoreDownloadResult result)
     }
 }
 
-internal sealed class SofaScoreImportResult
+internal sealed class FlashscoreImportResult
 {
     public int RoundsImported { get; set; }
     public int CalendarsImported { get; set; }
     public int IncidentsImported { get; set; }
     public int StatisticsImported { get; set; }
+    public int OddsImported { get; set; }
     public List<string> Warnings { get; } = [];
     public List<string> Failures { get; } = [];
 }
