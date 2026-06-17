@@ -14,6 +14,8 @@ public sealed class FlashscoreDownloadOptions
     public string OutputRoot { get; init; } = "data/flashscore";
     public bool Overwrite { get; init; }
     public bool DownloadIncidents { get; init; } = true;
+    public bool DownloadStatistics { get; init; } = true;
+    public bool DownloadOdds { get; init; } = true;
     public bool Headless { get; init; } = true;
     public int RenderWaitMs { get; init; } = 8_000;
     public int DetailWaitMs { get; init; } = 3_000;

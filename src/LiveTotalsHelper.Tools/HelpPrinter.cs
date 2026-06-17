@@ -7,7 +7,7 @@ public static class HelpPrinter
         Console.WriteLine("LiveTotalsHelper.Tools");
         Console.WriteLine();
         Console.WriteLine("Commands:");
-        Console.WriteLine("  download-flashscore  Download rendered Flashscore results into SofaScore-compatible calendar JSON.");
+        Console.WriteLine("  download-flashscore  Download rendered Flashscore calendar, incidents, stats and odds JSON.");
         Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON only.");
         Console.WriteLine("  import-sofascore     Import saved SofaScore JSON into PostgreSQL and apply pending migrations.");
         Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
@@ -76,17 +76,20 @@ public static class HelpPrinter
         Console.WriteLine("  --output             Output root. Default: data/flashscore");
         Console.WriteLine("  --overwrite          true/false. Default: false");
         Console.WriteLine("  --incidents          true/false. Download match-summary incidents into incidents.json. Default: true");
+        Console.WriteLine("  --statistics         true/false. Download match stats into statistics.json. Default: true");
+        Console.WriteLine("  --skip-stat          Shortcut for --statistics false.");
+        Console.WriteLine("  --odds               true/false. Download odds markets into odds.json. Default: true");
         Console.WriteLine("  --delay-ms           Delay between detail page requests. Default: 450");
         Console.WriteLine("  --headless           true/false. Default: true");
         Console.WriteLine("  --show-browser       Debug shortcut. Runs Chromium visible.");
         Console.WriteLine("  --render-wait-ms     Delay after opening page before parsing. Default: 8000");
-        Console.WriteLine("  --detail-wait-ms     Delay after opening each match summary before parsing incidents. Default: 3000");
+        Console.WriteLine("  --detail-wait-ms     Delay after opening each match detail page before parsing. Default: 3000");
         Console.WriteLine("  --show-more-wait-ms  Delay after each Show more click. Default: 2000");
         Console.WriteLine("  --max-show-more-clicks Maximum Show more clicks. Default: 40");
         Console.WriteLine("  --default-year       Year used for Flashscore dates that omit year. Default: current UTC year.");
         Console.WriteLine();
         Console.WriteLine("Output layout matches the SofaScore downloader: <output>/<league-slug>/season-<season-id>/round-XX/calendar.json.");
-        Console.WriteLine("The calendar JSON is SofaScore-compatible, so import-sofascore can import these calendars.");
+        Console.WriteLine("Calendar and statistics JSON are SofaScore-compatible for the current importer; odds are stored as Flashscore-specific odds.json.");
     }
 
     public static void PrintDownloadSofaScore()

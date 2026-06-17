@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -11,9 +12,22 @@ public sealed class FlashscoreDownloader
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         WriteIndented = true
+    };
+
+    private static readonly IReadOnlyDictionary<string, string> StatKeyAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["expectedgoalsxg"] = "expectedGoals",
+        ["expectedgoals"] = "expectedGoals",
+        ["ballpossession"] = "ballPossession",
+        ["totalshots"] = "totalShotsOnGoal",
+        ["shotsontarget"] = "shotsOnGoal",
+        ["cornerkicks"] = "cornerKicks",
+        ["yellowcards"] = "yellowCards",
+        ["redcards"] = "redCards"
     };
 
     private readonly SofaScoreJsonFileStore _fileStore;
@@ -151,6 +165,30 @@ public sealed class FlashscoreDownloader
                             cancellationToken);
                     }
 
+                    if (options.DownloadStatistics && IsFinished(calendarEvent))
+                    {
+                        await DownloadStatisticsAsync(
+                            page,
+                            calendarEvent,
+                            Path.Combine(eventFolder, "statistics.json"),
+                            options,
+                            result,
+                            log,
+                            cancellationToken);
+                    }
+
+                    if (options.DownloadOdds && IsFinished(calendarEvent))
+                    {
+                        await DownloadOddsAsync(
+                            page,
+                            calendarEvent,
+                            Path.Combine(eventFolder, "odds.json"),
+                            options,
+                            result,
+                            log,
+                            cancellationToken);
+                    }
+
                     if (options.DelayMs > 0)
                         await Task.Delay(options.DelayMs, cancellationToken);
                 }
@@ -208,6 +246,161 @@ public sealed class FlashscoreDownloader
             string warning = $"event {calendarEvent.Id} {calendarEvent.HomeTeam.Name} vs {calendarEvent.AwayTeam.Name}: incidents failed: {ex.Message}";
             result.Warnings.Add(warning);
             await log.WriteLineAsync($"    WARN incidents: {warning}");
+        }
+    }
+
+    private async Task DownloadStatisticsAsync(
+        IPage page,
+        FlashscoreCalendarEvent calendarEvent,
+        string targetPath,
+        FlashscoreDownloadOptions options,
+        FlashscoreDownloadResult result,
+        TextWriter log,
+        CancellationToken cancellationToken)
+    {
+        if (File.Exists(targetPath) && !options.Overwrite)
+        {
+            result.FilesSkipped++;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(calendarEvent.SourceUrl))
+        {
+            result.Warnings.Add($"event {calendarEvent.Id}: missing Flashscore detail URL; statistics skipped");
+            return;
+        }
+
+        try
+        {
+            var statistics = new List<FlashscoreStatisticsPeriod>();
+            (string Period, string Segment)[] periods =
+            [
+                ("ALL", "overall"),
+                ("1ST", "1st-half"),
+                ("2ND", "2nd-half")
+            ];
+
+            foreach ((string period, string segment) in periods)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string url = BuildMatchDetailUrl(calendarEvent.SourceUrl, $"summary/stats/{segment}");
+
+                await page.GotoAsync(url, new PageGotoOptions
+                {
+                    WaitUntil = WaitUntilState.DOMContentLoaded,
+                    Timeout = 90_000
+                });
+
+                if (options.DetailWaitMs > 0)
+                    await Task.Delay(options.DetailWaitMs, cancellationToken);
+
+                IReadOnlyList<FlashscoreStatisticsGroup> groups = await ExtractStatisticsGroupsAsync(page, cancellationToken);
+                if (groups.Count > 0)
+                {
+                    statistics.Add(new FlashscoreStatisticsPeriod
+                    {
+                        Period = period,
+                        Groups = groups.ToList()
+                    });
+                }
+            }
+
+            string json = JsonSerializer.Serialize(new { statistics }, JsonOptions);
+            Count(await _fileStore.WriteJsonAsync(targetPath, json, options.Overwrite, cancellationToken), result);
+            await log.WriteLineAsync($"    saved statistics: {targetPath} ({statistics.Sum(x => x.Groups.Sum(g => g.StatisticsItems.Count))})");
+        }
+        catch (Exception ex) when (ex is PlaywrightException or TimeoutException or JsonException)
+        {
+            string warning = $"event {calendarEvent.Id} {calendarEvent.HomeTeam.Name} vs {calendarEvent.AwayTeam.Name}: statistics failed: {ex.Message}";
+            result.Warnings.Add(warning);
+            await log.WriteLineAsync($"    WARN statistics: {warning}");
+        }
+    }
+
+    private async Task DownloadOddsAsync(
+        IPage page,
+        FlashscoreCalendarEvent calendarEvent,
+        string targetPath,
+        FlashscoreDownloadOptions options,
+        FlashscoreDownloadResult result,
+        TextWriter log,
+        CancellationToken cancellationToken)
+    {
+        if (File.Exists(targetPath) && !options.Overwrite)
+        {
+            result.FilesSkipped++;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(calendarEvent.SourceUrl))
+        {
+            result.Warnings.Add($"event {calendarEvent.Id}: missing Flashscore detail URL; odds skipped");
+            return;
+        }
+
+        try
+        {
+            string oddsUrl = BuildMatchDetailUrl(calendarEvent.SourceUrl, "odds");
+            await page.GotoAsync(oddsUrl, new PageGotoOptions
+            {
+                WaitUntil = WaitUntilState.DOMContentLoaded,
+                Timeout = 90_000
+            });
+
+            if (options.DetailWaitMs > 0)
+                await Task.Delay(options.DetailWaitMs, cancellationToken);
+
+            string[] requestedMarkets =
+            [
+                "1X2",
+                "OVER/UNDER",
+                "BOTH TEAMS TO SCORE",
+                "ASIAN HANDICAP"
+            ];
+
+            var markets = new List<FlashscoreOddsMarket>();
+            foreach (string marketName in requestedMarkets)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                bool selected = await TrySelectOddsMarketAsync(page, marketName);
+                if (!selected && markets.Count > 0)
+                    continue;
+
+                if (options.DetailWaitMs > 0)
+                    await Task.Delay(Math.Max(250, options.DetailWaitMs / 2), cancellationToken);
+
+                await ClickOddsShowMoreUntilDoneAsync(page, options, cancellationToken);
+
+                IReadOnlyList<FlashscoreRawOddsRow> rawRows = await ExtractRawOddsRowsAsync(page, cancellationToken);
+                List<FlashscoreOddsRow> rows = NormalizeOddsRows(marketName, rawRows);
+                if (rows.Count == 0)
+                    continue;
+
+                markets.Add(new FlashscoreOddsMarket
+                {
+                    Name = marketName,
+                    SourceUrl = page.Url,
+                    Rows = rows
+                });
+            }
+
+            var snapshot = new FlashscoreOddsSnapshot
+            {
+                SourceUrl = oddsUrl,
+                DownloadedAtUtc = DateTime.UtcNow,
+                Markets = markets
+            };
+
+            string json = JsonSerializer.Serialize(snapshot, JsonOptions);
+            Count(await _fileStore.WriteJsonAsync(targetPath, json, options.Overwrite, cancellationToken), result);
+            await log.WriteLineAsync($"    saved odds: {targetPath} ({markets.Sum(x => x.Rows.Count)})");
+        }
+        catch (Exception ex) when (ex is PlaywrightException or TimeoutException or JsonException)
+        {
+            string warning = $"event {calendarEvent.Id} {calendarEvent.HomeTeam.Name} vs {calendarEvent.AwayTeam.Name}: odds failed: {ex.Message}";
+            result.Warnings.Add(warning);
+            await log.WriteLineAsync($"    WARN odds: {warning}");
         }
     }
 
@@ -393,7 +586,8 @@ public sealed class FlashscoreDownloader
             if (!TryMapIncident(row, calendarEvent, out FlashscoreIncident? incident))
                 continue;
 
-            incidents.Add(incident);
+            if (incident is not null)
+                incidents.Add(incident);
         }
 
         return incidents
@@ -401,6 +595,406 @@ public sealed class FlashscoreDownloader
             .ThenBy(x => x.AddedTime ?? 0)
             .ThenBy(x => x.Id)
             .ToList();
+    }
+
+    private static async Task<IReadOnlyList<FlashscoreStatisticsGroup>> ExtractStatisticsGroupsAsync(
+        IPage page,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        string json = await page.EvaluateAsync<string>(
+            """
+            () => {
+                const text = (node) => (node?.textContent || "").replace(/\s+/g, " ").trim();
+                const groups = [];
+                const containers = document.querySelectorAll(".tabContent__match-statistics .section, .sectionsWrapper .section");
+
+                containers.forEach(section => {
+                    const groupName = text(section.querySelector(".sectionHeader, .stat__header, .section__title")) || "Statistics";
+                    const statisticsItems = Array.from(section.querySelectorAll('[data-testid="wcl-statistics"]')).map(row => {
+                        const values = Array.from(row.querySelectorAll('[data-testid="wcl-statistics-value"]')).map(text);
+                        const name = text(row.querySelector('[data-testid="wcl-statistics-category"]'));
+                        return {
+                            name,
+                            home: values[0] || "",
+                            away: values[1] || "",
+                            sourceText: text(row)
+                        };
+                    }).filter(item => item.name && (item.home || item.away));
+
+                    if (statisticsItems.length > 0)
+                        groups.push({ groupName, statisticsItems });
+                });
+
+                return JSON.stringify(groups);
+            }
+            """);
+
+        List<FlashscoreStatisticsGroup> groups = JsonSerializer.Deserialize<List<FlashscoreStatisticsGroup>>(json, JsonOptions) ?? [];
+        return groups
+            .Select(group => new FlashscoreStatisticsGroup
+            {
+                GroupName = string.IsNullOrWhiteSpace(group.GroupName) ? "Statistics" : group.GroupName,
+                StatisticsItems = group.StatisticsItems
+                    .Where(item => !string.IsNullOrWhiteSpace(item.Name))
+                    .Select(ToStatisticsItem)
+                    .ToList()
+            })
+            .Where(group => group.StatisticsItems.Count > 0)
+            .ToList();
+    }
+
+    private static async Task<IReadOnlyList<FlashscoreRawOddsRow>> ExtractRawOddsRowsAsync(
+        IPage page,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        string json = await page.EvaluateAsync<string>(
+            """
+            () => {
+                const text = (node) => (node?.textContent || "").replace(/\s+/g, " ").trim();
+                const isVisible = (node) => {
+                    if (!node) return false;
+                    const style = window.getComputedStyle(node);
+                    const rect = node.getBoundingClientRect();
+                    return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                };
+                const decimalPattern = /[+-]?\d+[.,]\d{1,3}/g;
+                const exactDecimalPattern = /^[+-]?\d+[.,]\d{1,3}$/;
+                const oddsValues = (value) => (value.match(decimalPattern) || [])
+                    .map(x => x.trim())
+                    .filter(Boolean);
+                const nodeOddsValues = (node) => Array.from(node.querySelectorAll("*"))
+                    .filter(element => {
+                        const value = text(element);
+                        if (!exactDecimalPattern.test(value)) return false;
+                        return !Array.from(element.children).some(child => exactDecimalPattern.test(text(child)));
+                    })
+                    .map(text);
+                const candidateRows = Array.from(document.querySelectorAll([
+                    ".ui-table__row",
+                    "[class*='ui-table__row']",
+                    "[class*='oddsRow']",
+                    "[class*='oddsCell']",
+                    "[class*='oddsCell__bookmakerPart']",
+                    "[data-testid*='odds']"
+                ].join(",")));
+                const seen = new Set();
+                const rows = [];
+
+                const pushRow = (node) => {
+                    const row = node.closest(".ui-table__row, [class*='ui-table__row'], [class*='oddsRow']") || node;
+                    if (seen.has(row) || !isVisible(row)) return;
+                    seen.add(row);
+
+                    const rawText = text(row);
+                    const childValues = nodeOddsValues(row);
+                    const values = childValues.length >= 2 ? childValues : oddsValues(rawText);
+                    if (values.length < 2 || rawText.length > 500) return;
+
+                    const bookmakerNode =
+                        row.querySelector("img[alt], img[title], [class*='bookmaker'] img, [class*='bookmaker'], a[href*='bookmaker']");
+                    const bookmaker = (bookmakerNode?.getAttribute?.("alt") ||
+                        bookmakerNode?.getAttribute?.("title") ||
+                        text(bookmakerNode) ||
+                        "").trim();
+
+                    const columns = Array.from(row.children)
+                        .map(text)
+                        .filter(Boolean);
+
+                    rows.push({ bookmaker, rawText, values, columns });
+                };
+
+                candidateRows.forEach(pushRow);
+
+                if (rows.length === 0) {
+                    Array.from(document.querySelectorAll("div, a, button, span"))
+                        .filter(isVisible)
+                        .forEach(node => {
+                            const rawText = text(node);
+                            if (rawText.length < 8 || rawText.length > 500 || oddsValues(rawText).length < 2)
+                                return;
+
+                            const childHasSameShape = Array.from(node.children)
+                                .some(child => oddsValues(text(child)).length >= 2);
+                            if (!childHasSameShape)
+                                pushRow(node);
+                        });
+                }
+
+                return JSON.stringify(rows);
+            }
+            """);
+
+        return JsonSerializer.Deserialize<List<FlashscoreRawOddsRow>>(json, JsonOptions) ?? [];
+    }
+
+    private static async Task<bool> TrySelectOddsMarketAsync(IPage page, string marketName)
+    {
+        return await page.EvaluateAsync<bool>(
+            """
+            (marketName) => {
+                const normalize = (value) => (value || "").replace(/\s+/g, " ").trim().toUpperCase();
+                const wanted = normalize(marketName);
+                const candidates = Array.from(document.querySelectorAll(
+                    "button, a, [role='tab'], [data-testid='wcl-tab']"
+                ));
+                const target = candidates.find(el => normalize(el.textContent) === wanted);
+                if (!target) return false;
+                target.scrollIntoView({ block: "center", inline: "center" });
+                target.click();
+                return true;
+            }
+            """,
+            marketName);
+    }
+
+    private static async Task ClickOddsShowMoreUntilDoneAsync(
+        IPage page,
+        FlashscoreDownloadOptions options,
+        CancellationToken cancellationToken)
+    {
+        int maxClicks = Math.Min(options.MaxShowMoreClicks, 8);
+        for (int i = 0; i < maxClicks; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            bool clicked = await page.EvaluateAsync<bool>(
+                """
+                () => {
+                    const isVisible = (node) => {
+                        const style = window.getComputedStyle(node);
+                        const rect = node.getBoundingClientRect();
+                        return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                    };
+                    const candidates = Array.from(document.querySelectorAll("button, a"));
+                    const target = candidates.find(el => {
+                        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+                        return text === "Show more" && isVisible(el);
+                    });
+                    if (!target) return false;
+                    target.scrollIntoView({ block: "center", inline: "center" });
+                    target.click();
+                    return true;
+                }
+                """);
+
+            if (!clicked)
+                return;
+
+            if (options.ShowMoreWaitMs > 0)
+                await Task.Delay(options.ShowMoreWaitMs, cancellationToken);
+        }
+    }
+
+    private static List<FlashscoreOddsRow> NormalizeOddsRows(string marketName, IReadOnlyList<FlashscoreRawOddsRow> rawRows)
+    {
+        var rows = new List<FlashscoreOddsRow>();
+        foreach (FlashscoreRawOddsRow rawRow in rawRows)
+        {
+            List<(string Raw, double Value)> tokens = rawRow.Values
+                .Select(raw => (Raw: raw, Value: ParseFlashscoreNumber(raw)))
+                .Where(x => x.Value.HasValue)
+                .Select(x => (x.Raw, x.Value!.Value))
+                .ToList();
+            List<double> values = tokens.Select(x => x.Value).ToList();
+
+            if (values.Count == 0)
+                continue;
+
+            string market = marketName.ToUpperInvariant();
+            if (market == "1X2")
+            {
+                AddSelectionRows(rows, rawRow, marketName, null, ["1", "X", "2"], CompactConsecutive(values.Where(x => x > 1.0)).Take(3).ToList());
+            }
+            else if (market.Contains("BOTH TEAMS", StringComparison.OrdinalIgnoreCase))
+            {
+                AddSelectionRows(rows, rawRow, marketName, null, ["Yes", "No"], CompactConsecutive(values.Where(x => x > 1.0)).Take(2).ToList());
+            }
+            else if (market.Contains("OVER/UNDER", StringComparison.OrdinalIgnoreCase))
+            {
+                int? lineIndex = FindLineIndex(values, allowNegative: false);
+                double? line = lineIndex.HasValue ? values[lineIndex.Value] : null;
+                string? lineRaw = lineIndex.HasValue ? tokens[lineIndex.Value].Raw : null;
+                List<double> odds = CompactConsecutive(tokens
+                    .Where((x, index) => IsOddsToken(x.Raw, x.Value, index, lineIndex, lineRaw))
+                    .Select(x => x.Value))
+                    .Take(2)
+                    .ToList();
+                AddSelectionRows(rows, rawRow, marketName, line, ["Over", "Under"], odds);
+            }
+            else if (market.Contains("ASIAN HANDICAP", StringComparison.OrdinalIgnoreCase))
+            {
+                int? lineIndex = FindLineIndex(values, allowNegative: true);
+                double? line = lineIndex.HasValue ? values[lineIndex.Value] : null;
+                string? lineRaw = lineIndex.HasValue ? tokens[lineIndex.Value].Raw : null;
+                List<double> odds = CompactConsecutive(tokens
+                    .Where((x, index) => IsOddsToken(x.Raw, x.Value, index, lineIndex, lineRaw))
+                    .Select(x => x.Value))
+                    .Take(2)
+                    .ToList();
+                AddSelectionRows(rows, rawRow, marketName, line, ["Home", "Away"], odds);
+            }
+            else
+            {
+                AddSelectionRows(rows, rawRow, marketName, null, [], CompactConsecutive(values.Where(x => x > 1.0)).ToList());
+            }
+        }
+
+        return rows
+            .GroupBy(row => new
+            {
+                row.Market,
+                Bookmaker = NormalizeBookmaker(row.Bookmaker),
+                row.Selection,
+                Line = NormalizeNullableDouble(row.Line),
+                Odds = NormalizeDouble(row.Odds)
+            })
+            .Select(group => group.First())
+            .OrderBy(row => row.Market, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(row => row.Line ?? double.MinValue)
+            .ThenBy(row => SelectionOrder(row.Selection))
+            .ThenBy(row => row.Odds)
+            .ToList();
+    }
+
+    private static bool IsOddsToken(string raw, double value, int index, int? lineIndex, string? lineRaw)
+    {
+        if (value <= 1.0)
+            return false;
+
+        if (lineIndex.HasValue && index == lineIndex.Value)
+            return false;
+
+        return string.IsNullOrWhiteSpace(lineRaw) || !raw.Equals(lineRaw, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<double> CompactConsecutive(IEnumerable<double> values)
+    {
+        double? previous = null;
+        foreach (double value in values)
+        {
+            if (previous.HasValue && Math.Abs(previous.Value - value) < 1e-9)
+                continue;
+
+            previous = value;
+            yield return value;
+        }
+    }
+
+    private static IEnumerable<string> CompactConsecutive(IEnumerable<string> values)
+    {
+        string? previous = null;
+        foreach (string value in values)
+        {
+            if (previous is not null && previous.Equals(value, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            previous = value;
+            yield return value;
+        }
+    }
+
+    private static void AddSelectionRows(
+        ICollection<FlashscoreOddsRow> target,
+        FlashscoreRawOddsRow rawRow,
+        string marketName,
+        double? line,
+        IReadOnlyList<string> selections,
+        IReadOnlyList<double> odds)
+    {
+        for (int i = 0; i < odds.Count; i++)
+        {
+            string selection = i < selections.Count
+                ? selections[i]
+                : $"Selection {i + 1}";
+
+            target.Add(new FlashscoreOddsRow
+            {
+                Market = marketName,
+                Bookmaker = NormalizeBookmaker(rawRow.Bookmaker),
+                Selection = selection,
+                Line = line,
+                Odds = odds[i]
+            });
+        }
+    }
+
+    private static string? NormalizeBookmaker(string? bookmaker)
+    {
+        if (string.IsNullOrWhiteSpace(bookmaker))
+            return null;
+
+        string normalized = bookmaker.Trim();
+        return normalized.Equals("Bookmaker", StringComparison.OrdinalIgnoreCase) ? null : normalized;
+    }
+
+    private static double? NormalizeNullableDouble(double? value)
+        => value.HasValue ? NormalizeDouble(value.Value) : null;
+
+    private static double NormalizeDouble(double value)
+        => Math.Round(value, 4, MidpointRounding.AwayFromZero);
+
+    private static int SelectionOrder(string selection)
+        => selection.ToUpperInvariant() switch
+        {
+            "1" => 0,
+            "X" => 1,
+            "2" => 2,
+            "OVER" => 3,
+            "YES" => 3,
+            "HOME" => 3,
+            "UNDER" => 4,
+            "NO" => 4,
+            "AWAY" => 4,
+            _ => 9
+        };
+
+    private static int? FindLineIndex(IReadOnlyList<double> values, bool allowNegative)
+    {
+        for (int i = 0; i < values.Count; i++)
+        {
+            double value = values[i];
+            double absolute = Math.Abs(value);
+            bool signAllowed = allowNegative || value >= 0.0;
+            if (signAllowed && absolute > 0.0 && absolute <= 20.0 && value <= 1.0)
+                return i;
+        }
+
+        for (int i = 0; i < values.Count; i++)
+        {
+            double value = values[i];
+            double absolute = Math.Abs(value);
+            bool signAllowed = allowNegative || value >= 0.0;
+            if (signAllowed && absolute > 0.0 && absolute <= 20.0 && Math.Abs(value % 0.25) < 1e-9)
+                return i;
+        }
+
+        return null;
+    }
+
+    private static FlashscoreStatisticsItem ToStatisticsItem(FlashscoreStatisticsItem item)
+    {
+        double? homeValue = ParseFlashscoreNumber(item.Home);
+        double? awayValue = ParseFlashscoreNumber(item.Away);
+
+        return new FlashscoreStatisticsItem
+        {
+            Key = BuildStatKey(item.Name),
+            Name = item.Name,
+            Home = item.Home,
+            Away = item.Away,
+            HomeValue = homeValue,
+            AwayValue = awayValue,
+            HomeTotal = homeValue,
+            AwayTotal = awayValue,
+            ValueType = DetermineValueType(item.Home, item.Away),
+            StatisticsType = "positive",
+            SourceText = item.SourceText
+        };
     }
 
     private static bool TryMapIncident(
@@ -515,6 +1109,57 @@ public sealed class FlashscoreDownloader
             homeScore = parsedHome;
         if (int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedAway))
             awayScore = parsedAway;
+    }
+
+    private static string BuildMatchDetailUrl(string sourceUrl, string segment)
+    {
+        if (!Uri.TryCreate(sourceUrl, UriKind.Absolute, out Uri? uri))
+            return sourceUrl;
+
+        string path = uri.GetLeftPart(UriPartial.Path).TrimEnd('/');
+        path = Regex.Replace(
+            path,
+            @"/(?:summary(?:/(?:stats(?:/(?:overall|1st-half|2nd-half))?|lineups|player-stats))?|odds|h2h|standings)/?$",
+            string.Empty,
+            RegexOptions.IgnoreCase);
+
+        string normalizedSegment = segment.Trim('/');
+        return $"{path}/{normalizedSegment}/{uri.Query}";
+    }
+
+    private static string BuildStatKey(string name)
+    {
+        string compact = Regex.Replace(name.ToLowerInvariant(), @"[^a-z0-9]+", string.Empty);
+        if (StatKeyAliases.TryGetValue(compact, out string? alias))
+            return alias;
+
+        string normalized = Regex.Replace(name.ToLowerInvariant(), @"[^a-z0-9]+", "_").Trim('_');
+        return string.IsNullOrWhiteSpace(normalized) ? "stat" : normalized;
+    }
+
+    private static string DetermineValueType(params string[] values)
+    {
+        if (values.Any(value => value.Contains('%', StringComparison.Ordinal)))
+            return "percentage";
+
+        if (values.Any(value => value.Contains('.', StringComparison.Ordinal) || value.Contains(',', StringComparison.Ordinal)))
+            return "decimal";
+
+        return "integer";
+    }
+
+    private static double? ParseFlashscoreNumber(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        Match match = Regex.Match(value.Replace(",", ".", StringComparison.Ordinal), @"[-+]?\d+(?:\.\d+)?");
+        if (!match.Success)
+            return null;
+
+        return double.TryParse(match.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+            ? parsed
+            : null;
     }
 
     private static async Task TryAcceptCookiesAsync(IPage page)
@@ -774,6 +1419,64 @@ public sealed class FlashscoreIncidentPerson
 {
     public long Id { get; init; }
     public string Name { get; init; } = string.Empty;
+}
+
+public sealed class FlashscoreStatisticsPeriod
+{
+    public string Period { get; init; } = string.Empty;
+    public List<FlashscoreStatisticsGroup> Groups { get; init; } = [];
+}
+
+public sealed class FlashscoreStatisticsGroup
+{
+    public string GroupName { get; init; } = string.Empty;
+    public List<FlashscoreStatisticsItem> StatisticsItems { get; init; } = [];
+}
+
+public sealed class FlashscoreStatisticsItem
+{
+    public string Key { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    public string Home { get; init; } = string.Empty;
+    public string Away { get; init; } = string.Empty;
+    public double? HomeValue { get; init; }
+    public double? AwayValue { get; init; }
+    public double? HomeTotal { get; init; }
+    public double? AwayTotal { get; init; }
+    public string ValueType { get; init; } = string.Empty;
+    public string StatisticsType { get; init; } = string.Empty;
+    public string SourceText { get; init; } = string.Empty;
+}
+
+public sealed class FlashscoreOddsSnapshot
+{
+    public string SourceUrl { get; init; } = string.Empty;
+    public DateTime DownloadedAtUtc { get; init; }
+    public List<FlashscoreOddsMarket> Markets { get; init; } = [];
+}
+
+public sealed class FlashscoreOddsMarket
+{
+    public string Name { get; init; } = string.Empty;
+    public string SourceUrl { get; init; } = string.Empty;
+    public List<FlashscoreOddsRow> Rows { get; init; } = [];
+}
+
+public sealed class FlashscoreOddsRow
+{
+    public string Market { get; init; } = string.Empty;
+    public string? Bookmaker { get; init; }
+    public string Selection { get; init; } = string.Empty;
+    public double? Line { get; init; }
+    public double Odds { get; init; }
+}
+
+public sealed class FlashscoreRawOddsRow
+{
+    public string Bookmaker { get; init; } = string.Empty;
+    public string RawText { get; init; } = string.Empty;
+    public List<string> Values { get; init; } = [];
+    public List<string> Columns { get; init; } = [];
 }
 
 public sealed class FlashscoreCalendarEvent

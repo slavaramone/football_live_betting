@@ -69,6 +69,8 @@ static async Task<int> RunDownloadFlashscore(string[] args)
         OutputRoot = parsed.String("output", "data/flashscore"),
         Overwrite = parsed.Bool("overwrite", false),
         DownloadIncidents = parsed.Bool("incidents", true),
+        DownloadStatistics = parsed.Has("skip-stat") ? false : parsed.Bool("statistics", true),
+        DownloadOdds = parsed.Bool("odds", true),
         Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
         RenderWaitMs = parsed.Int("render-wait-ms", 8_000),
         DetailWaitMs = parsed.Int("detail-wait-ms", 3_000),
