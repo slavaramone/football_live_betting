@@ -83,7 +83,7 @@ public sealed class WeibullDbSampleLoader
 
             result.FinishedMatches++;
             List<MatchEventEntity> matchEvents = eventsByMatch.GetValueOrDefault(match.Id) ?? [];
-            List<MatchEventEntity> goals = matchEvents
+            List<MatchEventEntity> rawGoals = matchEvents
                 .Where(x => x.IncidentType == "goal")
                 .OrderBy(x => x.TimeSeconds ?? (x.Minute * 60))
                 .ThenBy(x => x.Id)
@@ -91,7 +91,8 @@ public sealed class WeibullDbSampleLoader
 
             int finalHome = match.HomeScoreCurrent ?? 0;
             int finalAway = match.AwayScoreCurrent ?? 0;
-            bool reliable = finalHome == goals.Count(x => x.IsHome) && finalAway == goals.Count(x => !x.IsHome);
+            GoalEventReconstruction reconstructedGoals = GoalEventScoreReconstructor.Reconstruct(match, rawGoals);
+            bool reliable = reconstructedGoals.IsReliable;
 
             if (reliable)
             {
@@ -101,21 +102,18 @@ public sealed class WeibullDbSampleLoader
             {
                 result.UnreliableFinishedMatches++;
                 if (unreliableExamples.Count < _options.MaxExamples)
-                    unreliableExamples.Add($"event {match.EventId}: final {finalHome}-{finalAway}, goal events {goals.Count(x => x.IsHome)}-{goals.Count(x => !x.IsHome)}");
+                    unreliableExamples.Add($"event {match.EventId}: final {finalHome}-{finalAway}, reconstructed goals {reconstructedGoals.FinalHomeFromEvents}-{reconstructedGoals.FinalAwayFromEvents}, raw incidents={reconstructedGoals.RawGoalIncidentCount}, expanded={reconstructedGoals.ExpandedGoalCount}");
                 if (!_options.IncludeUnreliableMatches)
                     continue;
             }
 
-            int homeBefore = 0;
-            int awayBefore = 0;
-
-            foreach (MatchEventEntity goal in goals)
+            foreach (ReconstructedGoalEvent goal in reconstructedGoals.Goals)
             {
-                int minute = GoalMinuteForModel(goal);
+                int minute = goal.Minute;
                 if (minute <= 0)
                     continue;
 
-                string groupValue = ResolveGroupValue(_options.GroupByColumn, homeBefore, awayBefore);
+                string groupValue = ResolveGroupValue(_options.GroupByColumn, goal.HomeBefore, goal.AwayBefore);
                 result.Rows.Add(new WeibullGoalTimingRow
                 {
                     Minute = Math.Min(minute, _options.MaxMinute),
@@ -124,11 +122,6 @@ public sealed class WeibullDbSampleLoader
                     League = match.LeagueName,
                     GroupValue = groupValue
                 });
-
-                if (goal.IsHome)
-                    homeBefore++;
-                else
-                    awayBefore++;
             }
         }
 
@@ -154,14 +147,6 @@ public sealed class WeibullDbSampleLoader
         match.StatusType.Equals("finished", StringComparison.OrdinalIgnoreCase) ||
         match.StatusDescription.Equals("Ended", StringComparison.OrdinalIgnoreCase) ||
         match.StatusDescription.Equals("Finished", StringComparison.OrdinalIgnoreCase);
-
-    private static int GoalMinuteForModel(MatchEventEntity e)
-    {
-        int minute = Math.Max(0, e.Minute);
-        if (minute >= 90) return 90;
-        if (minute >= 45 && e.AddedTime is > 0) return 45;
-        return Math.Min(90, minute);
-    }
 
     private static string ResolveGroupValue(string groupByColumn, int homeBefore, int awayBefore)
     {

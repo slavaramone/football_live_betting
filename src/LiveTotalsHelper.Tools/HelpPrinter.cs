@@ -11,6 +11,7 @@ public static class HelpPrinter
         Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON only.");
         Console.WriteLine("  import-flashscore    Import saved Flashscore JSON into PostgreSQL and apply pending migrations.");
         Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
+        Console.WriteLine("  db-validate          Alias for validate-db.");
         Console.WriteLine("  build-live-total-calibration-dataset  Build correction rows from the shared live-total timing core.");
         Console.WriteLine("  analyze-live-total-calibration        Compare correction factors by trigger/state.");
         Console.WriteLine("  fit-live-total-state-correction       Fit trigger/state correction factors.");
@@ -269,7 +270,9 @@ public static class HelpPrinter
         Console.WriteLine("  --fail-on-warnings   true/false. Return exit code 1 when warnings exist. Default: false");
         Console.WriteLine("  --max-examples       Maximum examples printed per check. Default: 20");
         Console.WriteLine();
-        Console.WriteLine("Validation checks include score vs goal events, goal timing ranges, score progression, future fixtures with details, missing model stats, duplicated incidents and red-card stat consistency.");
+        Console.WriteLine("Validation checks include new Flashscore DB entities: matches, incidents, statistics and odds.");
+        Console.WriteLine("It now prints deeper summaries for league/season/round coverage, scoring distribution, goal timing, statistics coverage and odds pair coverage.");
+        Console.WriteLine("Hard checks include required identifiers, duplicate matches, child-row EventId consistency, score vs goal events, goal progression, period-score consistency, event ranges, future fixtures with details, duplicated incidents/stat periods/odds rows, red-card consistency, useful-stat coverage, odds sanity and round completeness.");
     }
 
 

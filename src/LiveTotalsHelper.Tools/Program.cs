@@ -24,6 +24,7 @@ try
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
         "import-flashscore" => await RunImportFlashscore(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
+        "db-validate" => await RunValidateDb(commandArgs),
         "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
         "analyze-live-total-calibration" => await RunAnalyzeLiveTotalCalibration(commandArgs),
         "fit-live-total-state-correction" => await RunFitLiveTotalStateCorrection(commandArgs),

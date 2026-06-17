@@ -98,12 +98,14 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                 .OrderBy(x => x.TimeSeconds ?? (x.Minute * 60))
                 .ThenBy(x => x.Id)
                 .ToList();
-            List<MatchEventEntity> goals = orderedEvents.Where(IsGoal).ToList();
+            List<MatchEventEntity> rawGoals = orderedEvents.Where(IsGoal).ToList();
+            List<MatchEventEntity> redCards = orderedEvents.Where(IsRedCard).ToList();
+            GoalEventReconstruction reconstructedGoals = GoalEventScoreReconstructor.Reconstruct(match, rawGoals);
 
             int finalHome = match.HomeScoreCurrent ?? 0;
             int finalAway = match.AwayScoreCurrent ?? 0;
             int finalTotal = finalHome + finalAway;
-            bool reliable = finalHome == goals.Count(x => x.IsHome) && finalAway == goals.Count(x => !x.IsHome);
+            bool reliable = reconstructedGoals.IsReliable;
 
             if (reliable)
             {
@@ -113,15 +115,16 @@ public sealed class LiveTotalCalibrationDatasetBuilder
             {
                 result.UnreliableFinishedMatches++;
                 if (unreliableExamples.Count < _options.MaxExamples)
-                    unreliableExamples.Add($"event {match.EventId}: final {finalHome}-{finalAway}, goal events {goals.Count(x => x.IsHome)}-{goals.Count(x => !x.IsHome)}");
+                    unreliableExamples.Add($"event {match.EventId}: final {finalHome}-{finalAway}, reconstructed goals {reconstructedGoals.FinalHomeFromEvents}-{reconstructedGoals.FinalAwayFromEvents}, raw incidents={reconstructedGoals.RawGoalIncidentCount}, expanded={reconstructedGoals.ExpandedGoalCount}");
                 if (!_options.IncludeUnreliableMatches)
                     continue;
             }
 
             foreach (int minute in _options.SnapshotMinutes.Distinct().OrderBy(x => x))
             {
-                List<MatchEventEntity> eventsBeforeMinute = orderedEvents.Where(x => EventMinuteForModel(x) < minute).ToList();
-                MatchState state = BuildState(eventsBeforeMinute);
+                List<ReconstructedGoalEvent> goalsBeforeMinute = reconstructedGoals.Goals.Where(x => x.Minute < minute).ToList();
+                List<MatchEventEntity> redCardsBeforeMinute = redCards.Where(x => EventMinuteForModel(x) < minute).ToList();
+                MatchState state = BuildState(goalsBeforeMinute, redCardsBeforeMinute);
                 rows.Add(CreateRow(
                     match,
                     model,
@@ -140,19 +143,18 @@ public sealed class LiveTotalCalibrationDatasetBuilder
             if (_options.IncludeEventTriggers)
             {
                 var state = new MatchState();
+                var timeline = BuildTriggerTimeline(reconstructedGoals.Goals, redCards);
 
-                foreach (MatchEventEntity e in orderedEvents)
+                foreach (TriggerTimelineEvent e in timeline)
                 {
-                    int minute = EventMinuteForModel(e);
-
-                    if (IsGoal(e))
+                    if (e.Goal is not null)
                     {
-                        if (e.IsHome)
+                        if (e.Goal.IsHomeGoal)
                             state.HomeGoals++;
                         else
                             state.AwayGoals++;
 
-                        state.LastGoalMinute = minute;
+                        state.LastGoalMinute = e.Minute;
 
                         rows.Add(CreateRow(
                             match,
@@ -161,16 +163,16 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                             finalAway,
                             finalTotal,
                             reliable,
-                            minute,
+                            e.Minute,
                             LiveTotalStateTrigger.AfterGoal,
-                            minute,
-                            e.IsHome ? "Home" : "Away",
+                            e.Minute,
+                            e.Goal.Side,
                             state.Clone()));
                         result.AfterGoalStatesWritten++;
                     }
-                    else if (IsRedCard(e))
+                    else if (e.RedCard is not null)
                     {
-                        if (e.IsHome)
+                        if (e.RedCard.IsHome)
                             state.HomeRedCards++;
                         else
                             state.AwayRedCards++;
@@ -182,10 +184,10 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                             finalAway,
                             finalTotal,
                             reliable,
-                            minute,
+                            e.Minute,
                             LiveTotalStateTrigger.AfterRedCard,
-                            minute,
-                            e.IsHome ? "Home" : "Away",
+                            e.Minute,
+                            e.RedCard.IsHome ? "Home" : "Away",
                             state.Clone()));
                         result.AfterRedCardStatesWritten++;
                     }
@@ -270,29 +272,53 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         };
     }
 
-    private static MatchState BuildState(IEnumerable<MatchEventEntity> events)
+    private static MatchState BuildState(IEnumerable<ReconstructedGoalEvent> goals, IEnumerable<MatchEventEntity> redCards)
     {
         var state = new MatchState();
-        foreach (MatchEventEntity e in events)
+        foreach (ReconstructedGoalEvent goal in goals.OrderBy(x => x.Minute).ThenBy(x => x.Sequence))
         {
-            int minute = EventMinuteForModel(e);
-            if (IsGoal(e))
-            {
-                if (e.IsHome)
-                    state.HomeGoals++;
-                else
-                    state.AwayGoals++;
-                state.LastGoalMinute = minute;
-            }
-            else if (IsRedCard(e))
-            {
-                if (e.IsHome)
-                    state.HomeRedCards++;
-                else
-                    state.AwayRedCards++;
-            }
+            if (goal.IsHomeGoal)
+                state.HomeGoals++;
+            else
+                state.AwayGoals++;
+            state.LastGoalMinute = goal.Minute;
         }
+
+        foreach (MatchEventEntity e in redCards.OrderBy(EventMinuteForModel).ThenBy(x => x.Id))
+        {
+            if (e.IsHome)
+                state.HomeRedCards++;
+            else
+                state.AwayRedCards++;
+        }
+
         return state;
+    }
+
+    private static List<TriggerTimelineEvent> BuildTriggerTimeline(IEnumerable<ReconstructedGoalEvent> goals, IEnumerable<MatchEventEntity> redCards)
+    {
+        var timeline = new List<TriggerTimelineEvent>();
+
+        timeline.AddRange(goals.Select(x => new TriggerTimelineEvent
+        {
+            Minute = x.Minute,
+            SortKey = GoalEventScoreReconstructor.EventSortKey(x.Source),
+            Sequence = x.Sequence,
+            Goal = x
+        }));
+
+        timeline.AddRange(redCards.Select(x => new TriggerTimelineEvent
+        {
+            Minute = EventMinuteForModel(x),
+            SortKey = GoalEventScoreReconstructor.EventSortKey(x),
+            Sequence = int.MaxValue,
+            RedCard = x
+        }));
+
+        return timeline
+            .OrderBy(x => x.SortKey)
+            .ThenBy(x => x.Sequence)
+            .ToList();
     }
 
     private static async Task<WeibullModelFile> LoadModelAsync(string modelPath, CancellationToken cancellationToken)
@@ -339,12 +365,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         e.IncidentType.Equals("goal", StringComparison.OrdinalIgnoreCase);
 
     private static int EventMinuteForModel(MatchEventEntity e)
-    {
-        int minute = Math.Max(0, e.Minute);
-        if (minute >= 90) return 90;
-        if (minute >= 45 && e.AddedTime is > 0) return 45;
-        return Math.Min(90, minute);
-    }
+        => GoalEventScoreReconstructor.GoalMinuteForModel(e);
 
     private static bool IsRedCard(MatchEventEntity e) =>
         e.IncidentType.Equals("card", StringComparison.OrdinalIgnoreCase) &&
@@ -377,7 +398,16 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         "ActualFinalHomeGoals", "ActualFinalAwayGoals", "ActualFinalTotalGoals", "ActualRemainingGoals", "AnyFutureGoal", "IsReliableMatch"
     ];
 
-    private sealed class MatchState
+    private sealed class TriggerTimelineEvent
+{
+    public int Minute { get; init; }
+    public int SortKey { get; init; }
+    public int Sequence { get; init; }
+    public ReconstructedGoalEvent? Goal { get; init; }
+    public MatchEventEntity? RedCard { get; init; }
+}
+
+private sealed class MatchState
     {
         public int HomeGoals { get; set; }
         public int AwayGoals { get; set; }
