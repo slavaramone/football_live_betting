@@ -261,6 +261,9 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db \\");
         Console.WriteLine("    --league \"NPL NSW\" --season-id 88562 --from-round 1 --to-round 30");
         Console.WriteLine();
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db \\");
+        Console.WriteLine("    --league \"China Super League\" --season-id 2026 --output C:\\\\Temp\\\\football_data\\\\reports\\\\db-validate-china-super-league.txt");
+        Console.WriteLine();
         Console.WriteLine("Validate DB arguments:");
         Console.WriteLine("  --league             Optional league name filter.");
         Console.WriteLine("  --season-id          Optional season id filter.");
@@ -269,6 +272,7 @@ public static class HelpPrinter
         Console.WriteLine("  --to-round           Optional last round filter.");
         Console.WriteLine("  --fail-on-warnings   true/false. Return exit code 1 when warnings exist. Default: false");
         Console.WriteLine("  --max-examples       Maximum examples printed per check. Default: 20");
+        Console.WriteLine("  --output             Optional TXT report path. Alias: --report. Console output is also preserved.");
         Console.WriteLine();
         Console.WriteLine("Validation checks include new Flashscore DB entities: matches, incidents, statistics and odds.");
         Console.WriteLine("It now prints deeper summaries for league/season/round coverage, scoring distribution, goal timing, statistics coverage and odds pair coverage.");

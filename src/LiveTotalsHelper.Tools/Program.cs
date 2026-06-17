@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using LiveTotalsHelper.Infrastructure.Flashscore;
 using LiveTotalsHelper.Infrastructure.Persistence;
 using LiveTotalsHelper.Infrastructure.Persistence.Flashscore;
@@ -890,7 +891,8 @@ static async Task<int> RunValidateDb(string[] args)
         League = parsed.String("league", string.Empty),
         SeasonId = parsed.Int("season-id", 0),
         FailOnWarnings = parsed.Bool("fail-on-warnings", false),
-        MaxExamplesPerCheck = parsed.Int("max-examples", 20)
+        MaxExamplesPerCheck = parsed.Int("max-examples", 20),
+        OutputPath = parsed.String("output", parsed.String("report", string.Empty))
     };
 
     if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
@@ -905,25 +907,23 @@ static async Task<int> RunValidateDb(string[] args)
     var runner = new DbValidationRunner(dbContext, options);
     DbValidationResult result = await runner.RunAsync(CancellationToken.None);
 
-    Console.WriteLine();
-    Console.WriteLine("Database validation done.");
-    Console.WriteLine($"Matches checked: {result.MatchesChecked}");
-    Console.WriteLine($"Events checked: {result.EventsChecked}");
-    Console.WriteLine($"Match stats checked: {result.MatchStatsChecked}");
-    Console.WriteLine($"Odds checked: {result.OddsChecked}");
-    Console.WriteLine($"Errors: {result.ErrorCount}");
-    Console.WriteLine($"Warnings: {result.WarningCount}");
-    Console.WriteLine($"Info: {result.InfoCount}");
+    var reportBuilder = new StringBuilder();
+    using (var writer = new StringWriter(reportBuilder, CultureInfo.InvariantCulture))
+        WriteDbValidationReport(writer, result, options);
 
-    foreach (DbValidationCheckResult check in result.Checks)
+    string reportText = reportBuilder.ToString();
+    Console.Write(reportText);
+
+    if (!string.IsNullOrWhiteSpace(options.OutputPath))
     {
-        Console.WriteLine();
-        Console.WriteLine($"[{check.Severity}] {check.Name}: {check.Message}");
-        foreach (string example in check.Examples.Take(options.MaxExamplesPerCheck))
-            Console.WriteLine($"  - {example}");
+        string fullPath = Path.GetFullPath(options.OutputPath);
+        string? directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
 
-        if (check.Examples.Count > options.MaxExamplesPerCheck)
-            Console.WriteLine($"  ... {check.Examples.Count - options.MaxExamplesPerCheck} more");
+        await File.WriteAllTextAsync(fullPath, reportText, Encoding.UTF8, CancellationToken.None);
+        Console.WriteLine();
+        Console.WriteLine($"Validation report written: {fullPath}");
     }
 
     if (result.ErrorCount > 0)
@@ -933,6 +933,30 @@ static async Task<int> RunValidateDb(string[] args)
         return 1;
 
     return 0;
+}
+
+static void WriteDbValidationReport(TextWriter writer, DbValidationResult result, DbValidationOptions options)
+{
+    writer.WriteLine();
+    writer.WriteLine("Database validation done.");
+    writer.WriteLine($"Matches checked: {result.MatchesChecked}");
+    writer.WriteLine($"Events checked: {result.EventsChecked}");
+    writer.WriteLine($"Match stats checked: {result.MatchStatsChecked}");
+    writer.WriteLine($"Odds checked: {result.OddsChecked}");
+    writer.WriteLine($"Errors: {result.ErrorCount}");
+    writer.WriteLine($"Warnings: {result.WarningCount}");
+    writer.WriteLine($"Info: {result.InfoCount}");
+
+    foreach (DbValidationCheckResult check in result.Checks)
+    {
+        writer.WriteLine();
+        writer.WriteLine($"[{check.Severity}] {check.Name}: {check.Message}");
+        foreach (string example in check.Examples.Take(options.MaxExamplesPerCheck))
+            writer.WriteLine($"  - {example}");
+
+        if (check.Examples.Count > options.MaxExamplesPerCheck)
+            writer.WriteLine($"  ... {check.Examples.Count - options.MaxExamplesPerCheck} more");
+    }
 }
 
 static LiveTotalsDbContext CreateDbContext(IConfiguration configuration)

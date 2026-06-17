@@ -77,6 +77,7 @@ public sealed class DbValidationRunner
         AddLeagueSeasonRoundSummary(result, matches);
         AddScoringDistributionSummary(result, matches, events);
         AddGoalTimingSummary(result, matches, events);
+        AddModelReadinessSummary(result, matches, events);
         AddStatsCoverageSummary(result, matches, stats);
         AddOddsCoverageSummary(result, matches, odds);
 
@@ -212,15 +213,17 @@ public sealed class DbValidationRunner
 
     private static void AddGoalTimingSummary(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events)
     {
-        Dictionary<int, MatchEntity> matchById = matches.ToDictionary(x => x.Id);
         var rawGoalsByMatch = events.Where(IsGoal).GroupBy(x => x.MatchId).ToDictionary(x => x.Key, x => x.ToList());
-        var goals = new List<ReconstructedGoalEvent>();
+        var allGoals = new List<ReconstructedGoalEvent>();
+        var reliableGoals = new List<ReconstructedGoalEvent>();
         int rawGoalIncidents = 0;
         int scoreJumpMatches = 0;
         int scoreJumpIncidents = 0;
         int missingScoreSnapshots = 0;
+        int reliableMatches = 0;
+        int unreliableMatches = 0;
 
-        foreach (MatchEntity match in matches.Where(x => matchById.ContainsKey(x.Id)))
+        foreach (MatchEntity match in matches.Where(IsFinished))
         {
             rawGoalsByMatch.TryGetValue(match.Id, out List<MatchEventEntity>? rawGoals);
             GoalEventReconstruction reconstructed = GoalEventScoreReconstructor.Reconstruct(match, rawGoals ?? []);
@@ -229,21 +232,45 @@ public sealed class DbValidationRunner
             if (reconstructed.ScoreJumpCount > 0)
                 scoreJumpMatches++;
             missingScoreSnapshots += reconstructed.MissingScoreSnapshotCount;
-            goals.AddRange(reconstructed.Goals);
+            allGoals.AddRange(reconstructed.Goals);
+
+            if (reconstructed.IsReliable)
+            {
+                reliableMatches++;
+                reliableGoals.AddRange(reconstructed.Goals);
+            }
+            else
+            {
+                unreliableMatches++;
+            }
         }
 
+        List<ReconstructedGoalEvent> goals = reliableGoals.Count > 0 ? reliableGoals : allGoals;
         int totalGoals = goals.Count;
 
         var check = new DbValidationCheckResult
         {
             Name = "Goal timing summary",
             Severity = DbValidationSeverity.Info,
-            Message = "Goal timing shape used by Weibull/empirical timing model. Score snapshots are reconstructed and score jumps are expanded."
+            Message = "Goal timing shape used by Weibull/empirical timing model. Score snapshots are reconstructed, score jumps are expanded, and unreliable timelines are excluded from the model-useful distribution."
         };
+
+        if (allGoals.Count == 0)
+        {
+            check.Examples.Add("No goal events found.");
+            result.Add(check);
+            return;
+        }
+
+        int excludedGoals = allGoals.Count - reliableGoals.Count;
+        check.Examples.Add($"Reconstructed goals: {allGoals.Count} from {rawGoalIncidents} raw goal incidents");
+        check.Examples.Add($"Model-usable reliable goals: {reliableGoals.Count}; excluded unreliable reconstructed goals: {excludedGoals}");
+        check.Examples.Add($"Reliable finished matches: {reliableMatches}; unreliable finished matches skipped by default: {unreliableMatches}");
+        check.Examples.Add($"Score jumps expanded: {scoreJumpIncidents} incidents in {scoreJumpMatches} matches; missing score snapshots: {missingScoreSnapshots}");
 
         if (totalGoals == 0)
         {
-            check.Examples.Add("No goal events found.");
+            check.Examples.Add("No reliable goal timelines found. Timing distributions below are unavailable until details are reimported or --include-unreliable is used.");
             result.Add(check);
             return;
         }
@@ -253,9 +280,7 @@ public sealed class DbValidationRunner
         int late = goals.Count(x => x.Minute >= 76 && x.Minute <= 90);
         int stoppage = goals.Count(x => x.Source.AddedTime.GetValueOrDefault() > 0 || EffectiveMinute(x.Source) > 90);
 
-        check.Examples.Add($"Reconstructed goals: {totalGoals} from {rawGoalIncidents} raw goal incidents");
-        check.Examples.Add($"Score jumps expanded: {scoreJumpIncidents} incidents in {scoreJumpMatches} matches; missing score snapshots: {missingScoreSnapshots}");
-        check.Examples.Add($"1H goals: {firstHalf} ({Percent(firstHalf, totalGoals)}), 2H goals: {secondHalf} ({Percent(secondHalf, totalGoals)}), 76-90 goals: {late} ({Percent(late, totalGoals)}), stoppage/added-time flagged: {stoppage} ({Percent(stoppage, totalGoals)})");
+        check.Examples.Add($"Model-usable distribution: 1H goals: {firstHalf} ({Percent(firstHalf, totalGoals)}), 2H goals: {secondHalf} ({Percent(secondHalf, totalGoals)}), 76-90 goals: {late} ({Percent(late, totalGoals)}), stoppage/added-time flagged: {stoppage} ({Percent(stoppage, totalGoals)})");
 
         foreach (var bucket in goals.GroupBy(x => MinuteBucket15(x.Minute)).OrderBy(x => MinuteBucketOrder(x.Key)))
             check.Examples.Add($"{bucket.Key}: {bucket.Count()} ({Percent(bucket.Count(), totalGoals)})");
@@ -264,6 +289,74 @@ public sealed class DbValidationRunner
             check.Examples.Add($"Score state before goal {stateBucket.Key}: {stateBucket.Count()} ({Percent(stateBucket.Count(), totalGoals)})");
 
         result.Add(check);
+    }
+
+    private static void AddModelReadinessSummary(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events)
+    {
+        var rawGoalsByMatch = events.Where(IsGoal).GroupBy(x => x.MatchId).ToDictionary(x => x.Key, x => x.ToList());
+        List<MatchEntity> finished = matches.Where(IsFinished).ToList();
+        var examples = new List<string>();
+        var reimportExamples = new List<string>();
+
+        int reliable = 0;
+        int unreliable = 0;
+        int scoreMismatches = 0;
+        int finalScoreGoals = 0;
+        int reconstructedGoals = 0;
+        int reliableReconstructedGoals = 0;
+        int scoreJumpMatches = 0;
+        int scoreJumpIncidents = 0;
+        int noGoalEventsNonNil = 0;
+
+        foreach (MatchEntity match in finished)
+        {
+            int finalHome = match.HomeScoreCurrent ?? 0;
+            int finalAway = match.AwayScoreCurrent ?? 0;
+            finalScoreGoals += finalHome + finalAway;
+
+            rawGoalsByMatch.TryGetValue(match.Id, out List<MatchEventEntity>? rawGoals);
+            GoalEventReconstruction reconstructed = GoalEventScoreReconstructor.Reconstruct(match, rawGoals ?? []);
+            reconstructedGoals += reconstructed.ExpandedGoalCount;
+            scoreJumpIncidents += reconstructed.ScoreJumpCount;
+            if (reconstructed.ScoreJumpCount > 0)
+                scoreJumpMatches++;
+
+            if (finalHome + finalAway > 0 && reconstructed.RawGoalIncidentCount == 0)
+                noGoalEventsNonNil++;
+
+            if (reconstructed.IsReliable)
+            {
+                reliable++;
+                reliableReconstructedGoals += reconstructed.ExpandedGoalCount;
+            }
+            else
+            {
+                unreliable++;
+                if (!reconstructed.FinalScoreMatchesMatch)
+                    scoreMismatches++;
+
+                if (reimportExamples.Count < 25)
+                    reimportExamples.Add($"event {match.EventId} r{match.RoundNumber} {match.HomeTeamName} vs {match.AwayTeamName}: final {finalHome}-{finalAway}, reconstructed {reconstructed.FinalHomeFromEvents}-{reconstructed.FinalAwayFromEvents}, raw={reconstructed.RawGoalIncidentCount}, expanded={reconstructed.ExpandedGoalCount}");
+            }
+        }
+
+        examples.Add($"Finished matches: {finished.Count}");
+        examples.Add($"Model-usable reliable matches: {reliable}/{finished.Count} ({Percent(reliable, Math.Max(finished.Count, 1))})");
+        examples.Add($"Unreliable matches skipped by default: {unreliable}/{finished.Count} ({Percent(unreliable, Math.Max(finished.Count, 1))})");
+        examples.Add($"Final-score goals: {finalScoreGoals}; reconstructed goals: {reconstructedGoals}; reliable reconstructed goals used by model: {reliableReconstructedGoals}");
+        examples.Add($"Score-jump recovery: {scoreJumpIncidents} incidents in {scoreJumpMatches} matches");
+        examples.Add($"Final-score mismatches after reconstruction: {scoreMismatches}; non-0-0 matches with no goal events: {noGoalEventsNonNil}");
+        if (reimportExamples.Count > 0)
+        {
+            examples.Add("Reimport/detail-refresh candidates:");
+            examples.AddRange(reimportExamples);
+        }
+
+        AddCheck(result, "Model readiness from reconstructed timelines", unreliable == 0 ? DbValidationSeverity.Info : DbValidationSeverity.Warning,
+            unreliable == 0
+                ? "All finished matches have reliable reconstructed timelines for model building."
+                : "Some finished matches still have incomplete goal timelines. Model builders skip them by default unless includeUnreliableMatches=true.",
+            examples);
     }
 
     private static void AddStatsCoverageSummary(DbValidationResult result, List<MatchEntity> matches, List<MatchStatEntity> stats)
@@ -307,7 +400,9 @@ public sealed class DbValidationRunner
         };
 
         check.Examples.Add($"Matches with any odds: {matchIdsWithOdds.Count}/{matches.Count} ({Percent(matchIdsWithOdds.Count, Math.Max(matches.Count, 1))})");
+        int totalRowsWithoutLine = totals.Count(x => x.Line is null);
         check.Examples.Add($"Total-market rows: {totals.Count}");
+        check.Examples.Add($"Total-market rows without parsed line: {totalRowsWithoutLine}");
         check.Examples.Add($"Complete total Over/Under pairs: {totalPairs.Count}");
 
         foreach (var market in odds.GroupBy(x => Normalize(x.Market)).OrderByDescending(x => x.Count()).Take(12))
@@ -444,8 +539,8 @@ public sealed class DbValidationRunner
                 examples.Add($"{Describe(match)}: score {match.HomeScoreCurrent}-{match.AwayScoreCurrent}, reconstructed goal score {reconstructed.FinalHomeFromEvents}-{reconstructed.FinalAwayFromEvents}, raw incidents={reconstructed.RawGoalIncidentCount}, expanded={reconstructed.ExpandedGoalCount}");
         }
 
-        AddCheck(result, "Finished score vs reconstructed goal events", examples.Count == 0 ? DbValidationSeverity.Info : DbValidationSeverity.Error,
-            examples.Count == 0 ? "Reconstructed goal events match the final/current score for finished matches." : $"{examples.Count} finished matches still have final-score mismatch after reconstruction.", examples);
+        AddCheck(result, "Finished score vs reconstructed goal events", examples.Count == 0 ? DbValidationSeverity.Info : DbValidationSeverity.Warning,
+            examples.Count == 0 ? "Reconstructed goal events match the final/current score for finished matches." : $"{examples.Count} finished matches still have final-score mismatch after reconstruction. These matches are treated as unreliable and skipped by model builders by default.", examples);
     }
 
     private static void CheckGoalEventScoreProgression(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events)
@@ -629,7 +724,7 @@ public sealed class DbValidationRunner
     private static void CheckDuplicateOddsRows(DbValidationResult result, List<FlashscoreOddsEntity> odds, List<MatchEntity> matches)
     {
         Dictionary<int, MatchEntity> matchById = matches.ToDictionary(x => x.Id);
-        var exactDuplicates = odds
+        List<string> exactDuplicateExamples = odds
             .GroupBy(x => new
             {
                 x.MatchId,
@@ -639,7 +734,8 @@ public sealed class DbValidationRunner
                 Line = x.Line is null ? "" : x.Line.Value.ToString("0.####", CultureInfo.InvariantCulture),
                 Odds = x.Odds.ToString("0.####", CultureInfo.InvariantCulture),
                 Path = Normalize(x.OddsJsonPath),
-                Downloaded = x.DownloadedAtUtc
+                Downloaded = x.DownloadedAtUtc,
+                Imported = x.ImportedAtUtc
             })
             .Where(x => x.Count() > 1)
             .Select(x => $"{Describe(matchById, x.Key.MatchId)}: exact odds duplicate market={PrintableKey(x.Key.Market)} bookmaker={PrintableKey(x.Key.Bookmaker)} selection={PrintableKey(x.Key.Selection)} line={x.Key.Line} odds={x.Key.Odds} count={x.Count()}")
@@ -656,12 +752,13 @@ public sealed class DbValidationRunner
             })
             .Count(x => x.Select(row => row.Odds.ToString("0.####", CultureInfo.InvariantCulture)).Distinct().Count() > 1);
 
-        var examples = exactDuplicates;
-        if (examples.Count == 0 && multiPriceGroups > 0)
+        var examples = new List<string>();
+        examples.AddRange(exactDuplicateExamples);
+        if (exactDuplicateExamples.Count == 0 && multiPriceGroups > 0)
             examples.Add($"No exact duplicate rows. {multiPriceGroups} market/selection/line groups contain multiple prices; treated as odds history/depth, not duplicates.");
 
-        AddCheck(result, "Duplicate odds rows", exactDuplicates.Count == 0 ? DbValidationSeverity.Info : DbValidationSeverity.Warning,
-            exactDuplicates.Count == 0 ? "No exact duplicate odds rows found." : $"{exactDuplicates.Count} exact duplicate odds groups found.", examples);
+        AddCheck(result, "Duplicate odds rows", exactDuplicateExamples.Count == 0 ? DbValidationSeverity.Info : DbValidationSeverity.Warning,
+            exactDuplicateExamples.Count == 0 ? "No exact duplicate odds rows found." : $"{exactDuplicateExamples.Count} exact duplicate odds groups found.", examples);
     }
 
     private static void CheckRedCardsAgainstStats(DbValidationResult result, List<MatchEntity> matches, List<MatchEventEntity> events, List<MatchStatEntity> stats)
@@ -727,8 +824,6 @@ public sealed class DbValidationRunner
         {
             if (row.Odds <= 1.0 || row.Odds > 1000)
                 examples.Add($"{Describe(matchById, row.MatchId)}: suspicious odds {row.Odds.ToString("0.###", CultureInfo.InvariantCulture)} market={row.Market} selection={row.Selection} line={row.Line}");
-            if (IsTotalOddsRow(row) && row.Line is null)
-                examples.Add($"{Describe(matchById, row.MatchId)}: total market row without line, selection={row.Selection}, odds={row.Odds}");
         }
 
         foreach (TotalOddsPair pair in BuildTotalOddsPairs(odds.Where(IsTotalOddsRow)).Where(x => x.Over > 1 && x.Under > 1))
@@ -973,6 +1068,7 @@ public sealed class DbValidationOptions
     public List<int> Rounds { get; } = [];
     public bool FailOnWarnings { get; set; }
     public int MaxExamplesPerCheck { get; set; } = 20;
+    public string OutputPath { get; set; } = string.Empty;
 }
 
 public sealed class DbValidationResult
