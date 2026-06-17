@@ -37,6 +37,115 @@ public sealed class FlashscoreDownloader
         _fileStore = fileStore;
     }
 
+    public async Task<FlashscoreDownloadResult> DownloadDetailsAsync(
+        IReadOnlyList<FlashscoreDetailDownloadTarget> targets,
+        FlashscoreDownloadOptions options,
+        TextWriter log,
+        CancellationToken cancellationToken)
+    {
+        if (targets.Count == 0)
+            return new FlashscoreDownloadResult();
+
+        if (options.DetailWaitMs < 0)
+            throw new ArgumentException("DetailWaitMs cannot be negative.");
+        if (options.ShowMoreWaitMs < 0)
+            throw new ArgumentException("ShowMoreWaitMs cannot be negative.");
+        if (options.MaxShowMoreClicks < 0)
+            throw new ArgumentException("MaxShowMoreClicks cannot be negative.");
+        if (options.DelayMs < 0)
+            throw new ArgumentException("DelayMs cannot be negative.");
+
+        var result = new FlashscoreDownloadResult
+        {
+            EventsDiscovered = targets.Count
+        };
+
+        await log.WriteLineAsync($"Starting Playwright Chromium for Flashscore detail refresh. Headless: {options.Headless}");
+        using IPlaywright playwright = await Playwright.CreateAsync();
+        await using IBrowser browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+        {
+            Headless = options.Headless
+        });
+
+        IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions
+        {
+            UserAgent = options.UserAgent,
+            ViewportSize = new ViewportSize { Width = 1366, Height = 900 }
+        });
+
+        try
+        {
+            IPage page = await context.NewPageAsync();
+            page.SetDefaultTimeout(120_000);
+            page.SetDefaultNavigationTimeout(120_000);
+
+            FlashscoreDetailDownloadTarget? first = targets.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.CalendarEvent.SourceUrl));
+            if (first is not null)
+            {
+                await page.GotoAsync(first.CalendarEvent.SourceUrl, new PageGotoOptions
+                {
+                    WaitUntil = WaitUntilState.DOMContentLoaded,
+                    Timeout = 120_000
+                });
+                await TryAcceptCookiesAsync(page);
+            }
+
+            foreach (FlashscoreDetailDownloadTarget target in targets)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                Directory.CreateDirectory(target.EventFolder);
+                await log.WriteLineAsync($"Refreshing event {target.CalendarEvent.Id}: {target.CalendarEvent.HomeTeam.Name} vs {target.CalendarEvent.AwayTeam.Name}");
+
+                if (target.DownloadIncidents)
+                {
+                    await DownloadIncidentsAsync(
+                        page,
+                        target.CalendarEvent,
+                        Path.Combine(target.EventFolder, "incidents.json"),
+                        options,
+                        result,
+                        log,
+                        cancellationToken);
+                }
+
+                if (target.DownloadStatistics)
+                {
+                    await DownloadStatisticsAsync(
+                        page,
+                        target.CalendarEvent,
+                        Path.Combine(target.EventFolder, "statistics.json"),
+                        options,
+                        result,
+                        log,
+                        cancellationToken);
+                }
+
+                if (target.DownloadOdds)
+                {
+                    await DownloadOddsAsync(
+                        page,
+                        target.CalendarEvent,
+                        Path.Combine(target.EventFolder, "odds.json"),
+                        options,
+                        result,
+                        log,
+                        cancellationToken);
+                }
+
+                if (options.DelayMs > 0)
+                    await Task.Delay(options.DelayMs, cancellationToken);
+            }
+        }
+        finally
+        {
+            await context.CloseAsync();
+        }
+
+        result.RoundsDownloaded = targets.Select(x => x.CalendarEvent.Round).Distinct().Count();
+        return result;
+    }
+
     public async Task<FlashscoreDownloadResult> DownloadAsync(
         FlashscoreDownloadOptions options,
         TextWriter log,
@@ -561,7 +670,15 @@ public sealed class FlashscoreDownloader
                     const title = text(icon?.querySelector("title"));
                     const player = row.querySelector("a.smv__playerName");
                     const assist = row.querySelector(".smv__assist a");
-                    const score = text(row.querySelector(".smv__incidentHomeScore, .smv__incidentAwayScore"));
+                    const scoreNodes = Array.from(row.querySelectorAll(
+                        ".smv__incidentHomeScore, .smv__incidentAwayScore, [class*='incidentHomeScore'], [class*='incidentAwayScore']"));
+                    const scoreParts = scoreNodes.map(text).filter(Boolean);
+                    let score = scoreParts.length >= 2 ? `${scoreParts[0]}-${scoreParts[scoreParts.length - 1]}` : (scoreParts[0] || "");
+                    if (!score || !/^\d+\s*-\s*\d+$/.test(score)) {
+                        const scoreText = (row.textContent || "").replace(/\s+/g, " ").trim();
+                        const match = scoreText.match(/(?:^|\s)(\d+)\s*-\s*(\d+)(?:\s|$)/);
+                        if (match) score = `${match[1]}-${match[2]}`;
+                    }
 
                     return {
                         timeText: text(row.querySelector(".smv__timeBox")),
@@ -1012,17 +1129,29 @@ public sealed class FlashscoreDownloader
         string incidentType;
         string incidentClass;
 
-        if (normalizedTitle.Contains("goal disallowed", StringComparison.OrdinalIgnoreCase))
-            return false;
+        ParseScore(row.Score, out int? homeScore, out int? awayScore);
+        bool hasScoreSnapshot = homeScore.HasValue && awayScore.HasValue;
 
-        if (normalizedTitle.Contains("goal", StringComparison.OrdinalIgnoreCase))
+        if (normalizedTitle.Contains("goal disallowed", StringComparison.OrdinalIgnoreCase) ||
+            normalizedTitle.Contains("disallowed goal", StringComparison.OrdinalIgnoreCase) ||
+            normalizedTitle.Contains("goal cancelled", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (normalizedTitle.Contains("goal", StringComparison.OrdinalIgnoreCase) ||
+            normalizedTitle.Contains("penalty scored", StringComparison.OrdinalIgnoreCase) ||
+            normalizedTitle.Contains("own goal", StringComparison.OrdinalIgnoreCase) ||
+            hasScoreSnapshot)
         {
             incidentType = "goal";
             incidentClass = normalizedTitle.Contains("penalty", StringComparison.OrdinalIgnoreCase)
                 ? "penalty"
                 : normalizedTitle.Contains("own", StringComparison.OrdinalIgnoreCase)
                     ? "ownGoal"
-                    : "regular";
+                    : hasScoreSnapshot && !normalizedTitle.Contains("goal", StringComparison.OrdinalIgnoreCase)
+                        ? "scoreSnapshot"
+                        : "regular";
         }
         else if (normalizedTitle.Contains("yellow card", StringComparison.OrdinalIgnoreCase))
         {
@@ -1040,8 +1169,6 @@ public sealed class FlashscoreDownloader
         {
             return false;
         }
-
-        ParseScore(row.Score, out int? homeScore, out int? awayScore);
 
         long incidentId = StablePositiveId(
             $"flashscore:incident:{calendarEvent.FlashscoreId}:{row.TimeText}:{title}:{row.IsHome}:{row.PlayerName}:{row.Score}");

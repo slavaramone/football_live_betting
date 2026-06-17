@@ -10,6 +10,7 @@ public static class HelpPrinter
         Console.WriteLine("  download-flashscore  Download rendered Flashscore calendar, incidents, stats and odds JSON.");
         Console.WriteLine("  download-sofascore   Download SofaScore calendar, incidents and team statistics JSON only.");
         Console.WriteLine("  import-flashscore    Import saved Flashscore JSON into PostgreSQL and apply pending migrations.");
+        Console.WriteLine("  db-refresh-details   Re-download and reimport incidents/statistics for selected DB matches.");
         Console.WriteLine("  validate-db          Validate imported PostgreSQL data quality for modelling.");
         Console.WriteLine("  db-validate          Alias for validate-db.");
         Console.WriteLine("  build-live-total-calibration-dataset  Build correction rows from the shared live-total timing core.");
@@ -26,6 +27,8 @@ public static class HelpPrinter
         PrintDownloadSofaScore();
         Console.WriteLine();
         PrintImportFlashscore();
+        Console.WriteLine();
+        PrintRefreshDetails();
         Console.WriteLine();
         PrintValidateDb();
         Console.WriteLine();
@@ -91,6 +94,36 @@ public static class HelpPrinter
         Console.WriteLine();
         Console.WriteLine("Output layout: <output>/<league-slug>/season-<season-id>/round-XX/calendar.json.");
         Console.WriteLine("Calendar, incidents, statistics and odds JSON are imported by import-flashscore.");
+    }
+
+
+    public static void PrintRefreshDetails()
+    {
+        Console.WriteLine("Refresh Flashscore match details usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- db-refresh-details \\");
+        Console.WriteLine("    --league \"China Super League\" --season-id 2026 --only-unreliable-goal-timelines true --show-browser");
+        Console.WriteLine();
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- db-refresh-details \\");
+        Console.WriteLine("    --event-ids \"1513770403383936569,478252213573640854\" --show-browser");
+        Console.WriteLine();
+        Console.WriteLine("Refresh details arguments:");
+        Console.WriteLine("  --league             Optional DB league filter.");
+        Console.WriteLine("  --season-id          Optional DB season id filter.");
+        Console.WriteLine("  --round/from-round/to-round Optional round filters.");
+        Console.WriteLine("  --event-id / --event-ids Refresh specific DB EventId values.");
+        Console.WriteLine("  --only-unreliable-goal-timelines true/false. Default true unless event ids are provided.");
+        Console.WriteLine("  --incidents          true/false. Refresh incidents.json and MatchEvents. Default true.");
+        Console.WriteLine("  --statistics         true/false. Refresh statistics.json and MatchStats. Default true.");
+        Console.WriteLine("  --skip-stat          Shortcut for --statistics false.");
+        Console.WriteLine("  --odds               true/false. Refresh odds.json and odds rows. Default false.");
+        Console.WriteLine("  --import             true/false. Import downloaded JSON into DB. Default true.");
+        Console.WriteLine("  --skip-import        Download only, do not write DB.");
+        Console.WriteLine("  --dry-run            Print selected matches and exit.");
+        Console.WriteLine("  --output             Optional TXT refresh report path. Alias: --report.");
+        Console.WriteLine("  --show-browser       Run Chromium visible. Useful if Flashscore challenge/cookies block detail pages.");
+        Console.WriteLine("  --detail-wait-ms / --delay-ms / --overwrite Same meaning as download-flashscore.");
+        Console.WriteLine();
+        Console.WriteLine("The command uses CalendarJsonPath stored in DB to find the original Flashscore detail URLs and event folders. It keeps match rows and odds untouched unless --odds true is used.");
     }
 
     public static void PrintDownloadSofaScore()

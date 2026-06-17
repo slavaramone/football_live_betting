@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using LiveTotalsHelper.Infrastructure.Flashscore;
 using LiveTotalsHelper.Infrastructure.Persistence;
 using LiveTotalsHelper.Infrastructure.Persistence.Flashscore;
+using LiveTotalsHelper.Infrastructure.Persistence.Entities;
 using LiveTotalsHelper.Infrastructure.SofaScore;
 using LiveTotalsHelper.Tools;
 using Microsoft.Extensions.Configuration;
@@ -24,6 +26,7 @@ try
         "download-flashscore" => await RunDownloadFlashscore(commandArgs),
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
         "import-flashscore" => await RunImportFlashscore(commandArgs),
+        "db-refresh-details" => await RunRefreshDetails(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
         "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
@@ -882,6 +885,227 @@ static string FormatFairOdds(double odds)
 }
 
 
+static async Task<int> RunRefreshDetails(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    string league = parsed.String("league", string.Empty);
+    int seasonId = parsed.Int("season-id", 0);
+    bool onlyUnreliableGoalTimelines = parsed.Bool("only-unreliable-goal-timelines", !parsed.Has("event-ids") && !parsed.Has("event-id"));
+    bool refreshIncidents = parsed.Bool("incidents", true);
+    bool refreshStatistics = parsed.Has("skip-stat") ? false : parsed.Bool("statistics", true);
+    bool refreshOdds = parsed.Bool("odds", false);
+    bool dryRun = parsed.Bool("dry-run", false);
+    bool importDownloaded = parsed.Has("skip-import") ? false : parsed.Bool("import", true);
+    string outputPath = parsed.String("output", parsed.String("report", string.Empty));
+
+    var requestedEventIds = ParseStringList(parsed, "event-ids");
+    requestedEventIds.AddRange(ParseStringList(parsed, "event-id"));
+    var requestedEventIdSet = requestedEventIds
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim())
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    var rounds = new List<int>();
+    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
+        AddRounds(rounds, parsed);
+
+    IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+
+    await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
+
+    IQueryable<MatchEntity> matchQuery = dbContext.Matches.AsNoTracking();
+    if (!string.IsNullOrWhiteSpace(league))
+        matchQuery = matchQuery.Where(x => x.LeagueName == league || x.LeagueSlug == league);
+    if (seasonId > 0)
+        matchQuery = matchQuery.Where(x => x.SeasonId == seasonId);
+    if (rounds.Count > 0)
+        matchQuery = matchQuery.Where(x => rounds.Contains(x.RoundNumber));
+    if (requestedEventIdSet.Count > 0)
+        matchQuery = matchQuery.Where(x => requestedEventIdSet.Contains(x.EventId));
+
+    List<MatchEntity> matches = await matchQuery
+        .OrderBy(x => x.RoundNumber)
+        .ThenBy(x => x.StartTimeUtc)
+        .ThenBy(x => x.EventId)
+        .ToListAsync(CancellationToken.None);
+
+    HashSet<int> matchIds = matches.Select(x => x.Id).ToHashSet();
+    List<MatchEventEntity> events = matchIds.Count == 0
+        ? []
+        : await dbContext.MatchEvents.AsNoTracking()
+            .Where(x => matchIds.Contains(x.MatchId))
+            .OrderBy(x => x.MatchId)
+            .ThenBy(x => x.TimeSeconds ?? x.Minute * 60)
+            .ThenBy(x => x.Id)
+            .ToListAsync(CancellationToken.None);
+
+    Dictionary<int, List<MatchEventEntity>> rawGoalsByMatch = events
+        .Where(IsGoalEvent)
+        .GroupBy(x => x.MatchId)
+        .ToDictionary(x => x.Key, x => x.ToList());
+
+    var candidates = new List<(MatchEntity Match, GoalEventReconstruction Reconstruction)>();
+    foreach (MatchEntity match in matches.Where(IsFinishedMatch))
+    {
+        rawGoalsByMatch.TryGetValue(match.Id, out List<MatchEventEntity>? rawGoals);
+        GoalEventReconstruction reconstructed = GoalEventScoreReconstructor.Reconstruct(match, rawGoals ?? []);
+
+        if (!onlyUnreliableGoalTimelines || !reconstructed.IsReliable)
+            candidates.Add((match, reconstructed));
+    }
+
+    var targets = new List<FlashscoreDetailDownloadTarget>();
+    var warnings = new List<string>();
+
+    foreach ((MatchEntity match, GoalEventReconstruction reconstructed) in candidates)
+    {
+        FlashscoreCalendarEvent? calendarEvent = LoadFlashscoreCalendarEvent(match, warnings);
+        if (calendarEvent is null)
+            continue;
+
+        string calendarPathForFolder = ResolvePotentiallyRelativeFilePath(match.CalendarJsonPath);
+        string? roundFolder = Path.GetDirectoryName(calendarPathForFolder);
+        if (string.IsNullOrWhiteSpace(roundFolder))
+        {
+            warnings.Add($"event {match.EventId}: cannot derive round folder from CalendarJsonPath='{match.CalendarJsonPath}'.");
+            continue;
+        }
+
+        string eventFolder = Path.Combine(roundFolder, "events", match.EventId);
+        targets.Add(new FlashscoreDetailDownloadTarget
+        {
+            CalendarEvent = calendarEvent,
+            EventFolder = eventFolder,
+            DownloadIncidents = refreshIncidents,
+            DownloadStatistics = refreshStatistics,
+            DownloadOdds = refreshOdds
+        });
+    }
+
+    var reportBuilder = new StringBuilder();
+    void Report(string line)
+    {
+        Console.WriteLine(line);
+        reportBuilder.AppendLine(line);
+    }
+
+    Report("Flashscore detail refresh plan.");
+    Report($"Matches selected: {matches.Count}");
+    Report($"Candidate matches: {candidates.Count}");
+    Report($"Download targets: {targets.Count}");
+    Report($"Only unreliable goal timelines: {onlyUnreliableGoalTimelines}");
+    Report($"Refresh incidents: {refreshIncidents}");
+    Report($"Refresh statistics: {refreshStatistics}");
+    Report($"Refresh odds: {refreshOdds}");
+    Report($"Import downloaded JSON: {importDownloaded}");
+    Report($"Dry run: {dryRun}");
+
+    foreach ((MatchEntity match, GoalEventReconstruction reconstructed) in candidates.Take(parsed.Int("max-examples", 50)))
+    {
+        Report($"- event {match.EventId} r{match.RoundNumber} {match.HomeTeamName} vs {match.AwayTeamName}: final {match.HomeScoreCurrent}-{match.AwayScoreCurrent}, reconstructed {reconstructed.FinalHomeFromEvents}-{reconstructed.FinalAwayFromEvents}, raw={reconstructed.RawGoalIncidentCount}, expanded={reconstructed.ExpandedGoalCount}");
+    }
+
+    foreach (string warning in warnings)
+        Report($"Warning: {warning}");
+
+    if (!string.IsNullOrWhiteSpace(outputPath))
+        await WriteRefreshReportAsync(outputPath, reportBuilder.ToString(), CancellationToken.None);
+
+    if (dryRun || targets.Count == 0)
+        return warnings.Count == 0 ? 0 : 1;
+
+    var options = new FlashscoreDownloadOptions
+    {
+        League = league,
+        TournamentId = parsed.Int("tournament-id", targets.FirstOrDefault()?.CalendarEvent.Tournament.UniqueTournament.Id ?? 1),
+        SeasonId = parsed.Int("season-id", targets.FirstOrDefault()?.CalendarEvent.Season.Id ?? 1),
+        OutputRoot = parsed.String("input", parsed.String("output-root", "data/flashscore")),
+        Overwrite = parsed.Bool("overwrite", true),
+        DownloadIncidents = refreshIncidents,
+        DownloadStatistics = refreshStatistics,
+        DownloadOdds = refreshOdds,
+        Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
+        DetailWaitMs = parsed.Int("detail-wait-ms", 3_000),
+        ShowMoreWaitMs = parsed.Int("show-more-wait-ms", 2_000),
+        MaxShowMoreClicks = parsed.Int("max-show-more-clicks", 40),
+        DelayMs = parsed.Int("delay-ms", 450),
+        DefaultYear = parsed.Int("default-year", DateTimeOffset.UtcNow.Year)
+    };
+
+    var downloader = new FlashscoreDownloader(new SofaScoreJsonFileStore());
+    FlashscoreDownloadResult downloadResult = await downloader.DownloadDetailsAsync(targets, options, Console.Out, CancellationToken.None);
+
+    Report("");
+    Report("Refresh download done.");
+    Report($"Events targeted: {downloadResult.EventsDiscovered}");
+    Report($"Files written: {downloadResult.FilesWritten}");
+    Report($"Files skipped: {downloadResult.FilesSkipped}");
+    Report($"Warnings: {downloadResult.Warnings.Count}");
+    Report($"Failures: {downloadResult.Failures.Count}");
+    foreach (string warning in downloadResult.Warnings)
+        Report($"Warning: {warning}");
+    foreach (string failure in downloadResult.Failures)
+        Report($"Failure: {failure}");
+
+    if (importDownloaded)
+    {
+        var importer = new FlashscoreDbImporter(dbContext);
+        int incidentsImported = 0;
+        int statisticsImported = 0;
+        int oddsImported = 0;
+
+        foreach (FlashscoreDetailDownloadTarget target in targets)
+        {
+            string eventId = target.CalendarEvent.Id.ToString(CultureInfo.InvariantCulture);
+
+            if (refreshIncidents)
+            {
+                string incidentsPath = Path.Combine(target.EventFolder, "incidents.json");
+                if (File.Exists(incidentsPath))
+                {
+                    await importer.ImportIncidentsAsync(eventId, await File.ReadAllTextAsync(incidentsPath, CancellationToken.None), incidentsPath, CancellationToken.None);
+                    incidentsImported++;
+                }
+            }
+
+            if (refreshStatistics)
+            {
+                string statisticsPath = Path.Combine(target.EventFolder, "statistics.json");
+                if (File.Exists(statisticsPath))
+                {
+                    await importer.ImportStatisticsAsync(eventId, await File.ReadAllTextAsync(statisticsPath, CancellationToken.None), statisticsPath, CancellationToken.None);
+                    statisticsImported++;
+                }
+            }
+
+            if (refreshOdds)
+            {
+                string oddsPath = Path.Combine(target.EventFolder, "odds.json");
+                if (File.Exists(oddsPath))
+                {
+                    await importer.ImportOddsAsync(eventId, await File.ReadAllTextAsync(oddsPath, CancellationToken.None), oddsPath, CancellationToken.None);
+                    oddsImported++;
+                }
+            }
+        }
+
+        Report("");
+        Report("DB import done.");
+        Report($"Incidents files imported: {incidentsImported}");
+        Report($"Statistics files imported: {statisticsImported}");
+        Report($"Odds files imported: {oddsImported}");
+    }
+
+    if (!string.IsNullOrWhiteSpace(outputPath))
+        await WriteRefreshReportAsync(outputPath, reportBuilder.ToString(), CancellationToken.None);
+
+    return downloadResult.Failures.Count == 0 ? 0 : 1;
+}
+
 static async Task<int> RunValidateDb(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
@@ -1171,6 +1395,102 @@ static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
     return result;
 }
 
+
+static List<string> ParseStringList(ParsedArgs parsed, string name)
+{
+    if (!parsed.Has(name))
+        return [];
+
+    return parsed.RequiredString(name)
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .ToList();
+}
+
+static bool IsFinishedMatch(MatchEntity match)
+    => match.StatusType.Equals("finished", StringComparison.OrdinalIgnoreCase) ||
+       match.StatusType.Equals("ended", StringComparison.OrdinalIgnoreCase) ||
+       match.StatusDescription.Contains("ended", StringComparison.OrdinalIgnoreCase);
+
+static bool IsGoalEvent(MatchEventEntity matchEvent)
+    => matchEvent.IncidentType.Equals("goal", StringComparison.OrdinalIgnoreCase);
+
+static FlashscoreCalendarEvent? LoadFlashscoreCalendarEvent(MatchEntity match, List<string> warnings)
+{
+    string calendarPath = match.CalendarJsonPath;
+    if (string.IsNullOrWhiteSpace(calendarPath))
+    {
+        warnings.Add($"event {match.EventId}: missing CalendarJsonPath in DB.");
+        return null;
+    }
+
+    string fullPath = ResolvePotentiallyRelativeFilePath(calendarPath);
+    if (!File.Exists(fullPath))
+    {
+        warnings.Add($"event {match.EventId}: calendar JSON not found: {fullPath}");
+        return null;
+    }
+
+    using JsonDocument document = JsonDocument.Parse(File.ReadAllText(fullPath));
+    if (!document.RootElement.TryGetProperty("events", out JsonElement eventsElement) || eventsElement.ValueKind != JsonValueKind.Array)
+    {
+        warnings.Add($"event {match.EventId}: calendar JSON has no events array: {fullPath}");
+        return null;
+    }
+
+    var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+    foreach (JsonElement eventElement in eventsElement.EnumerateArray())
+    {
+        string id = eventElement.TryGetProperty("id", out JsonElement idElement)
+            ? idElement.ValueKind == JsonValueKind.String ? idElement.GetString() ?? string.Empty : idElement.GetRawText()
+            : string.Empty;
+
+        if (!id.Equals(match.EventId, StringComparison.OrdinalIgnoreCase))
+            continue;
+
+        FlashscoreCalendarEvent? calendarEvent = JsonSerializer.Deserialize<FlashscoreCalendarEvent>(eventElement.GetRawText(), jsonOptions);
+        if (calendarEvent is null)
+        {
+            warnings.Add($"event {match.EventId}: failed to parse calendar event from {fullPath}");
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(calendarEvent.SourceUrl))
+            warnings.Add($"event {match.EventId}: calendar event has empty SourceUrl, detail refresh may fail.");
+
+        return calendarEvent;
+    }
+
+    warnings.Add($"event {match.EventId}: not found inside calendar JSON: {fullPath}");
+    return null;
+}
+
+
+static string ResolvePotentiallyRelativeFilePath(string path)
+{
+    if (Path.IsPathFullyQualified(path))
+        return path;
+
+    string fromCurrentDirectory = Path.GetFullPath(path);
+    if (File.Exists(fromCurrentDirectory))
+        return fromCurrentDirectory;
+
+    string fromBaseDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, path));
+    if (File.Exists(fromBaseDirectory))
+        return fromBaseDirectory;
+
+    return fromCurrentDirectory;
+}
+
+static async Task WriteRefreshReportAsync(string outputPath, string text, CancellationToken cancellationToken)
+{
+    string fullPath = Path.GetFullPath(outputPath);
+    string? directory = Path.GetDirectoryName(fullPath);
+    if (!string.IsNullOrWhiteSpace(directory))
+        Directory.CreateDirectory(directory);
+
+    await File.WriteAllTextAsync(fullPath, text, Encoding.UTF8, cancellationToken);
+}
 
 static string FormatImportException(Exception exception)
 {
