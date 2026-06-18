@@ -74,8 +74,10 @@ internal static class GoalEventScoreReconstructor
                 continue;
             }
 
+            // Goal-like incidents without score snapshots are not trusted. Flashscore can emit
+            // duplicate/noisy goal rows with no HomeScore/AwayScore; counting them creates
+            // false reconstructed scores. Keep a diagnostic count, but do not add a fallback goal.
             result.MissingScoreSnapshotCount++;
-            AddFallbackGoal(result, goal, minute, ref home, ref away, ref sequence);
         }
 
         result.FinalHomeFromEvents = home;
@@ -169,5 +171,12 @@ internal static class GoalEventScoreReconstructor
     }
 
     public static int EventSortKey(MatchEventEntity matchEvent)
-        => matchEvent.TimeSeconds ?? (Math.Max(0, matchEvent.Minute) * 60 + matchEvent.AddedTime.GetValueOrDefault() * 60);
+    {
+        // Use display-minute order, not real elapsed seconds. Flashscore first-half added time
+        // like 45+6 must be before 46. Older imported rows stored TimeSeconds as (45+6)*60,
+        // which can incorrectly move 45+6 after 51 and create false score jumps.
+        int minute = Math.Max(0, matchEvent.Minute);
+        int added = Math.Max(0, matchEvent.AddedTime.GetValueOrDefault());
+        return minute * 100 + added;
+    }
 }

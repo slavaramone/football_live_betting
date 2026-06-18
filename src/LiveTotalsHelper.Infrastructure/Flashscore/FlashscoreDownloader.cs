@@ -37,115 +37,6 @@ public sealed class FlashscoreDownloader
         _fileStore = fileStore;
     }
 
-    public async Task<FlashscoreDownloadResult> DownloadDetailsAsync(
-        IReadOnlyList<FlashscoreDetailDownloadTarget> targets,
-        FlashscoreDownloadOptions options,
-        TextWriter log,
-        CancellationToken cancellationToken)
-    {
-        if (targets.Count == 0)
-            return new FlashscoreDownloadResult();
-
-        if (options.DetailWaitMs < 0)
-            throw new ArgumentException("DetailWaitMs cannot be negative.");
-        if (options.ShowMoreWaitMs < 0)
-            throw new ArgumentException("ShowMoreWaitMs cannot be negative.");
-        if (options.MaxShowMoreClicks < 0)
-            throw new ArgumentException("MaxShowMoreClicks cannot be negative.");
-        if (options.DelayMs < 0)
-            throw new ArgumentException("DelayMs cannot be negative.");
-
-        var result = new FlashscoreDownloadResult
-        {
-            EventsDiscovered = targets.Count
-        };
-
-        await log.WriteLineAsync($"Starting Playwright Chromium for Flashscore detail refresh. Headless: {options.Headless}");
-        using IPlaywright playwright = await Playwright.CreateAsync();
-        await using IBrowser browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
-        {
-            Headless = options.Headless
-        });
-
-        IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions
-        {
-            UserAgent = options.UserAgent,
-            ViewportSize = new ViewportSize { Width = 1366, Height = 900 }
-        });
-
-        try
-        {
-            IPage page = await context.NewPageAsync();
-            page.SetDefaultTimeout(120_000);
-            page.SetDefaultNavigationTimeout(120_000);
-
-            FlashscoreDetailDownloadTarget? first = targets.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.CalendarEvent.SourceUrl));
-            if (first is not null)
-            {
-                await page.GotoAsync(first.CalendarEvent.SourceUrl, new PageGotoOptions
-                {
-                    WaitUntil = WaitUntilState.DOMContentLoaded,
-                    Timeout = 120_000
-                });
-                await TryAcceptCookiesAsync(page);
-            }
-
-            foreach (FlashscoreDetailDownloadTarget target in targets)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                Directory.CreateDirectory(target.EventFolder);
-                await log.WriteLineAsync($"Refreshing event {target.CalendarEvent.Id}: {target.CalendarEvent.HomeTeam.Name} vs {target.CalendarEvent.AwayTeam.Name}");
-
-                if (target.DownloadIncidents)
-                {
-                    await DownloadIncidentsAsync(
-                        page,
-                        target.CalendarEvent,
-                        Path.Combine(target.EventFolder, "incidents.json"),
-                        options,
-                        result,
-                        log,
-                        cancellationToken);
-                }
-
-                if (target.DownloadStatistics)
-                {
-                    await DownloadStatisticsAsync(
-                        page,
-                        target.CalendarEvent,
-                        Path.Combine(target.EventFolder, "statistics.json"),
-                        options,
-                        result,
-                        log,
-                        cancellationToken);
-                }
-
-                if (target.DownloadOdds)
-                {
-                    await DownloadOddsAsync(
-                        page,
-                        target.CalendarEvent,
-                        Path.Combine(target.EventFolder, "odds.json"),
-                        options,
-                        result,
-                        log,
-                        cancellationToken);
-                }
-
-                if (options.DelayMs > 0)
-                    await Task.Delay(options.DelayMs, cancellationToken);
-            }
-        }
-        finally
-        {
-            await context.CloseAsync();
-        }
-
-        result.RoundsDownloaded = targets.Select(x => x.CalendarEvent.Round).Distinct().Count();
-        return result;
-    }
-
     public async Task<FlashscoreDownloadResult> DownloadAsync(
         FlashscoreDownloadOptions options,
         TextWriter log,
@@ -222,45 +113,12 @@ public sealed class FlashscoreDownloader
                 string roundFolder = Path.Combine(baseFolder, $"round-{round:00}");
                 string eventsFolder = Path.Combine(roundFolder, "events");
                 string calendarPath = Path.Combine(roundFolder, "calendar.json");
-
-                await log.WriteLineAsync($"Round {round}: saving Flashscore calendar ({roundEvents.Count} events)...");
-
-                string calendarJson = JsonSerializer.Serialize(new { events = roundEvents }, JsonOptions);
-                Count(await _fileStore.WriteJsonAsync(calendarPath, calendarJson, options.Overwrite, cancellationToken), result);
-
-                var manifest = new SofaScoreRoundManifest
-                {
-                    League = options.League,
-                    LeagueSlug = leagueSlug,
-                    TournamentId = options.TournamentId,
-                    SeasonId = options.SeasonId,
-                    Round = round,
-                    DownloadedAtUtc = DateTimeOffset.UtcNow,
-                    EventCount = roundEvents.Count,
-                    Events = roundEvents.Select(e => new SofaScoreRoundManifestEvent
-                    {
-                        EventId = e.Id,
-                        Slug = e.Slug,
-                        HomeTeam = e.HomeTeam.Name,
-                        AwayTeam = e.AwayTeam.Name,
-                        StartTimestamp = e.StartTimestamp,
-                        StatusType = e.Status.Type,
-                        StatusDescription = e.Status.Description,
-                        TournamentName = e.Tournament.UniqueTournament.Name,
-                        TournamentSlug = e.Tournament.UniqueTournament.Slug,
-                        SeasonName = e.Season.Name,
-                        SeasonYear = e.Season.Year,
-                        Round = e.RoundInfo.Round,
-                        Folder = Path.Combine("events", e.Id.ToString(CultureInfo.InvariantCulture))
-                    }).ToList()
-                };
-
-                Count(await _fileStore.WriteObjectAsync(Path.Combine(roundFolder, "manifest.json"), manifest, options.Overwrite, cancellationToken), result);
+                bool roundMetadataEnriched = false;
 
                 foreach (FlashscoreCalendarEvent calendarEvent in roundEvents)
                 {
                     string eventFolder = Path.Combine(eventsFolder, calendarEvent.Id.ToString(CultureInfo.InvariantCulture));
-                    Count(await _fileStore.WriteObjectAsync(Path.Combine(eventFolder, "event-meta.json"), calendarEvent, options.Overwrite, cancellationToken), result);
+                    bool hadStartTimestamp = calendarEvent.StartTimestamp.HasValue;
 
                     if (options.DownloadIncidents && IsFinished(calendarEvent))
                     {
@@ -298,9 +156,55 @@ public sealed class FlashscoreDownloader
                             cancellationToken);
                     }
 
+                    bool eventMetadataEnriched = !hadStartTimestamp && calendarEvent.StartTimestamp.HasValue;
+                    roundMetadataEnriched |= eventMetadataEnriched;
+                    Count(await _fileStore.WriteObjectAsync(
+                        Path.Combine(eventFolder, "event-meta.json"),
+                        calendarEvent,
+                        options.Overwrite || eventMetadataEnriched,
+                        cancellationToken), result);
+
                     if (options.DelayMs > 0)
                         await Task.Delay(options.DelayMs, cancellationToken);
                 }
+
+                await log.WriteLineAsync($"Round {round}: saving Flashscore calendar ({roundEvents.Count} events)...");
+
+                string calendarJson = JsonSerializer.Serialize(new { events = roundEvents }, JsonOptions);
+                Count(await _fileStore.WriteJsonAsync(calendarPath, calendarJson, options.Overwrite || roundMetadataEnriched, cancellationToken), result);
+
+                var manifest = new SofaScoreRoundManifest
+                {
+                    League = options.League,
+                    LeagueSlug = leagueSlug,
+                    TournamentId = options.TournamentId,
+                    SeasonId = options.SeasonId,
+                    Round = round,
+                    DownloadedAtUtc = DateTimeOffset.UtcNow,
+                    EventCount = roundEvents.Count,
+                    Events = roundEvents.Select(e => new SofaScoreRoundManifestEvent
+                    {
+                        EventId = e.Id,
+                        Slug = e.Slug,
+                        HomeTeam = e.HomeTeam.Name,
+                        AwayTeam = e.AwayTeam.Name,
+                        StartTimestamp = e.StartTimestamp,
+                        StatusType = e.Status.Type,
+                        StatusDescription = e.Status.Description,
+                        TournamentName = e.Tournament.UniqueTournament.Name,
+                        TournamentSlug = e.Tournament.UniqueTournament.Slug,
+                        SeasonName = e.Season.Name,
+                        SeasonYear = e.Season.Year,
+                        Round = e.RoundInfo.Round,
+                        Folder = Path.Combine("events", e.Id.ToString(CultureInfo.InvariantCulture))
+                    }).ToList()
+                };
+
+                Count(await _fileStore.WriteObjectAsync(
+                    Path.Combine(roundFolder, "manifest.json"),
+                    manifest,
+                    options.Overwrite || roundMetadataEnriched,
+                    cancellationToken), result);
 
                 result.RoundsDownloaded++;
             }
@@ -322,7 +226,8 @@ public sealed class FlashscoreDownloader
         TextWriter log,
         CancellationToken cancellationToken)
     {
-        if (File.Exists(targetPath) && !options.Overwrite)
+        bool skipWrite = File.Exists(targetPath) && !options.Overwrite;
+        if (skipWrite && calendarEvent.StartTimestamp.HasValue)
         {
             result.FilesSkipped++;
             return;
@@ -345,8 +250,15 @@ public sealed class FlashscoreDownloader
             if (options.DetailWaitMs > 0)
                 await Task.Delay(options.DetailWaitMs, cancellationToken);
 
+            await TrySetStartTimestampFromDetailPageAsync(page, calendarEvent, options.DefaultYear, log);
+            if (skipWrite)
+            {
+                result.FilesSkipped++;
+                return;
+            }
+
             IReadOnlyList<FlashscoreIncident> incidents = await ExtractIncidentsAsync(page, calendarEvent, cancellationToken);
-            string json = JsonSerializer.Serialize(new { incidents }, JsonOptions);
+            string json = JsonSerializer.Serialize(new { calendarEvent.StartTimestamp, incidents }, JsonOptions);
             Count(await _fileStore.WriteJsonAsync(targetPath, json, options.Overwrite, cancellationToken), result);
             await log.WriteLineAsync($"    saved incidents: {targetPath} ({incidents.Count})");
         }
@@ -367,7 +279,8 @@ public sealed class FlashscoreDownloader
         TextWriter log,
         CancellationToken cancellationToken)
     {
-        if (File.Exists(targetPath) && !options.Overwrite)
+        bool skipWrite = File.Exists(targetPath) && !options.Overwrite;
+        if (skipWrite && calendarEvent.StartTimestamp.HasValue)
         {
             result.FilesSkipped++;
             return;
@@ -403,6 +316,13 @@ public sealed class FlashscoreDownloader
                 if (options.DetailWaitMs > 0)
                     await Task.Delay(options.DetailWaitMs, cancellationToken);
 
+                await TrySetStartTimestampFromDetailPageAsync(page, calendarEvent, options.DefaultYear, log);
+                if (skipWrite)
+                {
+                    result.FilesSkipped++;
+                    return;
+                }
+
                 IReadOnlyList<FlashscoreStatisticsGroup> groups = await ExtractStatisticsGroupsAsync(page, cancellationToken);
                 if (groups.Count > 0)
                 {
@@ -414,7 +334,7 @@ public sealed class FlashscoreDownloader
                 }
             }
 
-            string json = JsonSerializer.Serialize(new { statistics }, JsonOptions);
+            string json = JsonSerializer.Serialize(new { calendarEvent.StartTimestamp, statistics }, JsonOptions);
             Count(await _fileStore.WriteJsonAsync(targetPath, json, options.Overwrite, cancellationToken), result);
             await log.WriteLineAsync($"    saved statistics: {targetPath} ({statistics.Sum(x => x.Groups.Sum(g => g.StatisticsItems.Count))})");
         }
@@ -459,13 +379,7 @@ public sealed class FlashscoreDownloader
             if (options.DetailWaitMs > 0)
                 await Task.Delay(options.DetailWaitMs, cancellationToken);
 
-            string[] requestedMarkets =
-            [
-                "1X2",
-                "OVER/UNDER",
-                "BOTH TEAMS TO SCORE",
-                "ASIAN HANDICAP"
-            ];
+            string[] requestedMarkets = ["OVER/UNDER"];
 
             var markets = new List<FlashscoreOddsMarket>();
             foreach (string marketName in requestedMarkets)
@@ -473,7 +387,7 @@ public sealed class FlashscoreDownloader
                 cancellationToken.ThrowIfCancellationRequested();
 
                 bool selected = await TrySelectOddsMarketAsync(page, marketName);
-                if (!selected && markets.Count > 0)
+                if (!selected)
                     continue;
 
                 if (options.DetailWaitMs > 0)
@@ -520,45 +434,25 @@ public sealed class FlashscoreDownloader
         CancellationToken cancellationToken)
     {
         int clicks = 0;
+        bool targetRoundsRequested = options.Rounds.Count > 0;
+
+        if (targetRoundsRequested && await RequestedRoundsAreLoadedAsync(page, options, cancellationToken))
+        {
+            await log.WriteLineAsync($"Requested round filter already loaded: {FormatRounds(options.Rounds)}");
+            return clicks;
+        }
+
         for (int attempt = 0; attempt < options.MaxShowMoreClicks; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            bool hasVisibleShowMore = await page.EvaluateAsync<bool>(
-                """
-                () => Array.from(document.querySelectorAll('section[class*="scores"] button'))
-                    .some(el => {
-                        const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-                        if (text !== 'Show more matches') return false;
-                        const style = window.getComputedStyle(el);
-                        const rect = el.getBoundingClientRect();
-                        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
-                    })
-                """);
-
+            bool hasVisibleShowMore = await HasVisibleShowMoreMatchesButtonAsync(page);
             if (!hasVisibleShowMore)
                 break;
 
             int before = await page.Locator("[data-event-row='true']").CountAsync();
 
-            bool clicked = await page.EvaluateAsync<bool>(
-                """
-                () => {
-                    const elements = Array.from(document.querySelectorAll('section[class*="scores"] button'));
-                    const target = elements.find(el => {
-                        const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-                        if (text !== 'Show more matches') return false;
-                        const style = window.getComputedStyle(el);
-                        const rect = el.getBoundingClientRect();
-                        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
-                    });
-                    if (!target) return false;
-                    target.scrollIntoView({ block: 'center' });
-                    target.click();
-                    return true;
-                }
-                """);
-
+            bool clicked = await ClickShowMoreMatchesButtonAsync(page);
             if (!clicked)
                 break;
 
@@ -591,12 +485,93 @@ public sealed class FlashscoreDownloader
 
             await log.WriteLineAsync($"  Show more {clicks}: rows {before} -> {after}");
 
+            if (targetRoundsRequested && await RequestedRoundsAreLoadedAsync(page, options, cancellationToken))
+            {
+                await log.WriteLineAsync($"Requested round filter loaded after {clicks} Show more click(s): {FormatRounds(options.Rounds)}");
+                break;
+            }
+
             if (after <= before)
                 break;
         }
 
         return clicks;
     }
+
+    private static async Task<bool> HasVisibleShowMoreMatchesButtonAsync(IPage page)
+    {
+        return await page.EvaluateAsync<bool>(
+            """
+            () => Array.from(document.querySelectorAll('section[class*="scores"] button'))
+                .some(el => {
+                    const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+                    if (text !== 'Show more matches') return false;
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+                })
+            """);
+    }
+
+    private static async Task<bool> ClickShowMoreMatchesButtonAsync(IPage page)
+    {
+        return await page.EvaluateAsync<bool>(
+            """
+            () => {
+                const elements = Array.from(document.querySelectorAll('section[class*="scores"] button'));
+                const target = elements.find(el => {
+                    const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+                    if (text !== 'Show more matches') return false;
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+                });
+                if (!target) return false;
+                target.scrollIntoView({ block: 'center' });
+                target.click();
+                return true;
+            }
+            """);
+    }
+
+    private static async Task<bool> RequestedRoundsAreLoadedAsync(
+        IPage page,
+        FlashscoreDownloadOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (options.Rounds.Count == 0)
+            return false;
+
+        IReadOnlyList<FlashscoreRenderedMatch> visibleMatches = await ExtractMatchesAsync(page, cancellationToken);
+        Dictionary<int, int> visibleRoundCounts = visibleMatches
+            .Select(match => ParseRound(match.RoundText))
+            .Where(round => round > 0)
+            .GroupBy(round => round)
+            .ToDictionary(group => group.Key, group => group.Count());
+
+        if (visibleRoundCounts.Count == 0)
+            return false;
+
+        int[] requestedRounds = options.Rounds.Distinct().OrderBy(round => round).ToArray();
+        bool allRequestedRoundsVisible = requestedRounds.All(round =>
+            visibleRoundCounts.TryGetValue(round, out int count) && count > 0);
+
+        if (!allRequestedRoundsVisible)
+            return false;
+
+        // Flashscore appends older matches after each Show more click. If the first requested
+        // round appears at the bottom, it can be only partially loaded. Stop only when an older
+        // round is already visible, or when there is no Show more button left.
+        int minRequestedRound = requestedRounds.Min();
+        bool olderRoundVisible = visibleRoundCounts.Keys.Any(round => round < minRequestedRound);
+        if (olderRoundVisible)
+            return true;
+
+        return !await HasVisibleShowMoreMatchesButtonAsync(page);
+    }
+
+    private static string FormatRounds(IEnumerable<int> rounds)
+        => string.Join(",", rounds.Distinct().OrderBy(round => round));
 
     private static async Task<IReadOnlyList<FlashscoreRenderedMatch>> ExtractMatchesAsync(IPage page, CancellationToken cancellationToken)
     {
@@ -613,6 +588,26 @@ public sealed class FlashscoreDownloader
                     const name = node.querySelector('[class*="wcl-name"]');
                     return text(name || node);
                 };
+                const first = (values, predicate) => values.map(x => (x || '').replace(/\s+/g, ' ').trim()).find(x => x && (!predicate || predicate(x))) || '';
+                const looksLikeDateTime = (value) => /\b\d{1,2}\.\d{1,2}\.?(?:\d{2,4})?\s+\d{1,2}:\d{2}\b/.test(value);
+                const looksLikeTime = (value) => /\b\d{1,2}:\d{2}\b/.test(value);
+                const extractTimeText = (row) => {
+                    const timeNode = row.querySelector('.event__time, [class*="event__time"], [class*="time"]');
+                    const candidates = [];
+                    if (timeNode) {
+                        candidates.push(timeNode.getAttribute('title'));
+                        candidates.push(timeNode.getAttribute('aria-label'));
+                        candidates.push(timeNode.getAttribute('data-time'));
+                        candidates.push(text(timeNode));
+                    }
+                    Array.from(row.querySelectorAll('[title], [aria-label], [data-time]')).forEach(el => {
+                        candidates.push(el.getAttribute('title'));
+                        candidates.push(el.getAttribute('aria-label'));
+                        candidates.push(el.getAttribute('data-time'));
+                    });
+                    candidates.push(text(row));
+                    return first(candidates, looksLikeDateTime) || first(candidates, looksLikeTime) || text(timeNode);
+                };
 
                 document.querySelectorAll('.event__round, [data-event-row="true"]').forEach(node => {
                     if (node.classList.contains('event__round')) {
@@ -628,11 +623,12 @@ public sealed class FlashscoreDownloader
                     const away = cleanParticipant(node.querySelector('.event__awayParticipant'));
                     const homeScore = text(node.querySelector('.event__score--home'));
                     const awayScore = text(node.querySelector('.event__score--away'));
+                    const timeText = extractTimeText(node);
 
                     rows.push({
                         sourceId: rawId,
                         roundText: currentRound,
-                        timeText: text(node.querySelector('.event__time')),
+                        timeText,
                         homeTeam: home,
                         awayTeam: away,
                         homeScore: homeScore,
@@ -664,10 +660,36 @@ public sealed class FlashscoreDownloader
                     const parts = href.split("/").filter(Boolean);
                     return parts.length ? parts[parts.length - 1] : "";
                 };
+                const detectCardIcon = (icon) => {
+                    if (!icon) return "";
+
+                    const colorValues = [];
+                    [icon, ...icon.querySelectorAll('*')].forEach(node => {
+                        const style = window.getComputedStyle(node);
+                        colorValues.push(style.color, style.backgroundColor, style.fill, style.stroke);
+                        ['fill', 'stroke', 'color'].forEach(attribute => colorValues.push(node.getAttribute?.(attribute) || ''));
+                    });
+
+                    let hasRed = false;
+                    let hasYellow = false;
+                    colorValues.filter(Boolean).forEach(value => {
+                        const numbers = value.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number);
+                        if (!numbers || numbers.length < 3) return;
+                        const [red, green, blue] = numbers;
+                        if (red >= 140 && red > green * 1.35 && red > blue * 1.35) hasRed = true;
+                        if (red >= 150 && green >= 100 && blue <= Math.min(red, green) * 0.75) hasYellow = true;
+                    });
+
+                    if (hasRed && hasYellow) return "yellowRed";
+                    if (hasRed) return "red";
+                    if (hasYellow) return "yellow";
+                    return "";
+                };
 
                 return JSON.stringify(Array.from(document.querySelectorAll(".smv__participantRow")).map(row => {
                     const icon = row.querySelector(".smv__incidentIcon");
                     const title = text(icon?.querySelector("title"));
+                    const iconType = detectCardIcon(icon);
                     const player = row.querySelector("a.smv__playerName");
                     const assist = row.querySelector(".smv__assist a");
                     const scoreNodes = Array.from(row.querySelectorAll(
@@ -683,6 +705,7 @@ public sealed class FlashscoreDownloader
                     return {
                         timeText: text(row.querySelector(".smv__timeBox")),
                         title,
+                        iconType,
                         score,
                         isHome: row.classList.contains("smv__homeParticipant"),
                         playerName: text(player),
@@ -790,6 +813,67 @@ public sealed class FlashscoreDownloader
                         return !Array.from(element.children).some(child => exactDecimalPattern.test(text(child)));
                     })
                     .map(text);
+                const numericLeaves = Array.from(document.querySelectorAll("body *"))
+                    .filter(isVisible)
+                    .filter(element => exactDecimalPattern.test(text(element)))
+                    .filter(element => !Array.from(element.children).some(child => exactDecimalPattern.test(text(child))))
+                    .map(element => {
+                        const rect = element.getBoundingClientRect();
+                        return {
+                            element,
+                            value: text(element),
+                            x: rect.left + rect.width / 2,
+                            y: rect.top + rect.height / 2
+                        };
+                    });
+
+                const visualGroups = [];
+                numericLeaves.sort((a, b) => a.y - b.y || a.x - b.x).forEach(item => {
+                    let group = visualGroups.find(candidate => Math.abs(candidate.y - item.y) <= 10);
+                    if (!group) {
+                        group = { y: item.y, items: [] };
+                        visualGroups.push(group);
+                    }
+                    group.items.push(item);
+                    group.y = group.items.reduce((sum, value) => sum + value.y, 0) / group.items.length;
+                });
+
+                const bookmakerImages = Array.from(document.querySelectorAll("img[alt], img[title]"))
+                    .filter(isVisible)
+                    .map(element => {
+                        const rect = element.getBoundingClientRect();
+                        return {
+                            name: (element.getAttribute("alt") || element.getAttribute("title") || "").trim(),
+                            x: rect.left + rect.width / 2,
+                            y: rect.top + rect.height / 2
+                        };
+                    })
+                    .filter(item => item.name);
+
+                const visualRows = visualGroups
+                    .map(group => ({ ...group, items: group.items.sort((a, b) => a.x - b.x) }))
+                    .filter(group => group.items.length === 3)
+                    .map(group => {
+                        const firstX = group.items[0].x;
+                        const bookmaker = bookmakerImages
+                            .filter(image => image.x < firstX && Math.abs(image.y - group.y) <= 35)
+                            .sort((a, b) => Math.abs(a.y - group.y) - Math.abs(b.y - group.y))[0]?.name || "";
+                        const values = group.items.map(item => item.value);
+                        return {
+                            bookmaker,
+                            rawText: values.join(" "),
+                            values,
+                            columns: values
+                        };
+                    })
+                    .filter(row => {
+                        const line = Number(row.values[0].replace(',', '.'));
+                        return line === 2.5 || line === 3.5;
+                    });
+
+                if (visualRows.length > 0)
+                    return JSON.stringify(visualRows);
+
                 const candidateRows = Array.from(document.querySelectorAll([
                     ".ui-table__row",
                     "[class*='ui-table__row']",
@@ -855,11 +939,17 @@ public sealed class FlashscoreDownloader
             """
             (marketName) => {
                 const normalize = (value) => (value || "").replace(/\s+/g, " ").trim().toUpperCase();
+                const isVisible = (node) => {
+                    if (!node) return false;
+                    const style = window.getComputedStyle(node);
+                    const rect = node.getBoundingClientRect();
+                    return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                };
                 const wanted = normalize(marketName);
                 const candidates = Array.from(document.querySelectorAll(
                     "button, a, [role='tab'], [data-testid='wcl-tab']"
                 ));
-                const target = candidates.find(el => normalize(el.textContent) === wanted);
+                const target = candidates.find(el => normalize(el.textContent) === wanted && isVisible(el));
                 if (!target) return false;
                 target.scrollIntoView({ block: "center", inline: "center" });
                 target.click();
@@ -909,6 +999,9 @@ public sealed class FlashscoreDownloader
 
     private static List<FlashscoreOddsRow> NormalizeOddsRows(string marketName, IReadOnlyList<FlashscoreRawOddsRow> rawRows)
     {
+        if (!marketName.Contains("OVER/UNDER", StringComparison.OrdinalIgnoreCase))
+            return [];
+
         var rows = new List<FlashscoreOddsRow>();
         foreach (FlashscoreRawOddsRow rawRow in rawRows)
         {
@@ -922,43 +1015,18 @@ public sealed class FlashscoreDownloader
             if (values.Count == 0)
                 continue;
 
-            string market = marketName.ToUpperInvariant();
-            if (market == "1X2")
-            {
-                AddSelectionRows(rows, rawRow, marketName, null, ["1", "X", "2"], CompactConsecutive(values.Where(x => x > 1.0)).Take(3).ToList());
-            }
-            else if (market.Contains("BOTH TEAMS", StringComparison.OrdinalIgnoreCase))
-            {
-                AddSelectionRows(rows, rawRow, marketName, null, ["Yes", "No"], CompactConsecutive(values.Where(x => x > 1.0)).Take(2).ToList());
-            }
-            else if (market.Contains("OVER/UNDER", StringComparison.OrdinalIgnoreCase))
-            {
-                int? lineIndex = FindLineIndex(values, allowNegative: false);
-                double? line = lineIndex.HasValue ? values[lineIndex.Value] : null;
-                string? lineRaw = lineIndex.HasValue ? tokens[lineIndex.Value].Raw : null;
-                List<double> odds = CompactConsecutive(tokens
-                    .Where((x, index) => IsOddsToken(x.Raw, x.Value, index, lineIndex, lineRaw))
-                    .Select(x => x.Value))
-                    .Take(2)
-                    .ToList();
-                AddSelectionRows(rows, rawRow, marketName, line, ["Over", "Under"], odds);
-            }
-            else if (market.Contains("ASIAN HANDICAP", StringComparison.OrdinalIgnoreCase))
-            {
-                int? lineIndex = FindLineIndex(values, allowNegative: true);
-                double? line = lineIndex.HasValue ? values[lineIndex.Value] : null;
-                string? lineRaw = lineIndex.HasValue ? tokens[lineIndex.Value].Raw : null;
-                List<double> odds = CompactConsecutive(tokens
-                    .Where((x, index) => IsOddsToken(x.Raw, x.Value, index, lineIndex, lineRaw))
-                    .Select(x => x.Value))
-                    .Take(2)
-                    .ToList();
-                AddSelectionRows(rows, rawRow, marketName, line, ["Home", "Away"], odds);
-            }
-            else
-            {
-                AddSelectionRows(rows, rawRow, marketName, null, [], CompactConsecutive(values.Where(x => x > 1.0)).ToList());
-            }
+            int? lineIndex = FindLineIndex(values, allowNegative: false);
+            double? line = lineIndex.HasValue ? values[lineIndex.Value] : null;
+            if (!IsWantedTotalLine(line))
+                continue;
+
+            string? lineRaw = lineIndex.HasValue ? tokens[lineIndex.Value].Raw : null;
+            List<double> odds = CompactConsecutive(tokens
+                .Where((x, index) => IsOddsToken(x.Raw, x.Value, index, lineIndex, lineRaw))
+                .Select(x => x.Value))
+                .Take(2)
+                .ToList();
+            AddSelectionRows(rows, rawRow, marketName, line, ["Over", "Under"], odds);
         }
 
         return rows
@@ -977,6 +1045,10 @@ public sealed class FlashscoreDownloader
             .ThenBy(row => row.Odds)
             .ToList();
     }
+
+    private static bool IsWantedTotalLine(double? line)
+        => line.HasValue && (Math.Abs(line.Value - 2.5) < 0.0001
+            || Math.Abs(line.Value - 3.5) < 0.0001);
 
     private static bool IsOddsToken(string raw, double value, int index, int? lineIndex, string? lineRaw)
     {
@@ -1126,6 +1198,10 @@ public sealed class FlashscoreDownloader
 
         string title = row.Title.Trim();
         string normalizedTitle = title.ToLowerInvariant();
+        string iconType = row.IconType.Trim();
+        bool titleIsEmpty = string.IsNullOrWhiteSpace(normalizedTitle);
+        bool titleMentionsCard = normalizedTitle.Contains("card", StringComparison.OrdinalIgnoreCase);
+        bool trustVisualCardType = titleIsEmpty || titleMentionsCard;
         string incidentType;
         string incidentClass;
 
@@ -1139,11 +1215,18 @@ public sealed class FlashscoreDownloader
             return false;
         }
 
-        if (normalizedTitle.Contains("goal", StringComparison.OrdinalIgnoreCase) ||
+        bool looksLikeGoal = normalizedTitle.Contains("goal", StringComparison.OrdinalIgnoreCase) ||
             normalizedTitle.Contains("penalty scored", StringComparison.OrdinalIgnoreCase) ||
-            normalizedTitle.Contains("own goal", StringComparison.OrdinalIgnoreCase) ||
-            hasScoreSnapshot)
+            normalizedTitle.Contains("own goal", StringComparison.OrdinalIgnoreCase);
+
+        if (looksLikeGoal || hasScoreSnapshot)
         {
+            // Flashscore occasionally renders non-scoring/duplicated goal-like rows without a score snapshot.
+            // Those rows break reconstructed timelines by adding a fake fallback goal. Real scoring rows
+            // normally have a visible score; if no score could be extracted even from row text, skip it.
+            if (looksLikeGoal && !hasScoreSnapshot)
+                return false;
+
             incidentType = "goal";
             incidentClass = normalizedTitle.Contains("penalty", StringComparison.OrdinalIgnoreCase)
                 ? "penalty"
@@ -1153,17 +1236,27 @@ public sealed class FlashscoreDownloader
                         ? "scoreSnapshot"
                         : "regular";
         }
-        else if (normalizedTitle.Contains("yellow card", StringComparison.OrdinalIgnoreCase))
+        else if ((normalizedTitle.Contains("yellow", StringComparison.OrdinalIgnoreCase) &&
+                  normalizedTitle.Contains("red", StringComparison.OrdinalIgnoreCase) &&
+                  titleMentionsCard) ||
+                 (trustVisualCardType && iconType.Equals("yellowRed", StringComparison.OrdinalIgnoreCase)) ||
+                 normalizedTitle.Contains("second yellow", StringComparison.OrdinalIgnoreCase) ||
+                 normalizedTitle.Contains("2nd yellow", StringComparison.OrdinalIgnoreCase))
         {
             incidentType = "card";
-            incidentClass = normalizedTitle.Contains("second", StringComparison.OrdinalIgnoreCase)
-                ? "yellowRed"
-                : "yellow";
+            incidentClass = "yellowRed";
         }
-        else if (normalizedTitle.Contains("red card", StringComparison.OrdinalIgnoreCase))
+        else if ((trustVisualCardType && iconType.Equals("red", StringComparison.OrdinalIgnoreCase)) ||
+                 normalizedTitle.Contains("red card", StringComparison.OrdinalIgnoreCase))
         {
             incidentType = "card";
             incidentClass = "red";
+        }
+        else if ((trustVisualCardType && iconType.Equals("yellow", StringComparison.OrdinalIgnoreCase)) ||
+                 normalizedTitle.Contains("yellow card", StringComparison.OrdinalIgnoreCase))
+        {
+            incidentType = "card";
+            incidentClass = "yellow";
         }
         else
         {
@@ -1171,7 +1264,17 @@ public sealed class FlashscoreDownloader
         }
 
         long incidentId = StablePositiveId(
-            $"flashscore:incident:{calendarEvent.FlashscoreId}:{row.TimeText}:{title}:{row.IsHome}:{row.PlayerName}:{row.Score}");
+            $"flashscore:incident:{calendarEvent.FlashscoreId}:{row.TimeText}:{title}:{iconType}:{row.IsHome}:{row.PlayerName}:{row.Score}");
+
+        string reason = !string.IsNullOrWhiteSpace(title)
+            ? title
+            : incidentClass switch
+            {
+                "yellowRed" => "Second Yellow Card",
+                "red" => "Red Card",
+                "yellow" => "Yellow Card",
+                _ => string.Empty
+            };
 
         incident = new FlashscoreIncident
         {
@@ -1180,7 +1283,9 @@ public sealed class FlashscoreDownloader
             IncidentClass = incidentClass,
             Time = minute,
             AddedTime = addedTime,
-            TimeSeconds = ((minute + (addedTime ?? 0)) * 60),
+            // Keep first-half stoppage time before the second half in chronological sorting.
+            // 45+6 must sort before 46, not at the same position as 51.
+            TimeSeconds = (minute * 60) + (addedTime ?? 0),
             IsHome = row.IsHome,
             HomeScore = homeScore,
             AwayScore = awayScore,
@@ -1198,7 +1303,7 @@ public sealed class FlashscoreDownloader
                     Name = row.AssistName,
                     Id = StablePositiveId($"flashscore:player:{Coalesce(row.AssistSourceId, row.AssistName)}")
                 },
-            Reason = title
+            Reason = reason
         };
 
         return true;
@@ -1236,6 +1341,39 @@ public sealed class FlashscoreDownloader
             homeScore = parsedHome;
         if (int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedAway))
             awayScore = parsedAway;
+    }
+
+    private static async Task TrySetStartTimestampFromDetailPageAsync(
+        IPage page,
+        FlashscoreCalendarEvent calendarEvent,
+        int defaultYear,
+        TextWriter log)
+    {
+        if (calendarEvent.StartTimestamp.HasValue)
+            return;
+
+        string dateTimeText = await page.EvaluateAsync<string>(
+            """
+            () => {
+                const text = (node) => (node?.textContent || '').replace(/\s+/g, ' ').trim();
+                const candidates = [
+                    text(document.querySelector('.duelParticipant__startTime')),
+                    document.querySelector('.duelParticipant__startTime [title]')?.getAttribute('title') || '',
+                    document.querySelector('meta[name="description"]')?.getAttribute('content') || '',
+                    document.title || ''
+                ];
+
+                const dateTime = /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s+\d{1,2}:\d{2}\b/;
+                return candidates.find(value => dateTime.test(value)) || '';
+            }
+            """);
+
+        long? startTimestamp = ParseStartTimestamp(dateTimeText, defaultYear);
+        if (!startTimestamp.HasValue)
+            return;
+
+        calendarEvent.StartTimestamp = startTimestamp;
+        await log.WriteLineAsync($"    kickoff: {dateTimeText} ({DateTimeOffset.FromUnixTimeSeconds(startTimestamp.Value):O})");
     }
 
     private static string BuildMatchDetailUrl(string sourceUrl, string segment)
@@ -1401,9 +1539,38 @@ public sealed class FlashscoreDownloader
 
     private static long? ParseStartTimestamp(string value, int year)
     {
-        string normalized = value.Trim();
+        string normalized = Regex.Replace((value ?? string.Empty).Replace('\u00a0', ' '), @"\s+", " ").Trim();
         if (string.IsNullOrWhiteSpace(normalized))
             return null;
+
+        Match match = Regex.Match(
+            normalized,
+            @"(?<day>\d{1,2})\.(?<month>\d{1,2})\.?(?:(?<year>\d{2,4})\.?)?\s+(?<hour>\d{1,2}):(?<minute>\d{2})",
+            RegexOptions.CultureInvariant);
+
+        if (match.Success)
+        {
+            int parsedYear = year;
+            string yearText = match.Groups["year"].Value;
+            if (!string.IsNullOrWhiteSpace(yearText) && int.TryParse(yearText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int yearValue))
+                parsedYear = yearText.Length == 2 ? 2000 + yearValue : yearValue;
+
+            if (int.TryParse(match.Groups["day"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int day) &&
+                int.TryParse(match.Groups["month"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int month) &&
+                int.TryParse(match.Groups["hour"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int hour) &&
+                int.TryParse(match.Groups["minute"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int minute))
+            {
+                try
+                {
+                    var local = new DateTime(parsedYear, month, day, hour, minute, 0, DateTimeKind.Local);
+                    return new DateTimeOffset(local).ToUnixTimeSeconds();
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    return null;
+                }
+            }
+        }
 
         string[] formats =
         [
@@ -1411,19 +1578,19 @@ public sealed class FlashscoreDownloader
             "d.MM. HH:mm",
             "dd.MM.yyyy HH:mm",
             "d.MM.yyyy HH:mm",
+            "dd.MM.yyyy. HH:mm",
+            "d.MM.yyyy. HH:mm",
             "dd.MM.yy HH:mm",
-            "d.MM.yy HH:mm"
+            "d.MM.yy HH:mm",
+            "dd.MM.yy. HH:mm",
+            "d.MM.yy. HH:mm"
         ];
 
         foreach (string format in formats)
         {
-            string candidate = format.Contains("y", StringComparison.OrdinalIgnoreCase)
-                ? normalized
-                : $"{normalized}";
-
-            if (DateTime.TryParseExact(candidate, format, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out DateTime parsed))
+            if (DateTime.TryParseExact(normalized, format, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out DateTime parsed))
             {
-                if (!format.Contains("y", StringComparison.OrdinalIgnoreCase))
+                if (!format.Contains('y', StringComparison.OrdinalIgnoreCase))
                     parsed = new DateTime(year, parsed.Month, parsed.Day, parsed.Hour, parsed.Minute, 0, DateTimeKind.Local);
 
                 return new DateTimeOffset(parsed).ToUnixTimeSeconds();
@@ -1517,6 +1684,7 @@ public sealed class FlashscoreRenderedIncident
 {
     public string TimeText { get; init; } = string.Empty;
     public string Title { get; init; } = string.Empty;
+    public string IconType { get; init; } = string.Empty;
     public string Score { get; init; } = string.Empty;
     public bool IsHome { get; init; }
     public string PlayerName { get; init; } = string.Empty;
@@ -1617,7 +1785,7 @@ public sealed class FlashscoreCalendarEvent
     public FlashscoreRoundInfo RoundInfo { get; init; } = new();
     public FlashscoreTeam HomeTeam { get; init; } = new();
     public FlashscoreTeam AwayTeam { get; init; } = new();
-    public long? StartTimestamp { get; init; }
+    public long? StartTimestamp { get; set; }
     public FlashscoreStatus Status { get; init; } = new();
     public FlashscoreScore? HomeScore { get; init; }
     public FlashscoreScore? AwayScore { get; init; }

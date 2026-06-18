@@ -41,23 +41,31 @@ public sealed class FlashscoreDbImporter
         if (match is null)
             return;
 
-        List<MatchEventEntity> existingEvents = await _db.MatchEvents.Where(x => x.EventId == eventId).ToListAsync(cancellationToken);
-        _db.MatchEvents.RemoveRange(existingEvents);
-
         using JsonDocument document = JsonDocument.Parse(incidentsJson);
+        ApplyStartTimestamp(match, document.RootElement);
         if (!document.RootElement.TryGetProperty("incidents", out JsonElement incidentsElement) || incidentsElement.ValueKind != JsonValueKind.Array)
         {
-            await SaveChangesWithDiagnosticsAsync($"incidents empty event={eventId} file={incidentsFilePath}", cancellationToken);
+            await SaveChangesWithDiagnosticsAsync($"incidents empty event={eventId} file={incidentsFilePath}; existing rows preserved", cancellationToken);
             return;
         }
 
+        List<MatchEventEntity> parsedEvents = [];
         foreach (JsonElement incident in incidentsElement.EnumerateArray())
         {
             string incidentType = GetString(incident, "incidentType");
             if (!ShouldStoreIncident(incidentType))
                 continue;
 
-            var matchEvent = new MatchEventEntity
+            int? homeScore = GetNullableInt32(incident, "homeScore");
+            int? awayScore = GetNullableInt32(incident, "awayScore");
+
+            // Flashscore sometimes exposes duplicate/noisy goal-like rows without a score snapshot.
+            // They are not reliable scoring events for timing/state reconstruction, so do not store
+            // them as goals. The validator/reconstructor also ignores such legacy rows.
+            if (IsGoalIncidentType(incidentType) && (!homeScore.HasValue || !awayScore.HasValue))
+                continue;
+
+            parsedEvents.Add(new MatchEventEntity
             {
                 MatchId = match.Id,
                 EventId = eventId,
@@ -68,17 +76,25 @@ public sealed class FlashscoreDbImporter
                 AddedTime = GetNullableInt32(incident, "addedTime"),
                 TimeSeconds = GetNullableInt32(incident, "timeSeconds"),
                 IsHome = GetNullableBool(incident, "isHome") ?? false,
-                HomeScore = GetNullableInt32(incident, "homeScore"),
-                AwayScore = GetNullableInt32(incident, "awayScore"),
+                HomeScore = homeScore,
+                AwayScore = awayScore,
                 PlayerName = GetNestedString(incident, "player", "name"),
                 PlayerId = GetNestedScalarString(incident, "player", "id"),
                 AssistPlayerName = GetNestedString(incident, "assist1", "name"),
                 AssistPlayerId = GetNestedScalarString(incident, "assist1", "id"),
                 Reason = GetString(incident, "reason")
-            };
-
-            _db.MatchEvents.Add(matchEvent);
+            });
         }
+
+        if (parsedEvents.Count == 0)
+        {
+            await SaveChangesWithDiagnosticsAsync($"incidents parsed-empty event={eventId} file={incidentsFilePath}; existing rows preserved", cancellationToken);
+            return;
+        }
+
+        List<MatchEventEntity> existingEvents = await _db.MatchEvents.Where(x => x.EventId == eventId).ToListAsync(cancellationToken);
+        _db.MatchEvents.RemoveRange(existingEvents);
+        _db.MatchEvents.AddRange(parsedEvents);
 
         await SaveChangesWithDiagnosticsAsync($"incidents event={eventId} file={incidentsFilePath}", cancellationToken);
     }
@@ -89,16 +105,15 @@ public sealed class FlashscoreDbImporter
         if (match is null)
             return;
 
-        List<MatchStatEntity> existingStats = await _db.MatchStats.Where(x => x.EventId == eventId).ToListAsync(cancellationToken);
-        _db.MatchStats.RemoveRange(existingStats);
-
         using JsonDocument document = JsonDocument.Parse(statisticsJson);
+        ApplyStartTimestamp(match, document.RootElement);
         if (!document.RootElement.TryGetProperty("statistics", out JsonElement statisticsElement) || statisticsElement.ValueKind != JsonValueKind.Array)
         {
-            await SaveChangesWithDiagnosticsAsync($"statistics empty event={eventId} file={statisticsFilePath}", cancellationToken);
+            await SaveChangesWithDiagnosticsAsync($"statistics empty event={eventId} file={statisticsFilePath}; existing rows preserved", cancellationToken);
             return;
         }
 
+        List<MatchStatEntity> parsedStats = [];
         foreach (JsonElement periodElement in statisticsElement.EnumerateArray())
         {
             string period = GetString(periodElement, "period");
@@ -121,14 +136,22 @@ public sealed class FlashscoreDbImporter
                     continue;
 
                 foreach (JsonElement itemElement in itemsElement.EnumerateArray())
-                {
                     hasAnyValue |= ApplyMatchStatItem(stat, itemElement);
-                }
             }
 
             if (hasAnyValue)
-                _db.MatchStats.Add(stat);
+                parsedStats.Add(stat);
         }
+
+        List<MatchStatEntity> existingStats = await _db.MatchStats.Where(x => x.EventId == eventId).ToListAsync(cancellationToken);
+        if (!ShouldReplaceStatistics(existingStats, parsedStats))
+        {
+            await SaveChangesWithDiagnosticsAsync($"statistics parsed-incomplete event={eventId} file={statisticsFilePath}; existing rows preserved", cancellationToken);
+            return;
+        }
+
+        _db.MatchStats.RemoveRange(existingStats);
+        _db.MatchStats.AddRange(parsedStats);
 
         await SaveChangesWithDiagnosticsAsync($"statistics event={eventId} file={statisticsFilePath}", cancellationToken);
     }
@@ -169,6 +192,9 @@ public sealed class FlashscoreDbImporter
 
                 string bookmaker = GetString(rowElement, "bookmaker");
                 double? line = GetNullableDouble(rowElement, "line");
+                if (!IsWantedTotalOdds(market, line))
+                    continue;
+
                 string key = $"{market}|{bookmaker}|{selection}|{line:0.####}|{odds.Value:0.####}";
                 if (!seen.Add(key))
                     continue;
@@ -191,6 +217,19 @@ public sealed class FlashscoreDbImporter
         }
 
         await SaveChangesWithDiagnosticsAsync($"odds event={eventId} file={oddsFilePath}", cancellationToken);
+    }
+
+    private static bool IsWantedTotalOdds(string market, double? line)
+        => market.Contains("OVER/UNDER", StringComparison.OrdinalIgnoreCase)
+           && line.HasValue
+           && (Math.Abs(line.Value - 2.5) < 0.0001
+               || Math.Abs(line.Value - 3.5) < 0.0001);
+
+    private static void ApplyStartTimestamp(MatchEntity match, JsonElement root)
+    {
+        long? startTimestamp = GetNullableInt64(root, "startTimestamp");
+        if (startTimestamp.HasValue)
+            match.StartTimeUtc = DateTimeOffset.FromUnixTimeSeconds(startTimestamp.Value);
     }
 
 
@@ -465,10 +504,36 @@ public sealed class FlashscoreDbImporter
         match.CalendarUpdatedAtUtc = DateTimeOffset.UtcNow;
     }
 
+    private static bool ShouldReplaceStatistics(IReadOnlyCollection<MatchStatEntity> existingStats, IReadOnlyCollection<MatchStatEntity> parsedStats)
+    {
+        if (parsedStats.Count == 0)
+            return false;
+
+        if (existingStats.Count == 0)
+            return true;
+
+        bool existingHasAll = existingStats.Any(x => IsAllPeriod(x.Period));
+        bool parsedHasAll = parsedStats.Any(x => IsAllPeriod(x.Period));
+        if (existingHasAll && !parsedHasAll)
+            return false;
+
+        // A partial statistics payload should not erase a fuller historical import.
+        if (parsedStats.Count < existingStats.Count)
+            return false;
+
+        return true;
+    }
+
+    private static bool IsAllPeriod(string period)
+        => period.Equals("all", StringComparison.OrdinalIgnoreCase);
+
     private static bool ShouldStoreIncident(string incidentType)
-        => incidentType.Equals("goal", StringComparison.OrdinalIgnoreCase)
+        => IsGoalIncidentType(incidentType)
            || incidentType.Equals("card", StringComparison.OrdinalIgnoreCase)
            || incidentType.Equals("period", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsGoalIncidentType(string incidentType)
+        => incidentType.Equals("goal", StringComparison.OrdinalIgnoreCase);
 
     private static string Coalesce(params string[] values)
         => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty;
