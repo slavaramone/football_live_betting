@@ -2,7 +2,7 @@ namespace LiveTotalsHelper.Core.Models;
 
 public sealed class LiveBettingCheckInput
 {
-    public string ProfileKey { get; set; } = "norwegian-1st-division";
+    public string ProfileKey { get; set; } = "china-super-league";
     public string MatchName { get; set; } = string.Empty;
     public string StateTrigger { get; set; } = "fixed-minute";
     public int Minute { get; set; } = 60;

@@ -8,7 +8,7 @@ public sealed class LiveTotalsDbContextFactory : IDesignTimeDbContextFactory<Liv
     public LiveTotalsDbContext CreateDbContext(string[] args)
     {
         var optionsBuilder = new DbContextOptionsBuilder<LiveTotalsDbContext>();
-        optionsBuilder.UseNpgsql("Host=localhost;Port=5432;Database=livetotalshelper;Username=postgres;Password=Tartaruga_050910");
+        optionsBuilder.UseNpgsql("Host=localhost;Port=5432;Database=livetotals;Username=postgres;Password=Tartaruga_050910");
         return new LiveTotalsDbContext(optionsBuilder.Options);
     }
 }

@@ -1,0 +1,104 @@
+{
+  "profiles": [
+    {
+      "key": "china-super-league",
+      "name": "China Super League",
+      "league": "China Super League",
+
+      "modelPath": "C:\\Temp\\football_data\\models\\china-super-league\\weibull-2023-2025.json",
+      "stateCorrectionPath": "C:\\Temp\\football_data\\models\\china-super-league\\state-correction-2023-2025.json",
+      "empiricalSettlementPath": "C:\\Temp\\football_data\\models\\china-super-league\\empirical-settlement-2023-2025.json",
+      "calibrationDatasetPath": "C:\\Temp\\football_data\\models\\china-super-league\\calibration-2023-2025.csv",
+      "calibrationAnalysisPath": "C:\\Temp\\football_data\\models\\china-super-league\\calibration-analysis-2023-2025.csv",
+      "modelEvaluationPath": "C:\\Temp\\football_data\\models\\china-super-league\\model-evaluation-2023-2025.csv",
+      "trainingSeasonIds": [2023, 2024, 2025],
+
+      "validationTrainingSeasonIds": [2023, 2024],
+      "validationTestSeasonIds": [2025],
+      "validationModelPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-weibull-2023-2024.json",
+      "validationCalibrationDatasetPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-calibration-2023-2025.csv",
+      "validationStateCorrectionPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-state-correction-2023-2024.json",
+      "validationEmpiricalSettlementPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-empirical-settlement-2023-2024.json",
+      "validationCalibrationAnalysisPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-calibration-analysis-2023-2025.csv",
+      "validationModelEvaluationPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-model-evaluation-2025.csv",
+
+      "maxMinute": 90,
+      "groupByColumn": "ScoreStateBefore",
+      "minGroupGoals": 30,
+      "maxIterations": 100,
+      "tolerance": 1e-09,
+      "blendWeibullWeight": 0.3,
+
+      "includeUnreliableMatches": false,
+      "includeEventTriggers": true,
+      "snapshotMinutes": [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85],
+
+      "stateCorrectionMinBucketMatches": 100,
+      "stateCorrectionMinFactor": 0.5,
+      "stateCorrectionMaxFactor": 2.5,
+
+      "baseSeasonIds": [2023, 2024, 2025],
+      "currentSeasonId": 2026,
+      "defaultBeforeRound": null,
+      "useCurrentSeasonVolume": true,
+      "priorStrengthMatches": 100,
+
+      "defaultEmpiricalWeight": 0.8,
+      "edgeThreshold": 0.1,
+      "useProbabilityMoveFilter": true,
+      "minOverProbabilityMove": 0.1,
+      "minUnderProbabilityMove": -0.12,
+      "underSignalsBettingAllowed": false,
+
+      "decisionMode": "FullModel",
+      "minLine": 2.5,
+      "allowedLines": [2.5, 3.5],
+      "fallbackBettingEnabled": true,
+      "requireGoalTrigger": false,
+      "targetLines": [2.5, 3.5],
+
+      "liveBettingRules": [
+        {
+          "stateTrigger": "AfterGoal",
+          "side": "Over",
+          "line": 2.5,
+          "minProbabilityMove": 0.1,
+          "minEdge": 0.1,
+          "allowBet": true,
+          "notes": "After-goal Over 2.5 requires positive probability movement and sufficient edge."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "side": "Under",
+          "line": 2.5,
+          "minProbabilityMove": -0.12,
+          "minEdge": 0.1,
+          "allowBet": true,
+          "notes": "After-goal Under 2.5 requires negative probability movement and sufficient edge."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "side": "Over",
+          "line": 3.5,
+          "minProbabilityMove": 0.1,
+          "minEdge": 0.1,
+          "allowBet": true,
+          "notes": "After-goal Over 3.5 requires positive probability movement and sufficient edge."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "side": "Under",
+          "line": 3.5,
+          "minProbabilityMove": -0.12,
+          "minEdge": 0.1,
+          "allowBet": true,
+          "notes": "After-goal Under 3.5 requires negative probability movement and sufficient edge."
+        }
+      ],
+
+      "riskLevel": "Paper test",
+      "decisionRulesNotes": "Full-model pricing with specialist after-goal rules. Only totals 2.5 and 3.5 are enabled because those are the retained Flashscore markets.",
+      "notes": "Shared China Super League profile for console tools and Avalonia. Production training seasons are 2023-2025; 2026 is the current season."
+    }
+  ]
+}

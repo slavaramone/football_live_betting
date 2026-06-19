@@ -2,7 +2,7 @@
   "profiles": {
     "LiveTotalsHelper.Tools": {
       "commandName": "Project",
-      "commandLineArgs": "fit-weibull --profile norwegian-1st-division --validation true\r\n"
+      "commandLineArgs": "fit-weibull --profile china-super-league --validation true\r\n"
     }
   }
 }

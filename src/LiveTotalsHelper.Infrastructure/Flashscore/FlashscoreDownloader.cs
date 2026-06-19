@@ -241,23 +241,43 @@ public sealed class FlashscoreDownloader
 
         try
         {
-            await page.GotoAsync(calendarEvent.SourceUrl, new PageGotoOptions
-            {
-                WaitUntil = WaitUntilState.DOMContentLoaded,
-                Timeout = 90_000
-            });
+            IReadOnlyList<FlashscoreIncident> incidents = [];
+            int expectedGoals = (calendarEvent.HomeScore?.Current ?? 0) + (calendarEvent.AwayScore?.Current ?? 0);
 
-            if (options.DetailWaitMs > 0)
-                await Task.Delay(options.DetailWaitMs, cancellationToken);
-
-            await TrySetStartTimestampFromDetailPageAsync(page, calendarEvent, options.DefaultYear, log);
-            if (skipWrite)
+            for (int attempt = 1; attempt <= 2; attempt++)
             {
-                result.FilesSkipped++;
-                return;
+                await NavigateToRenderedDetailAsync(
+                    page,
+                    calendarEvent.SourceUrl,
+                    ".smv__participantRow",
+                    options,
+                    cancellationToken);
+
+                await TrySetStartTimestampFromDetailPageAsync(page, calendarEvent, options.DefaultYear, log);
+                if (skipWrite)
+                {
+                    result.FilesSkipped++;
+                    return;
+                }
+
+                incidents = await ExtractIncidentsAsync(page, calendarEvent, cancellationToken);
+                int parsedGoals = incidents.Count(x => x.IncidentType.Equals("goal", StringComparison.OrdinalIgnoreCase));
+                if (expectedGoals == 0 || parsedGoals >= expectedGoals)
+                    break;
+
+                if (attempt < 2)
+                    await log.WriteLineAsync($"    incidents incomplete ({parsedGoals}/{expectedGoals} goals); reloading detail page...");
             }
 
-            IReadOnlyList<FlashscoreIncident> incidents = await ExtractIncidentsAsync(page, calendarEvent, cancellationToken);
+            int finalParsedGoals = incidents.Count(x => x.IncidentType.Equals("goal", StringComparison.OrdinalIgnoreCase));
+            if (finalParsedGoals < expectedGoals)
+            {
+                string warning = $"event {calendarEvent.Id} {calendarEvent.HomeTeam.Name} vs {calendarEvent.AwayTeam.Name}: " +
+                    $"incident page yielded {finalParsedGoals}/{expectedGoals} goals after retry";
+                result.Warnings.Add(warning);
+                await log.WriteLineAsync($"    WARN incidents: {warning}");
+            }
+
             string json = JsonSerializer.Serialize(new { calendarEvent.StartTimestamp, incidents }, JsonOptions);
             Count(await _fileStore.WriteJsonAsync(targetPath, json, options.Overwrite, cancellationToken), result);
             await log.WriteLineAsync($"    saved incidents: {targetPath} ({incidents.Count})");
@@ -307,14 +327,12 @@ public sealed class FlashscoreDownloader
                 cancellationToken.ThrowIfCancellationRequested();
                 string url = BuildMatchDetailUrl(calendarEvent.SourceUrl, $"summary/stats/{segment}");
 
-                await page.GotoAsync(url, new PageGotoOptions
-                {
-                    WaitUntil = WaitUntilState.DOMContentLoaded,
-                    Timeout = 90_000
-                });
-
-                if (options.DetailWaitMs > 0)
-                    await Task.Delay(options.DetailWaitMs, cancellationToken);
+                await NavigateToRenderedDetailAsync(
+                    page,
+                    url,
+                    "[data-testid='wcl-statistics']",
+                    options,
+                    cancellationToken);
 
                 await TrySetStartTimestampFromDetailPageAsync(page, calendarEvent, options.DefaultYear, log);
                 if (skipWrite)
@@ -370,14 +388,12 @@ public sealed class FlashscoreDownloader
         try
         {
             string oddsUrl = BuildMatchDetailUrl(calendarEvent.SourceUrl, "odds");
-            await page.GotoAsync(oddsUrl, new PageGotoOptions
-            {
-                WaitUntil = WaitUntilState.DOMContentLoaded,
-                Timeout = 90_000
-            });
-
-            if (options.DetailWaitMs > 0)
-                await Task.Delay(options.DetailWaitMs, cancellationToken);
+            await NavigateToRenderedDetailAsync(
+                page,
+                oddsUrl,
+                "[data-testid='wcl-tab']",
+                options,
+                cancellationToken);
 
             string[] requestedMarkets = ["OVER/UNDER"];
 
@@ -389,6 +405,19 @@ public sealed class FlashscoreDownloader
                 bool selected = await TrySelectOddsMarketAsync(page, marketName);
                 if (!selected)
                     continue;
+
+                try
+                {
+                    await page.WaitForSelectorAsync("button[data-testid='wcl-oddsCell']", new PageWaitForSelectorOptions
+                    {
+                        State = WaitForSelectorState.Attached,
+                        Timeout = Math.Max(5_000, options.DetailWaitMs)
+                    });
+                }
+                catch (TimeoutException)
+                {
+                    // Historical matches may expose the market tab without retaining prices.
+                }
 
                 if (options.DetailWaitMs > 0)
                     await Task.Delay(Math.Max(250, options.DetailWaitMs / 2), cancellationToken);
@@ -644,6 +673,37 @@ public sealed class FlashscoreDownloader
         return JsonSerializer.Deserialize<List<FlashscoreRenderedMatch>>(json, JsonOptions) ?? [];
     }
 
+    private static async Task NavigateToRenderedDetailAsync(
+        IPage page,
+        string url,
+        string renderedSelector,
+        FlashscoreDownloadOptions options,
+        CancellationToken cancellationToken)
+    {
+        await page.GotoAsync(url, new PageGotoOptions
+        {
+            WaitUntil = WaitUntilState.DOMContentLoaded,
+            Timeout = 90_000
+        });
+
+        try
+        {
+            await page.WaitForSelectorAsync(renderedSelector, new PageWaitForSelectorOptions
+            {
+                State = WaitForSelectorState.Attached,
+                Timeout = Math.Max(5_000, options.DetailWaitMs)
+            });
+        }
+        catch (TimeoutException)
+        {
+            // Some leagues genuinely have no incidents, statistics, or odds. The caller
+            // validates the extracted result and decides whether an empty page is suspicious.
+        }
+
+        if (options.DetailWaitMs > 0)
+            await Task.Delay(options.DetailWaitMs, cancellationToken);
+    }
+
     private static async Task<IReadOnlyList<FlashscoreIncident>> ExtractIncidentsAsync(
         IPage page,
         FlashscoreCalendarEvent calendarEvent,
@@ -748,7 +808,11 @@ public sealed class FlashscoreDownloader
             () => {
                 const text = (node) => (node?.textContent || "").replace(/\s+/g, " ").trim();
                 const groups = [];
-                const containers = document.querySelectorAll(".tabContent__match-statistics .section, .sectionsWrapper .section");
+                const rows = Array.from(document.querySelectorAll('[data-testid="wcl-statistics"]'));
+                const containers = Array.from(new Set(rows.map(row => row.closest('.section')).filter(Boolean)));
+
+                if (containers.length === 0 && rows.length > 0)
+                    containers.push(document.body);
 
                 containers.forEach(section => {
                     const groupName = text(section.querySelector(".sectionHeader, .stat__header, .section__title")) || "Statistics";
@@ -1195,6 +1259,14 @@ public sealed class FlashscoreDownloader
 
         if (!TryParseIncidentTime(row.TimeText, out int minute, out int? addedTime))
             return false;
+
+        if (row.RowText.Contains("not on pitch", StringComparison.OrdinalIgnoreCase) ||
+            row.RowText.Contains("not on the pitch", StringComparison.OrdinalIgnoreCase))
+        {
+            // Bench/staff dismissals do not reduce the number of players on the field and
+            // Flashscore excludes them from the match red-card statistic.
+            return false;
+        }
 
         string title = row.Title.Trim();
         string normalizedTitle = title.ToLowerInvariant();

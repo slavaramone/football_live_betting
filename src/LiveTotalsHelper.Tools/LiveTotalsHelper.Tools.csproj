@@ -19,7 +19,7 @@
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="league-profiles.json">
+    <None Include="..\..\config\league-profiles.json" Link="league-profiles.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="league-profiles.example.json">

@@ -160,8 +160,8 @@ public static class HelpPrinter
     public static void PrintBuildLiveTotalCalibrationDataset()
     {
         Console.WriteLine("Build live total calibration dataset usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset --profile allsvenskan");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset --profile allsvenskan --validation true");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset --profile china-super-league");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset --profile china-super-league --validation true");
         Console.WriteLine();
         Console.WriteLine("Profile defaults:");
         Console.WriteLine("  production: league, modelPath, calibrationDatasetPath, trainingSeasonIds, snapshotMinutes, includeEventTriggers");
@@ -174,8 +174,8 @@ public static class HelpPrinter
     public static void PrintAnalyzeLiveTotalCalibration()
     {
         Console.WriteLine("Analyze live total calibration usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration --profile allsvenskan");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration --profile allsvenskan --validation true");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration --profile china-super-league");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration --profile china-super-league --validation true");
         Console.WriteLine();
         Console.WriteLine("Production mode uses profile calibrationDatasetPath and writes calibrationAnalysisPath.");
         Console.WriteLine("Validation mode uses profile validation dataset/analysis paths and profile validation train/test seasons.");
@@ -186,8 +186,8 @@ public static class HelpPrinter
     public static void PrintFitLiveTotalStateCorrection()
     {
         Console.WriteLine("Fit live total state correction usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction --profile allsvenskan");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction --profile allsvenskan --validation true");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction --profile china-super-league");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction --profile china-super-league --validation true");
         Console.WriteLine();
         Console.WriteLine("Production mode uses profile calibrationDatasetPath, stateCorrectionPath, trainingSeasonIds.");
         Console.WriteLine("Validation mode uses profile validation dataset/path and validationTrainingSeasonIds.");
@@ -197,8 +197,8 @@ public static class HelpPrinter
     public static void PrintFitLiveTotalEmpiricalSettlement()
     {
         Console.WriteLine("Fit empirical settlement usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-empirical-settlement --profile allsvenskan");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-empirical-settlement --profile allsvenskan --validation true");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-empirical-settlement --profile china-super-league");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-empirical-settlement --profile china-super-league --validation true");
         Console.WriteLine();
         Console.WriteLine("Fits remaining-goals distributions from the calibration dataset and writes empiricalSettlementPath / validationEmpiricalSettlementPath.");
         Console.WriteLine("Overrides remain available: --input, --training-season-ids, --output, --min-bucket-rows, --min-bucket-matches, --max-remaining-goals, --smoothing.");
@@ -208,7 +208,7 @@ public static class HelpPrinter
     public static void PrintEvaluateLiveTotalModel()
     {
         Console.WriteLine("Evaluate live total model usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-model --profile allsvenskan --validation true");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-model --profile china-super-league --validation true");
         Console.WriteLine();
         Console.WriteLine("Validation mode uses profile validationCalibrationDatasetPath, validationStateCorrectionPath, validationTestSeasonIds, validationModelEvaluationPath.");
         Console.WriteLine("Scope comparison:");
@@ -245,8 +245,8 @@ public static class HelpPrinter
     public static void PrintFitWeibull()
     {
         Console.WriteLine("Fit Weibull usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-weibull --profile allsvenskan");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-weibull --profile allsvenskan --validation true");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-weibull --profile china-super-league");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-weibull --profile china-super-league --validation true");
         Console.WriteLine();
         Console.WriteLine("Profile defaults:");
         Console.WriteLine("  production: league, modelPath, trainingSeasonIds, maxMinute, groupByColumn, minGroupGoals, blendWeibullWeight");
@@ -288,7 +288,7 @@ public static class HelpPrinter
     {
         Console.WriteLine("Price live total usage:");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- price-live-total \\");
-        Console.WriteLine("    --profile allsvenskan \\");
+        Console.WriteLine("    --profile china-super-league \\");
         Console.WriteLine("    --starting-line 2.5 --starting-over 1.90 --starting-under 1.90 \\");
         Console.WriteLine("    --state-trigger fixed-minute --minute 60 --home-goals 1 --away-goals 0 \\");
         Console.WriteLine("    --before-round 10 \\");
