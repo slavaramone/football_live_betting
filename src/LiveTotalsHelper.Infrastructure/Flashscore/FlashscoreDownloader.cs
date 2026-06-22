@@ -419,7 +419,7 @@ public sealed class FlashscoreDownloader
                     await page.WaitForSelectorAsync("button[data-testid='wcl-oddsCell']", new PageWaitForSelectorOptions
                     {
                         State = WaitForSelectorState.Attached,
-                        Timeout = Math.Max(2_000, options.DetailWaitMs)
+                        Timeout = Math.Max(3_000, options.DetailWaitMs)
                     });
                 }
                 catch (TimeoutException)
@@ -428,7 +428,7 @@ public sealed class FlashscoreDownloader
                 }
 
                 if (options.DetailWaitMs > 0)
-                    await Task.Delay(Math.Max(250, options.DetailWaitMs / 2), cancellationToken);
+                    await Task.Delay(options.DetailWaitMs, cancellationToken);
 
                 await ClickOddsShowMoreUntilDoneAsync(page, options, cancellationToken);
 
@@ -765,7 +765,7 @@ public sealed class FlashscoreDownloader
             await page.WaitForSelectorAsync(renderedSelector, new PageWaitForSelectorOptions
             {
                 State = WaitForSelectorState.Attached,
-                Timeout = Math.Max(2_000, options.DetailWaitMs)
+                Timeout = Math.Max(5_000, options.DetailWaitMs)
             });
         }
         catch (TimeoutException)
@@ -774,10 +774,8 @@ public sealed class FlashscoreDownloader
             // validates the extracted result and decides whether an empty page is suspicious.
         }
 
-        // The selector is the readiness signal. Keep only a brief settling window for
-        // client-side text updates instead of sleeping for the full render timeout again.
         if (options.DetailWaitMs > 0)
-            await Task.Delay(Math.Min(250, options.DetailWaitMs), cancellationToken);
+            await Task.Delay(options.DetailWaitMs, cancellationToken);
     }
 
     private static async Task<IReadOnlyList<FlashscoreIncident>> ExtractIncidentsAsync(

@@ -80,7 +80,7 @@ static async Task<int> RunDownloadFlashscore(string[] args)
             : parsed.Bool("skip-playoffs", true),
         Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
         RenderWaitMs = parsed.Int("render-wait-ms", 3_000),
-        DetailWaitMs = parsed.Int("detail-wait-ms", 1_000),
+        DetailWaitMs = parsed.Int("detail-wait-ms", 3_000),
         ShowMoreWaitMs = parsed.Int("show-more-wait-ms", 2_000),
         MaxShowMoreClicks = parsed.Int("max-show-more-clicks", 40),
         DelayMs = parsed.Int("delay-ms", 450),
