@@ -170,11 +170,19 @@ public sealed class LeagueProfileStore
         if (Path.IsPathRooted(path))
             return path;
 
-        string baseDirPath = Path.Combine(AppContext.BaseDirectory, path);
-        if (File.Exists(baseDirPath))
-            return baseDirPath;
+        foreach (string root in new[] { AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
+        {
+            DirectoryInfo? directory = new DirectoryInfo(root);
+            while (directory is not null)
+            {
+                string candidate = Path.GetFullPath(Path.Combine(directory.FullName, path));
+                if (File.Exists(candidate))
+                    return candidate;
 
-        string currentDirPath = Path.GetFullPath(path);
-        return currentDirPath;
+                directory = directory.Parent;
+            }
+        }
+
+        return Path.GetFullPath(path);
     }
 }

@@ -29,11 +29,7 @@ try
         "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
         "analyze-live-total-calibration" => await RunAnalyzeLiveTotalCalibration(commandArgs),
         "fit-live-total-state-correction" => await RunFitLiveTotalStateCorrection(commandArgs),
-        "fit-live-total-empirical-settlement" => await RunFitLiveTotalEmpiricalSettlement(commandArgs),
-        "evaluate-live-total-model" => await RunEvaluateLiveTotalModel(commandArgs),
-        "evaluate-live-total-betting-metrics" => await RunEvaluateLiveTotalBettingMetrics(commandArgs),
-        "compare-goal-models" => await RunCompareGoalModels(commandArgs),
-        "compare-poisson-empirical" => await RunCompareGoalModels(commandArgs),
+        "evaluate-live-total-performance" => await RunEvaluateLiveTotalPerformance(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
         "price-live-total" => await RunPriceLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
@@ -327,64 +323,8 @@ static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
     return 0;
 }
 
-static async Task<int> RunFitLiveTotalEmpiricalSettlement(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
-    bool validationMode = parsed.Bool("validation", false);
 
-    string defaultInput = validationMode
-        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
-        : profile?.CalibrationDatasetPath ?? string.Empty;
-    string defaultOutput = validationMode
-        ? profile?.ValidationEmpiricalSettlementPath ?? string.Empty
-        : profile?.EmpiricalSettlementPath ?? string.Empty;
-    if (string.IsNullOrWhiteSpace(defaultOutput) && profile is not null)
-        defaultOutput = profile.GetEmpiricalSettlementPath(validationMode);
-
-    var options = new LiveTotalEmpiricalSettlementFitOptions
-    {
-        InputPath = parsed.String("input", defaultInput),
-        OutputPath = parsed.String("output", defaultOutput),
-        MinBucketRows = parsed.Int("min-bucket-rows", 80),
-        MinBucketMatches = parsed.Int("min-bucket-matches", 40),
-        MaxRemainingGoals = parsed.Int("max-remaining-goals", 8),
-        Smoothing = parsed.Double("smoothing", 0.25)
-    };
-    if (string.IsNullOrWhiteSpace(options.InputPath))
-        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
-
-    if (parsed.Has("training-season-ids"))
-        AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
-    else if (profile is not null)
-        AddProfileSeasonIds(options.TrainingSeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
-    if (options.TrainingSeasonIds.Count == 0)
-        throw new ArgumentException("Missing required argument --training-season-ids, or provide --profile with training season ids.");
-
-    var fitter = new LiveTotalEmpiricalSettlementFitter(options);
-    LiveTotalEmpiricalSettlementFitResult result = await fitter.FitAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("Live total empirical settlement fit done.");
-    Console.WriteLine($"Input: {result.InputPath}");
-    Console.WriteLine($"Output: {result.OutputPath}");
-    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? "unknown" : result.League)}");
-    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
-    Console.WriteLine($"Rows used: {result.TrainingRowsUsed}");
-    Console.WriteLine($"Matches used: {result.TrainingMatchesUsed}");
-    Console.WriteLine($"Buckets written: {result.Buckets.Count}");
-    Console.WriteLine();
-    Console.WriteLine("Level        Usable  Buckets  AvgRows  AvgMatches");
-    foreach (IGrouping<string, LiveTotalEmpiricalSettlementBucket> group in result.Buckets.GroupBy(x => x.BucketLevel).OrderBy(x => x.Key))
-    {
-        List<LiveTotalEmpiricalSettlementBucket> buckets = group.ToList();
-        Console.WriteLine($"{group.Key,-12} {buckets.Count(x => x.IsUsable),6}  {buckets.Count,7}  {buckets.Average(x => x.Rows),7:0.#}  {buckets.Average(x => x.Matches),10:0.#}");
-    }
-
-    return 0;
-}
-
-static async Task<int> RunEvaluateLiveTotalModel(string[] args)
+static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
     LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
@@ -396,196 +336,117 @@ static async Task<int> RunEvaluateLiveTotalModel(string[] args)
     string defaultStateCorrection = validationMode
         ? profile?.ValidationStateCorrectionPath ?? string.Empty
         : profile?.StateCorrectionPath ?? string.Empty;
-    string defaultOutput = validationMode
+    string defaultModelOutput = validationMode
         ? profile?.ValidationModelEvaluationPath ?? string.Empty
         : profile?.ModelEvaluationPath ?? string.Empty;
 
-    var options = new LiveTotalModelEvaluationOptions
-    {
-        InputPath = parsed.String("input", defaultInput),
-        StateCorrectionPath = parsed.String("state-correction", defaultStateCorrection),
-        OutputPath = parsed.String("output", defaultOutput),
-        DecisionScope = parsed.String("scope", parsed.String("decision-scope", LiveTotalDecisionScope.FullModel)),
-        CompareScopes = parsed.Bool("compare-scopes", false)
-    };
-    if (string.IsNullOrWhiteSpace(options.InputPath))
+    string inputPath = parsed.String("input", defaultInput);
+    string stateCorrectionPath = parsed.String("state-correction", defaultStateCorrection);
+    if (string.IsNullOrWhiteSpace(inputPath))
         throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
-    if (string.IsNullOrWhiteSpace(options.StateCorrectionPath))
+    if (string.IsNullOrWhiteSpace(stateCorrectionPath))
         throw new ArgumentException("Missing required argument --state-correction, or provide --profile with a state correction path.");
 
+    var testSeasonIds = new List<int>();
     if (parsed.Has("test-season-ids"))
-        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
+        AddRequiredIntList(testSeasonIds, parsed, "test-season-ids");
     else if (profile is not null && validationMode)
-        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
-    if (options.TestSeasonIds.Count == 0)
+        AddProfileSeasonIds(testSeasonIds, profile.ValidationTestSeasonIds);
+    if (testSeasonIds.Count == 0)
         throw new ArgumentException("Missing required argument --test-season-ids, or use --validation true with a profile validation split.");
 
-    var evaluator = new LiveTotalModelEvaluator(options);
-    LiveTotalModelEvaluationResult result = await evaluator.EvaluateAsync(CancellationToken.None);
+    var trainingSeasonIds = new List<int>();
+    if (parsed.Has("training-season-ids"))
+        AddRequiredIntList(trainingSeasonIds, parsed, "training-season-ids");
+    else if (profile is not null)
+        AddProfileSeasonIds(trainingSeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
+    if (trainingSeasonIds.Count == 0)
+        throw new ArgumentException("Missing required argument --training-season-ids, or provide --profile with training season ids.");
 
-    Console.WriteLine();
-    Console.WriteLine("Live total model evaluation done.");
-    Console.WriteLine($"Input: {result.InputPath}");
-    Console.WriteLine($"State correction: {result.StateCorrectionPath}");
-    Console.WriteLine($"Rows read: {result.RowsRead}");
-    Console.WriteLine($"Test rows: {result.TestRows}");
-    Console.WriteLine($"Supported rows evaluated: {result.SupportedRows}");
-    Console.WriteLine($"Scopes: {string.Join(", ", result.ScopesEvaluated)}");
-    Console.WriteLine($"Output: {result.OutputPath}");
+    string decisionScope = parsed.String("scope", parsed.String("decision-scope", LiveTotalDecisionScope.FullModel));
+    bool compareScopes = parsed.Bool("compare-scopes", false);
 
-    Console.WriteLine();
-    Console.WriteLine("Scope                    Trigger        Rows  Matches  BaseMAE  StateMAE  BaseBias  StateBias");
-    foreach (LiveTotalModelEvaluationSummary summary in result.Summaries)
+    var modelOptions = new LiveTotalModelEvaluationOptions
     {
-        Console.WriteLine($"{summary.Scope,-24} {summary.StateTrigger,-13} {summary.Rows,5}  {summary.Matches,7}  {summary.BaselineMae,7:0.###}  {summary.StateCorrectedMae,8:0.###}  {summary.BaselineBias,8:0.###}  {summary.StateCorrectedBias,9:0.###}");
+        InputPath = inputPath,
+        StateCorrectionPath = stateCorrectionPath,
+        OutputPath = parsed.String("model-output", parsed.String("output", defaultModelOutput)),
+        DecisionScope = decisionScope,
+        CompareScopes = compareScopes
+    };
+    foreach (int seasonId in testSeasonIds)
+        modelOptions.TestSeasonIds.Add(seasonId);
+
+    var modelEvaluator = new LiveTotalModelEvaluator(modelOptions);
+    LiveTotalModelEvaluationResult modelResult = await modelEvaluator.EvaluateAsync(CancellationToken.None);
+
+    string defaultBettingOutput;
+    if (!string.IsNullOrWhiteSpace(inputPath))
+    {
+        string directory = Path.GetDirectoryName(inputPath) ?? ".";
+        string fileName = Path.GetFileNameWithoutExtension(inputPath);
+        defaultBettingOutput = Path.Combine(directory, $"{fileName}-betting-metrics.csv");
+    }
+    else
+    {
+        defaultBettingOutput = string.Empty;
     }
 
-    return 0;
-}
-
-
-static async Task<int> RunEvaluateLiveTotalBettingMetrics(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
-    bool validationMode = parsed.Bool("validation", false);
-
-    string defaultInput = validationMode
-        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
-        : profile?.CalibrationDatasetPath ?? string.Empty;
-    string defaultStateCorrection = validationMode
-        ? profile?.ValidationStateCorrectionPath ?? string.Empty
-        : profile?.StateCorrectionPath ?? string.Empty;
-
-    string defaultOutput = string.Empty;
-    if (!string.IsNullOrWhiteSpace(defaultInput))
+    var bettingOptions = new LiveTotalBettingMetricsEvaluationOptions
     {
-        string directory = Path.GetDirectoryName(defaultInput) ?? ".";
-        string fileName = Path.GetFileNameWithoutExtension(defaultInput);
-        defaultOutput = Path.Combine(directory, $"{fileName}-betting-metrics.csv");
-    }
-
-    var options = new LiveTotalBettingMetricsEvaluationOptions
-    {
-        InputPath = parsed.String("input", defaultInput),
-        StateCorrectionPath = parsed.String("state-correction", defaultStateCorrection),
-        OutputPath = parsed.String("output", defaultOutput),
+        InputPath = inputPath,
+        StateCorrectionPath = stateCorrectionPath,
+        OutputPath = parsed.String("betting-output", defaultBettingOutput),
         EdgeBucketOutputPath = parsed.String("edge-output", string.Empty),
         EdgeBucketStep = parsed.Double("edge-bucket-step", 0.02),
-        DecisionScope = parsed.String("scope", parsed.String("decision-scope", LiveTotalDecisionScope.FullModel)),
-        CompareScopes = parsed.Bool("compare-scopes", false)
+        DecisionScope = decisionScope,
+        CompareScopes = compareScopes,
+        EmpiricalSettlementMinBucketRows = parsed.Int("settlement-min-bucket-rows", 80),
+        EmpiricalSettlementMinBucketMatches = parsed.Int("settlement-min-bucket-matches", 40),
+        EmpiricalSettlementMaxRemainingGoals = parsed.Int("settlement-max-remaining-goals", 8),
+        EmpiricalSettlementSmoothing = parsed.Double("settlement-smoothing", 0.25)
     };
-
-    if (string.IsNullOrWhiteSpace(options.InputPath))
-        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
-    if (string.IsNullOrWhiteSpace(options.StateCorrectionPath))
-        throw new ArgumentException("Missing required argument --state-correction, or provide --profile with a state correction path.");
+    foreach (int seasonId in testSeasonIds)
+        bettingOptions.TestSeasonIds.Add(seasonId);
+    foreach (int seasonId in trainingSeasonIds)
+        bettingOptions.TrainingSeasonIds.Add(seasonId);
 
     if (parsed.Has("target-lines"))
-        AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
+        AddOptionalDoubleList(bettingOptions.TargetLines, parsed, "target-lines", clearExisting: true);
     else if (profile?.TargetLines is { Count: > 0 })
     {
-        options.TargetLines.Clear();
+        bettingOptions.TargetLines.Clear();
         foreach (double line in profile.TargetLines)
-            options.TargetLines.Add(line);
+            bettingOptions.TargetLines.Add(line);
     }
 
-    if (parsed.Has("test-season-ids"))
-        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
-    else if (profile is not null && validationMode)
-        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
-
-    if (options.TestSeasonIds.Count == 0)
-        throw new ArgumentException("Missing required argument --test-season-ids, or use --validation true with a profile validation split.");
-
-    var evaluator = new LiveTotalBettingMetricsEvaluator(options);
-    LiveTotalBettingMetricsEvaluationResult result = await evaluator.EvaluateAsync(CancellationToken.None);
+    var bettingEvaluator = new LiveTotalBettingMetricsEvaluator(bettingOptions);
+    LiveTotalBettingMetricsEvaluationResult bettingResult = await bettingEvaluator.EvaluateAsync(CancellationToken.None);
 
     Console.WriteLine();
-    Console.WriteLine("Live total betting metrics evaluation done.");
-    Console.WriteLine($"Input: {result.InputPath}");
-    Console.WriteLine($"State correction: {result.StateCorrectionPath}");
-    Console.WriteLine($"Rows read: {result.RowsRead}");
-    Console.WriteLine($"Test rows: {result.TestRows}");
-    Console.WriteLine($"Line rows: {result.LineRows}");
-    Console.WriteLine($"Scopes: {string.Join(", ", result.ScopesEvaluated)}");
-    Console.WriteLine($"Summary CSV: {result.OutputPath}");
-    Console.WriteLine($"Edge bucket CSV: {result.EdgeBucketOutputPath}");
+    Console.WriteLine("Live total performance evaluation done.");
+    Console.WriteLine($"Input: {inputPath}");
+    Console.WriteLine($"State correction: {stateCorrectionPath}");
+    Console.WriteLine($"Training seasons: {string.Join(", ", trainingSeasonIds)}");
+    Console.WriteLine($"Test seasons: {string.Join(", ", testSeasonIds)}");
+    Console.WriteLine($"Scopes: {string.Join(", ", modelResult.ScopesEvaluated)}");
+    Console.WriteLine($"Model evaluation CSV: {modelResult.OutputPath}");
+    Console.WriteLine($"Betting metrics CSV: {bettingResult.OutputPath}");
+    Console.WriteLine($"Probability move bucket CSV: {bettingResult.EdgeBucketOutputPath}");
+    Console.WriteLine($"Empirical settlement unsupported rows skipped: {bettingResult.UnsupportedEmpiricalRows}");
 
     Console.WriteLine();
+    Console.WriteLine("Model metrics:");
+    Console.WriteLine("Scope                    Trigger       Rows  Matches  BaseMAE  CorrMAE  BaseBias  CorrBias");
+    foreach (LiveTotalModelEvaluationSummary summary in modelResult.Summaries.Where(x => x.StateTrigger == "All" || x.StateTrigger == LiveTotalStateTrigger.FixedMinute || x.StateTrigger == LiveTotalStateTrigger.AfterGoal))
+        Console.WriteLine($"{summary.Scope,-24} {summary.StateTrigger,-13} {summary.Rows,5}  {summary.Matches,7}  {summary.BaselineMae,7:0.###}  {summary.StateCorrectedMae,7:0.###}  {summary.BaselineBias,8:0.###}  {summary.StateCorrectedBias,8:0.###}");
+
+    Console.WriteLine();
+    Console.WriteLine("Betting metrics:");
     Console.WriteLine("Scope                    Trigger       Line  Rows   BaseBr  CorrBr  BrImp%  BaseLL  CorrLL  LLImp%  BaseAcc  CorrAcc  AccDiff");
-    foreach (LiveTotalBettingMetricSummary row in result.Summaries.Where(x => x.StateTrigger == "All" || x.StateTrigger == LiveTotalStateTrigger.FixedMinute || x.StateTrigger == LiveTotalStateTrigger.AfterGoal))
-    {
+    foreach (LiveTotalBettingMetricSummary row in bettingResult.Summaries.Where(x => x.StateTrigger == "All" || x.StateTrigger == LiveTotalStateTrigger.FixedMinute || x.StateTrigger == LiveTotalStateTrigger.AfterGoal))
         Console.WriteLine($"{row.Scope,-24} {row.StateTrigger,-13} {row.Line,4:0.##} {row.Rows,5}  {row.BaselineBrier,6:0.###}  {row.CorrectedBrier,6:0.###}  {row.BrierImprovementPct,6:0.#}  {row.BaselineLogLoss,6:0.###}  {row.CorrectedLogLoss,6:0.###}  {row.LogLossImprovementPct,6:0.#}  {row.BaselineDirectionAccuracy,7:P1}  {row.CorrectedDirectionAccuracy,7:P1}  {row.DirectionAccuracyDiffPctPoints,7:0.#}");
-    }
 
-    return 0;
-}
-
-static async Task<int> RunCompareGoalModels(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
-    bool validationMode = parsed.Bool("validation", false);
-
-    string defaultInput = validationMode
-        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
-        : profile?.CalibrationDatasetPath ?? string.Empty;
-    string defaultCorrection = validationMode
-        ? profile?.ValidationStateCorrectionPath ?? string.Empty
-        : profile?.StateCorrectionPath ?? string.Empty;
-    string defaultEmpirical = profile?.GetEmpiricalSettlementPath(validationMode) ?? string.Empty;
-
-    var options = new GoalModelComparisonOptions
-    {
-        InputPath = parsed.String("input", defaultInput),
-        StateCorrectionPath = parsed.String("state-correction", defaultCorrection),
-        EmpiricalSettlementPath = parsed.String("empirical-settlement", defaultEmpirical),
-        OutputPath = parsed.String("output", string.Empty),
-        EdgeThreshold = parsed.Double("edge-threshold", profile?.EdgeThreshold ?? 0.05),
-        MarketMargin = parsed.Double("market-margin", 0.05)
-    };
-
-    if (parsed.Has("target-lines"))
-        AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
-    else if (profile?.TargetLines is { Count: > 0 })
-    {
-        options.TargetLines.Clear();
-        foreach (double line in profile.TargetLines)
-            options.TargetLines.Add(line);
-    }
-
-    if (parsed.Has("test-season-ids"))
-        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
-    else if (profile is not null && validationMode)
-        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
-
-    var evaluator = new GoalModelComparisonEvaluator(options);
-    GoalModelComparisonResult result = await evaluator.EvaluateAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("Poisson vs empirical goal-model comparison done.");
-    Console.WriteLine($"Input: {result.InputPath}");
-    Console.WriteLine($"Rows read/test: {result.RowsRead}/{result.TestRows}");
-    Console.WriteLine($"Supported state rows: {result.SupportedRows}");
-    Console.WriteLine($"Unsupported empirical rows: {result.UnsupportedEmpiricalRows}");
-    Console.WriteLine($"Output: {result.OutputPath}");
-    Console.WriteLine();
-    Console.WriteLine("Trigger       Line  Rows Matches  PoisBr   EmpBr  BrImp%  PoisLL   EmpLL  LLImp% EmpBetter  BenchBets BenchROI");
-    foreach (GoalModelComparisonSummary row in result.Summaries)
-    {
-        Console.WriteLine($"{row.StateTrigger,-13} {row.Line,4:0.##} {row.Rows,5} {row.Matches,7}  {row.PoissonBrier,6:0.###}  {row.EmpiricalBrier,6:0.###} {row.BrierImprovementPct,7:0.##}  {row.PoissonLogLoss,6:0.###}  {row.EmpiricalLogLoss,6:0.###} {row.LogLossImprovementPct,7:0.##}  {row.EmpiricalBetterRate,8:P1} {row.BenchmarkBets,10} {row.BenchmarkRoi,8:P1}");
-    }
-
-    GoalModelComparisonSummary overall = result.Overall;
-    Console.WriteLine();
-    Console.WriteLine(overall.ShowsImprovement
-        ? $"Verdict: empirical improves both proper scoring metrics (Brier {overall.BrierImprovementPct:+0.##;-0.##;0}% and log loss {overall.LogLossImprovementPct:+0.##;-0.##;0}%)."
-        : $"Verdict: no consistent empirical improvement (Brier {overall.BrierImprovementPct:+0.##;-0.##;0}% and log loss {overall.LogLossImprovementPct:+0.##;-0.##;0}%).");
-    Console.WriteLine(overall.BenchmarkBets == 0
-        ? "Betting benchmark: no empirical edges cleared the configured threshold."
-        : $"Betting benchmark: {overall.BenchmarkBets} flat-stake bets returned {overall.BenchmarkRoi:P1} ROI against Poisson-implied prices after the configured margin.");
-    Console.WriteLine("Benchmark ROI is counterfactual, not historical sportsbook ROI; use captured live odds for a realized backtest.");
     return 0;
 }
 
@@ -710,7 +571,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
 
     LeagueProfile? profile = null;
     string profileNameForOutput = string.Empty;
-    string profilesFile = parsed.String("profiles-file", "league-profiles.json");
+    string profilesFile = parsed.String("profiles-file", "config/league-profiles.json");
     if (parsed.Has("profile"))
     {
         string requestedProfile = parsed.RequiredString("profile");
@@ -721,7 +582,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
 
     string modelPath = parsed.Has("model")
         ? parsed.RequiredString("model")
-        : profile?.ModelPath ?? throw new ArgumentException("Missing required argument --model, or provide --profile with a modelPath in league-profiles.json.");
+        : profile?.ModelPath ?? throw new ArgumentException("Missing required argument --model, or provide --profile with a modelPath in config/league-profiles.json.");
 
     var options = new LiveTotalPriceOptions
     {
@@ -1469,7 +1330,7 @@ static async Task<LeagueProfile?> LoadOptionalProfileAsync(ParsedArgs parsed)
     if (!parsed.Has("profile"))
         return null;
 
-    string profilesFile = parsed.String("profiles-file", "league-profiles.json");
+    string profilesFile = parsed.String("profiles-file", "config/league-profiles.json");
     LeagueProfileStore profileStore = await LeagueProfileStore.LoadAsync(profilesFile, CancellationToken.None);
     return profileStore.FindRequired(parsed.RequiredString("profile"));
 }

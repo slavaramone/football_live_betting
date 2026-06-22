@@ -7,7 +7,6 @@ using LiveTotalsHelper.App.ViewModels;
 using LiveTotalsHelper.App.Views;
 using LiveTotalsHelper.Infrastructure;
 using LiveTotalsHelper.Infrastructure.Persistence;
-using LiveTotalsHelper.Modeling;
 using LiveTotalsHelper.Tools;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -46,14 +45,12 @@ public partial class App : Application
                 string logsFolder = settings.LogsFolder;
 
                 var matchRepository = new LiveTotalsHelper.Infrastructure.DbMatchRepository(dbContext);
-                var weibullProvider = new SampleWeibullParameterProvider();
-                var bettingModel = new BettingModelService(weibullProvider);
                 var liveSessionService = new LiveTotalsHelper.App.Services.LiveBettingSessionService(dbContext, profileStore.Profiles, logsFolder);
 
                 desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
                 desktop.MainWindow = new MainWindow
                 {
-                    DataContext = new MainWindowViewModel(matchRepository, bettingModel, liveSessionService)
+                    DataContext = new MainWindowViewModel(matchRepository, liveSessionService)
                 };
                 AppStartupTrace.Write("MainWindow assigned");
 
@@ -135,7 +132,7 @@ public partial class App : Application
 
         string profilesFile = GetNestedString(root, "LiveBetting", "ProfilesFile");
         if (string.IsNullOrWhiteSpace(profilesFile))
-            profilesFile = "league-profiles.json";
+            profilesFile = "config/league-profiles.json";
 
         string logsFolder = GetNestedString(root, "LiveBetting", "LogsFolder");
 

@@ -7,7 +7,6 @@ namespace LiveTotalsHelper.App.ViewModels;
 public sealed class MainWindowViewModel : ObservableObject
 {
     private readonly IMatchRepository _matchRepository;
-    private readonly IBettingModelService _modelService;
     private readonly ILiveBettingSessionService _liveSessionService;
     private string _leagueFilter = string.Empty;
     private MatchSnapshot? _selectedMatch;
@@ -21,10 +20,9 @@ public sealed class MainWindowViewModel : ObservableObject
     private LiveBettingCheckInput _liveInput = new();
     private readonly Dictionary<string, LiveBettingCheckInput> _fixtureInputs = new(StringComparer.OrdinalIgnoreCase);
 
-    public MainWindowViewModel(IMatchRepository matchRepository, IBettingModelService modelService, ILiveBettingSessionService liveSessionService)
+    public MainWindowViewModel(IMatchRepository matchRepository, ILiveBettingSessionService liveSessionService)
     {
         _matchRepository = matchRepository;
-        _modelService = modelService;
         _liveSessionService = liveSessionService;
 
         foreach (LiveBettingProfile profile in _liveSessionService.GetProfiles())

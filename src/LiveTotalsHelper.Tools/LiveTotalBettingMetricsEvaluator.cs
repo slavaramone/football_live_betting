@@ -12,7 +12,12 @@ public sealed class LiveTotalBettingMetricsEvaluationOptions
     public string OutputPath { get; set; } = string.Empty;
     public string EdgeBucketOutputPath { get; set; } = string.Empty;
     public List<int> TestSeasonIds { get; } = [];
+    public List<int> TrainingSeasonIds { get; } = [];
     public List<double> TargetLines { get; } = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0];
+    public int EmpiricalSettlementMinBucketRows { get; set; } = 80;
+    public int EmpiricalSettlementMinBucketMatches { get; set; } = 40;
+    public int EmpiricalSettlementMaxRemainingGoals { get; set; } = 8;
+    public double EmpiricalSettlementSmoothing { get; set; } = 0.25;
     public double EdgeBucketStep { get; set; } = 0.02;
     public string DecisionScope { get; set; } = LiveTotalDecisionScope.FullModel;
     public bool CompareScopes { get; set; }
@@ -27,6 +32,7 @@ public sealed class LiveTotalBettingMetricsEvaluationResult
     public int RowsRead { get; set; }
     public int TestRows { get; set; }
     public int LineRows { get; set; }
+    public int UnsupportedEmpiricalRows { get; set; }
     public List<string> ScopesEvaluated { get; } = [];
     public List<LiveTotalBettingMetricSummary> Summaries { get; } = [];
     public List<LiveTotalBettingEdgeBucketSummary> EdgeBuckets { get; } = [];
@@ -99,6 +105,8 @@ public sealed class LiveTotalBettingMetricsEvaluator
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true },
             cancellationToken) ?? throw new InvalidOperationException("Could not read state correction JSON.");
 
+        LiveTotalEmpiricalSettlementFile empiricalSettlement = await BuildEmpiricalSettlementAsync(cancellationToken);
+
         List<InputRow> testRows = rows
             .Where(x => _options.TestSeasonIds.Contains(x.SeasonId))
             .ToList();
@@ -108,6 +116,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
             : [LiveTotalDecisionScope.Normalize(_options.DecisionScope)];
 
         var lineRows = new List<LineRow>();
+        int unsupportedEmpiricalRows = 0;
 
         foreach (InputRow row in testRows)
         {
@@ -120,6 +129,17 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 row.AwayGoals);
 
             double correctedRemaining = baselineRemaining * resolved.Factor;
+            LiveTotalEmpiricalSettlementResolution settlementResolution = LiveTotalEmpiricalSettlementResolver.Resolve(
+                empiricalSettlement,
+                row.StateTrigger,
+                row.Minute,
+                row.HomeGoals,
+                row.AwayGoals);
+            if (!settlementResolution.IsSupported)
+            {
+                unsupportedEmpiricalRows++;
+                continue;
+            }
 
             foreach (double line in _options.TargetLines.Distinct().OrderBy(x => x))
             {
@@ -127,8 +147,8 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 if (!actualOver.HasValue)
                     continue;
 
-                double? baselineP = TryNoPushOverProbability(line, row.CurrentTotalGoals, baselineRemaining);
-                double? correctedP = TryNoPushOverProbability(line, row.CurrentTotalGoals, correctedRemaining);
+                double? baselineP = TryNoPushOverProbability(line, row.CurrentTotalGoals, settlementResolution.Probabilities, baselineRemaining);
+                double? correctedP = TryNoPushOverProbability(line, row.CurrentTotalGoals, settlementResolution.Probabilities, correctedRemaining);
 
                 if (!baselineP.HasValue || !correctedP.HasValue)
                     continue;
@@ -160,7 +180,8 @@ public sealed class LiveTotalBettingMetricsEvaluator
             EdgeBucketOutputPath = ResolveEdgeBucketOutputPath(),
             RowsRead = rows.Count,
             TestRows = testRows.Count,
-            LineRows = lineRows.Count
+            LineRows = lineRows.Count,
+            UnsupportedEmpiricalRows = unsupportedEmpiricalRows
         };
         result.ScopesEvaluated.AddRange(scopes);
 
@@ -290,11 +311,11 @@ public sealed class LiveTotalBettingMetricsEvaluator
         return result;
     }
 
-    private static double? TryNoPushOverProbability(double line, int currentGoals, double remainingGoals)
+    private static double? TryNoPushOverProbability(double line, int currentGoals, IReadOnlyDictionary<int, double> remainingGoalProbabilities, double targetMean)
     {
         try
         {
-            OverSettlementProbabilities p = TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(line, currentGoals, remainingGoals);
+            OverSettlementProbabilities p = TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(line, currentGoals, remainingGoalProbabilities, targetMean);
             double decisive = p.WinProbability + p.LossProbability;
             if (decisive <= 1e-12)
                 return null;
@@ -304,6 +325,46 @@ public sealed class LiveTotalBettingMetricsEvaluator
         catch
         {
             return null;
+        }
+    }
+
+    private async Task<LiveTotalEmpiricalSettlementFile> BuildEmpiricalSettlementAsync(CancellationToken cancellationToken)
+    {
+        string tempPath = Path.Combine(Path.GetTempPath(), $"live-total-empirical-settlement-{Guid.NewGuid():N}.json");
+        try
+        {
+            var fitOptions = new LiveTotalEmpiricalSettlementFitOptions
+            {
+                InputPath = _options.InputPath,
+                OutputPath = tempPath,
+                MinBucketRows = _options.EmpiricalSettlementMinBucketRows,
+                MinBucketMatches = _options.EmpiricalSettlementMinBucketMatches,
+                MaxRemainingGoals = _options.EmpiricalSettlementMaxRemainingGoals,
+                Smoothing = _options.EmpiricalSettlementSmoothing
+            };
+            foreach (int seasonId in _options.TrainingSeasonIds)
+                fitOptions.TrainingSeasonIds.Add(seasonId);
+
+            var fitter = new LiveTotalEmpiricalSettlementFitter(fitOptions);
+            await fitter.FitAsync(cancellationToken);
+
+            await using FileStream stream = File.OpenRead(tempPath);
+            return await JsonSerializer.DeserializeAsync<LiveTotalEmpiricalSettlementFile>(
+                stream,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true },
+                cancellationToken) ?? throw new InvalidOperationException("Could not read empirical settlement model.");
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                    File.Delete(tempPath);
+            }
+            catch
+            {
+                // Temp cleanup failure should not fail evaluation.
+            }
         }
     }
 
@@ -413,6 +474,8 @@ public sealed class LiveTotalBettingMetricsEvaluator
             throw new FileNotFoundException("State correction JSON was not found.", _options.StateCorrectionPath);
         if (_options.TestSeasonIds.Count == 0)
             throw new ArgumentException("Missing required argument --test-season-ids, or use --validation true with a profile validation split.");
+        if (_options.TrainingSeasonIds.Count == 0)
+            throw new ArgumentException("Missing required argument --training-season-ids, or use --validation true with a profile validation split.");
         if (_options.TargetLines.Count == 0)
             throw new ArgumentException("At least one target line is required.");
         _ = LiveTotalDecisionScope.Normalize(_options.DecisionScope);
