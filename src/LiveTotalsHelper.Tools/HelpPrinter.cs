@@ -18,6 +18,8 @@ public static class HelpPrinter
         Console.WriteLine("  fit-live-total-empirical-settlement   Fit empirical remaining-goals settlement tables.");
         Console.WriteLine("  evaluate-live-total-model             Evaluate baseline vs exact trigger/state correction.");
         Console.WriteLine("  evaluate-live-total-betting-metrics   Evaluate line-specific Brier/log-loss/direction metrics.");
+        Console.WriteLine("  compare-goal-models                   Compare Poisson and empirical settlement forecasts and betting value.");
+        Console.WriteLine("  compare-poisson-empirical             Alias for compare-goal-models.");
         Console.WriteLine("  fit-weibull                           Fit a league-wide Weibull timing model from imported DB events.");
         Console.WriteLine("  price-live-total                      Price live Over totals from starting odds, score state and fitted timing model.");
         Console.WriteLine();
@@ -40,6 +42,8 @@ public static class HelpPrinter
         PrintEvaluateLiveTotalModel();
         Console.WriteLine();
         PrintEvaluateLiveTotalBettingMetrics();
+        Console.WriteLine();
+        PrintCompareGoalModels();
         Console.WriteLine();
         PrintFitWeibull();
         Console.WriteLine();
@@ -81,11 +85,13 @@ public static class HelpPrinter
         Console.WriteLine("  --statistics         true/false. Download match stats into statistics.json. Default: true");
         Console.WriteLine("  --skip-stat          Shortcut for --statistics false.");
         Console.WriteLine("  --odds               true/false. Download odds markets into odds.json. Default: true");
+        Console.WriteLine("  --skip-playoffs      Skip Play Off/Playoff and Relegation sections. Default: true");
+        Console.WriteLine("  --include-playoffs   Set true to include postseason/relegation sections.");
         Console.WriteLine("  --delay-ms           Delay between detail page requests. Default: 450");
         Console.WriteLine("  --headless           true/false. Default: true");
         Console.WriteLine("  --show-browser       Debug shortcut. Runs Chromium visible.");
-        Console.WriteLine("  --render-wait-ms     Delay after opening page before parsing. Default: 8000");
-        Console.WriteLine("  --detail-wait-ms     Delay after opening each match detail page before parsing. Default: 3000");
+        Console.WriteLine("  --render-wait-ms     Delay after opening the calendar before parsing. Default: 3000");
+        Console.WriteLine("  --detail-wait-ms     Detail render timeout hint; only a short settle delay follows readiness. Default: 1000");
         Console.WriteLine("  --show-more-wait-ms  Delay after each Show more click. Default: 2000");
         Console.WriteLine("  --max-show-more-clicks Maximum Show more clicks. Default: 40");
         Console.WriteLine("  --default-year       Year used for Flashscore dates that omit year. Default: --season-year when it contains a year, otherwise current UTC year.");
@@ -240,6 +246,28 @@ public static class HelpPrinter
         Console.WriteLine("Output metrics:");
         Console.WriteLine("  Per scope, line and trigger: Brier, log loss, direction accuracy, actual over rate.");
         Console.WriteLine("  Edge bucket CSV groups by scope and corrected probability move vs baseline probability.");
+    }
+
+    public static void PrintCompareGoalModels()
+    {
+        Console.WriteLine("Poisson vs empirical comparison usage:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- compare-goal-models \\");
+        Console.WriteLine("    --profile china-super-league --validation true");
+        Console.WriteLine();
+        Console.WriteLine("Comparison arguments:");
+        Console.WriteLine("  --profile / --profiles-file      Use profile artifact paths and validation split.");
+        Console.WriteLine("  --validation true                Use validation dataset, correction, empirical table and test seasons.");
+        Console.WriteLine("  --input                          Calibration dataset CSV override.");
+        Console.WriteLine("  --state-correction               State correction JSON override.");
+        Console.WriteLine("  --empirical-settlement           Empirical remaining-goals JSON override.");
+        Console.WriteLine("  --test-season-ids                Comma-separated out-of-sample season ids.");
+        Console.WriteLine("  --target-lines                   Lines to compare; defaults to profile targetLines or 2.5,3.5.");
+        Console.WriteLine("  --edge-threshold                 Minimum empirical expected return for a benchmark bet (default profile edge or 5%).");
+        Console.WriteLine("  --market-margin                  Margin applied to Poisson-implied benchmark prices (default 5%).");
+        Console.WriteLine("  --output                         Comparison CSV path.");
+        Console.WriteLine();
+        Console.WriteLine("The command compares out-of-sample Brier/log-loss using an identical corrected mean for both distributions.");
+        Console.WriteLine("Benchmark ROI uses Poisson-implied prices, not historical sportsbook odds.");
     }
 
     public static void PrintFitWeibull()

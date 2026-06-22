@@ -72,6 +72,7 @@ public sealed class FlashscoreDownloader
             });
 
             await TryAcceptCookiesAsync(page);
+            await NavigateToResultsPageIfNeededAsync(page, log, cancellationToken);
 
             if (options.RenderWaitMs > 0)
                 await Task.Delay(options.RenderWaitMs, cancellationToken);
@@ -79,12 +80,19 @@ public sealed class FlashscoreDownloader
             int clicks = await ClickShowMoreUntilDoneAsync(page, options, log, cancellationToken);
             await log.WriteLineAsync($"Show more clicks: {clicks}");
 
-            IReadOnlyList<FlashscoreRenderedMatch> matches = await ExtractMatchesAsync(page, cancellationToken);
-            if (matches.Count == 0)
+            IReadOnlyList<FlashscoreRenderedMatch> renderedMatches = await ExtractMatchesAsync(page, cancellationToken);
+            if (renderedMatches.Count == 0)
             {
                 result.Failures.Add("No Flashscore match rows were found on the rendered page.");
                 return result;
             }
+
+            IReadOnlyList<FlashscoreRenderedMatch> matches = options.SkipPlayoffs
+                ? renderedMatches.Where(x => !IsPlayoffSection(x.CompetitionText)).ToList()
+                : renderedMatches;
+            int skippedPlayoffMatches = renderedMatches.Count - matches.Count;
+            if (skippedPlayoffMatches > 0)
+                await log.WriteLineAsync($"Skipped playoff/relegation matches: {skippedPlayoffMatches}");
 
             IReadOnlyList<FlashscoreCalendarEvent> events = matches
                 .Select(x => ToCalendarEvent(x, options))
@@ -411,7 +419,7 @@ public sealed class FlashscoreDownloader
                     await page.WaitForSelectorAsync("button[data-testid='wcl-oddsCell']", new PageWaitForSelectorOptions
                     {
                         State = WaitForSelectorState.Attached,
-                        Timeout = Math.Max(5_000, options.DetailWaitMs)
+                        Timeout = Math.Max(2_000, options.DetailWaitMs)
                     });
                 }
                 catch (TimeoutException)
@@ -572,6 +580,8 @@ public sealed class FlashscoreDownloader
             return false;
 
         IReadOnlyList<FlashscoreRenderedMatch> visibleMatches = await ExtractMatchesAsync(page, cancellationToken);
+        if (options.SkipPlayoffs)
+            visibleMatches = visibleMatches.Where(x => !IsPlayoffSection(x.CompetitionText)).ToList();
         Dictionary<int, int> visibleRoundCounts = visibleMatches
             .Select(match => ParseRound(match.RoundText))
             .Where(round => round > 0)
@@ -602,6 +612,62 @@ public sealed class FlashscoreDownloader
     private static string FormatRounds(IEnumerable<int> rounds)
         => string.Join(",", rounds.Distinct().OrderBy(round => round));
 
+    internal static bool IsPlayoffSection(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        string normalized = Regex.Replace(value, @"\s+", " ").Trim();
+        return Regex.IsMatch(normalized, @"\bplay[\s-]*offs?\b", RegexOptions.IgnoreCase) ||
+               Regex.IsMatch(normalized, @"\brelegation\b", RegexOptions.IgnoreCase);
+    }
+
+    private static async Task NavigateToResultsPageIfNeededAsync(
+        IPage page,
+        TextWriter log,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (Uri.TryCreate(page.Url, UriKind.Absolute, out Uri? currentUri) &&
+            (currentUri.AbsolutePath.Contains("/results/", StringComparison.OrdinalIgnoreCase) ||
+             currentUri.AbsolutePath.Contains("/fixtures/", StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        string resultsUrl = await page.EvaluateAsync<string>(
+            """
+            () => {
+                const links = Array.from(document.querySelectorAll('a[href]'));
+                const results = links.find(link => {
+                    const label = (link.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                    try {
+                        const url = new URL(link.href, location.href);
+                        return label === 'results' && url.pathname.endsWith('/results/');
+                    } catch {
+                        return false;
+                    }
+                });
+                return results?.href || '';
+            }
+            """);
+
+        if (string.IsNullOrWhiteSpace(resultsUrl) ||
+            resultsUrl.Equals(page.Url, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        await log.WriteLineAsync($"Opening results page: {resultsUrl}");
+        await page.GotoAsync(resultsUrl, new PageGotoOptions
+        {
+            WaitUntil = WaitUntilState.DOMContentLoaded,
+            Timeout = 90_000
+        });
+        await TryAcceptCookiesAsync(page);
+    }
+
     private static async Task<IReadOnlyList<FlashscoreRenderedMatch>> ExtractMatchesAsync(IPage page, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -611,6 +677,7 @@ public sealed class FlashscoreDownloader
             () => {
                 const rows = [];
                 let currentRound = "";
+                let currentCompetition = "";
                 const text = (node) => (node?.textContent || "").replace(/\s+/g, " ").trim();
                 const cleanParticipant = (node) => {
                     if (!node) return "";
@@ -638,7 +705,13 @@ public sealed class FlashscoreDownloader
                     return first(candidates, looksLikeDateTime) || first(candidates, looksLikeTime) || text(timeNode);
                 };
 
-                document.querySelectorAll('.event__round, [data-event-row="true"]').forEach(node => {
+                document.querySelectorAll('.event__header, .event__round, [data-event-row="true"]').forEach(node => {
+                    if (node.classList.contains('event__header')) {
+                        currentCompetition = text(node);
+                        currentRound = "";
+                        return;
+                    }
+
                     if (node.classList.contains('event__round')) {
                         currentRound = text(node);
                         return;
@@ -656,6 +729,7 @@ public sealed class FlashscoreDownloader
 
                     rows.push({
                         sourceId: rawId,
+                        competitionText: currentCompetition,
                         roundText: currentRound,
                         timeText,
                         homeTeam: home,
@@ -691,7 +765,7 @@ public sealed class FlashscoreDownloader
             await page.WaitForSelectorAsync(renderedSelector, new PageWaitForSelectorOptions
             {
                 State = WaitForSelectorState.Attached,
-                Timeout = Math.Max(5_000, options.DetailWaitMs)
+                Timeout = Math.Max(2_000, options.DetailWaitMs)
             });
         }
         catch (TimeoutException)
@@ -700,8 +774,10 @@ public sealed class FlashscoreDownloader
             // validates the extracted result and decides whether an empty page is suspicious.
         }
 
+        // The selector is the readiness signal. Keep only a brief settling window for
+        // client-side text updates instead of sleeping for the full render timeout again.
         if (options.DetailWaitMs > 0)
-            await Task.Delay(options.DetailWaitMs, cancellationToken);
+            await Task.Delay(Math.Min(250, options.DetailWaitMs), cancellationToken);
     }
 
     private static async Task<IReadOnlyList<FlashscoreIncident>> ExtractIncidentsAsync(
@@ -1743,6 +1819,7 @@ public sealed class FlashscoreDownloader
 public sealed class FlashscoreRenderedMatch
 {
     public string SourceId { get; init; } = string.Empty;
+    public string CompetitionText { get; init; } = string.Empty;
     public string RoundText { get; init; } = string.Empty;
     public string TimeText { get; init; } = string.Empty;
     public string HomeTeam { get; init; } = string.Empty;
