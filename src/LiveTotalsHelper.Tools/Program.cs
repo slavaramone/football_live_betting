@@ -32,7 +32,8 @@ try
         "fit-live-total-empirical-settlement" => await RunFitLiveTotalEmpiricalSettlement(commandArgs),
         "evaluate-live-total-model" => await RunEvaluateLiveTotalModel(commandArgs),
         "evaluate-live-total-betting-metrics" => await RunEvaluateLiveTotalBettingMetrics(commandArgs),
-        "compare-live-total-baselines" => await RunCompareLiveTotalBaselines(commandArgs),
+        "compare-goal-models" => await RunCompareGoalModels(commandArgs),
+        "compare-poisson-empirical" => await RunCompareGoalModels(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
         "price-live-total" => await RunPriceLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
@@ -78,9 +79,12 @@ static async Task<int> RunDownloadFlashscore(string[] args)
         DownloadIncidents = parsed.Bool("incidents", true),
         DownloadStatistics = parsed.Has("skip-stat") ? false : parsed.Bool("statistics", true),
         DownloadOdds = parsed.Bool("odds", true),
+        SkipPlayoffs = parsed.Has("include-playoffs")
+            ? !parsed.Bool("include-playoffs", true)
+            : parsed.Bool("skip-playoffs", true),
         Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
-        RenderWaitMs = parsed.Int("render-wait-ms", 8_000),
-        DetailWaitMs = parsed.Int("detail-wait-ms", 3_000),
+        RenderWaitMs = parsed.Int("render-wait-ms", 3_000),
+        DetailWaitMs = parsed.Int("detail-wait-ms", 1_000),
         ShowMoreWaitMs = parsed.Int("show-more-wait-ms", 2_000),
         MaxShowMoreClicks = parsed.Int("max-show-more-clicks", 40),
         DelayMs = parsed.Int("delay-ms", 450),
@@ -515,6 +519,73 @@ static async Task<int> RunEvaluateLiveTotalBettingMetrics(string[] args)
         Console.WriteLine($"{row.Scope,-24} {row.StateTrigger,-13} {row.Line,4:0.##} {row.Rows,5}  {row.BaselineBrier,6:0.###}  {row.CorrectedBrier,6:0.###}  {row.BrierImprovementPct,6:0.#}  {row.BaselineLogLoss,6:0.###}  {row.CorrectedLogLoss,6:0.###}  {row.LogLossImprovementPct,6:0.#}  {row.BaselineDirectionAccuracy,7:P1}  {row.CorrectedDirectionAccuracy,7:P1}  {row.DirectionAccuracyDiffPctPoints,7:0.#}");
     }
 
+    return 0;
+}
+
+static async Task<int> RunCompareGoalModels(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+    string defaultCorrection = validationMode
+        ? profile?.ValidationStateCorrectionPath ?? string.Empty
+        : profile?.StateCorrectionPath ?? string.Empty;
+    string defaultEmpirical = profile?.GetEmpiricalSettlementPath(validationMode) ?? string.Empty;
+
+    var options = new GoalModelComparisonOptions
+    {
+        InputPath = parsed.String("input", defaultInput),
+        StateCorrectionPath = parsed.String("state-correction", defaultCorrection),
+        EmpiricalSettlementPath = parsed.String("empirical-settlement", defaultEmpirical),
+        OutputPath = parsed.String("output", string.Empty),
+        EdgeThreshold = parsed.Double("edge-threshold", profile?.EdgeThreshold ?? 0.05),
+        MarketMargin = parsed.Double("market-margin", 0.05)
+    };
+
+    if (parsed.Has("target-lines"))
+        AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
+    else if (profile?.TargetLines is { Count: > 0 })
+    {
+        options.TargetLines.Clear();
+        foreach (double line in profile.TargetLines)
+            options.TargetLines.Add(line);
+    }
+
+    if (parsed.Has("test-season-ids"))
+        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
+    else if (profile is not null && validationMode)
+        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
+
+    var evaluator = new GoalModelComparisonEvaluator(options);
+    GoalModelComparisonResult result = await evaluator.EvaluateAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Poisson vs empirical goal-model comparison done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"Rows read/test: {result.RowsRead}/{result.TestRows}");
+    Console.WriteLine($"Supported state rows: {result.SupportedRows}");
+    Console.WriteLine($"Unsupported empirical rows: {result.UnsupportedEmpiricalRows}");
+    Console.WriteLine($"Output: {result.OutputPath}");
+    Console.WriteLine();
+    Console.WriteLine("Trigger       Line  Rows Matches  PoisBr   EmpBr  BrImp%  PoisLL   EmpLL  LLImp% EmpBetter  BenchBets BenchROI");
+    foreach (GoalModelComparisonSummary row in result.Summaries)
+    {
+        Console.WriteLine($"{row.StateTrigger,-13} {row.Line,4:0.##} {row.Rows,5} {row.Matches,7}  {row.PoissonBrier,6:0.###}  {row.EmpiricalBrier,6:0.###} {row.BrierImprovementPct,7:0.##}  {row.PoissonLogLoss,6:0.###}  {row.EmpiricalLogLoss,6:0.###} {row.LogLossImprovementPct,7:0.##}  {row.EmpiricalBetterRate,8:P1} {row.BenchmarkBets,10} {row.BenchmarkRoi,8:P1}");
+    }
+
+    GoalModelComparisonSummary overall = result.Overall;
+    Console.WriteLine();
+    Console.WriteLine(overall.ShowsImprovement
+        ? $"Verdict: empirical improves both proper scoring metrics (Brier {overall.BrierImprovementPct:+0.##;-0.##;0}% and log loss {overall.LogLossImprovementPct:+0.##;-0.##;0}%)."
+        : $"Verdict: no consistent empirical improvement (Brier {overall.BrierImprovementPct:+0.##;-0.##;0}% and log loss {overall.LogLossImprovementPct:+0.##;-0.##;0}%).");
+    Console.WriteLine(overall.BenchmarkBets == 0
+        ? "Betting benchmark: no empirical edges cleared the configured threshold."
+        : $"Betting benchmark: {overall.BenchmarkBets} flat-stake bets returned {overall.BenchmarkRoi:P1} ROI against Poisson-implied prices after the configured margin.");
+    Console.WriteLine("Benchmark ROI is counterfactual, not historical sportsbook ROI; use captured live odds for a realized backtest.");
     return 0;
 }
 

@@ -18,7 +18,8 @@ public static class HelpPrinter
         Console.WriteLine("  fit-live-total-empirical-settlement   Fit empirical remaining-goals settlement tables.");
         Console.WriteLine("  evaluate-live-total-model             Evaluate baseline vs exact trigger/state correction.");
         Console.WriteLine("  evaluate-live-total-betting-metrics   Evaluate line-specific Brier/log-loss/direction metrics.");
-        Console.WriteLine("  compare-live-total-baselines          Compare raw Poisson vs raw empirical remaining-goals baselines.");
+        Console.WriteLine("  compare-goal-models                   Compare Poisson and empirical settlement forecasts and betting value.");
+        Console.WriteLine("  compare-poisson-empirical             Alias for compare-goal-models.");
         Console.WriteLine("  fit-weibull                           Fit a league-wide Weibull timing model from imported DB events.");
         Console.WriteLine("  price-live-total                      Price live Over totals from starting odds, score state and fitted timing model.");
         Console.WriteLine();
@@ -41,8 +42,6 @@ public static class HelpPrinter
         PrintEvaluateLiveTotalModel();
         Console.WriteLine();
         PrintEvaluateLiveTotalBettingMetrics();
-        Console.WriteLine();
-        PrintCompareLiveTotalBaselines();
         Console.WriteLine();
         PrintFitWeibull();
         Console.WriteLine();
@@ -84,11 +83,13 @@ public static class HelpPrinter
         Console.WriteLine("  --statistics         true/false. Download match stats into statistics.json. Default: true");
         Console.WriteLine("  --skip-stat          Shortcut for --statistics false.");
         Console.WriteLine("  --odds               true/false. Download odds markets into odds.json. Default: true");
+        Console.WriteLine("  --skip-playoffs      Skip Play Off/Playoff and Relegation sections. Default: true");
+        Console.WriteLine("  --include-playoffs   Set true to include postseason/relegation sections.");
         Console.WriteLine("  --delay-ms           Delay between detail page requests. Default: 450");
         Console.WriteLine("  --headless           true/false. Default: true");
         Console.WriteLine("  --show-browser       Debug shortcut. Runs Chromium visible.");
-        Console.WriteLine("  --render-wait-ms     Delay after opening page before parsing. Default: 8000");
-        Console.WriteLine("  --detail-wait-ms     Delay after opening each match detail page before parsing. Default: 3000");
+        Console.WriteLine("  --render-wait-ms     Delay after opening the calendar before parsing. Default: 3000");
+        Console.WriteLine("  --detail-wait-ms     Detail render timeout hint; only a short settle delay follows readiness. Default: 1000");
         Console.WriteLine("  --show-more-wait-ms  Delay after each Show more click. Default: 2000");
         Console.WriteLine("  --max-show-more-clicks Maximum Show more clicks. Default: 40");
         Console.WriteLine("  --default-year       Year used for Flashscore dates that omit year. Default: --season-year when it contains a year, otherwise current UTC year.");
@@ -243,35 +244,6 @@ public static class HelpPrinter
         Console.WriteLine("Output metrics:");
         Console.WriteLine("  Per scope, line and trigger: Brier, log loss, direction accuracy, actual over rate.");
         Console.WriteLine("  Edge bucket CSV groups by scope and corrected probability move vs baseline probability.");
-    }
-
-    public static void PrintCompareLiveTotalBaselines()
-    {
-        Console.WriteLine("Compare live total baselines usage:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- compare-live-total-baselines \\");
-        Console.WriteLine("    --profile npl-new-south-wales --validation true --compare-scopes true");
-        Console.WriteLine();
-        Console.WriteLine("Compares raw methods and the first empirical improvement on the same calibration dataset and validation split:");
-        Console.WriteLine("  RawPoisson   = training average final goals * timing remaining share.");
-        Console.WriteLine("  RawEmpirical = training remaining-goals distribution by trigger/minute band/score state/current total with fallbacks.");
-        Console.WriteLine("  EmpiricalStateVolume = RawEmpirical distribution tilted to state/volume-corrected remaining-goal mean.");
-        Console.WriteLine();
-        Console.WriteLine("Arguments:");
-        Console.WriteLine("  --profile / --profiles-file      Use profile dataset path, split and target lines.");
-        Console.WriteLine("  --validation true                Use validation calibration dataset and validation split from profile.");
-        Console.WriteLine("  --input                          Calibration dataset CSV override.");
-        Console.WriteLine("  --training-season-ids            Comma-separated training seasons.");
-        Console.WriteLine("  --test-season-ids                Comma-separated test seasons.");
-        Console.WriteLine("  --target-lines                   Optional comma-separated lines. Defaults to profile targetLines.");
-        Console.WriteLine("  --compare-scopes true            Print/write FullModel, AfterGoalOnly and SecondHalfAfterGoalOnly in one run.");
-        Console.WriteLine("  --scope full-model|after-goal-only|2h-after-goal-only");
-        Console.WriteLine("  --output                         Summary CSV path.");
-        Console.WriteLine("  --minute-output                  Minute-band CSV path.");
-        Console.WriteLine("  --score-state-output             Score-state CSV path.");
-        Console.WriteLine("  --line-output                    Line-specific CSV path.");
-        Console.WriteLine("  --calibration-output             Probability calibration-bucket CSV path.");
-        Console.WriteLine("  --min-bucket-rows, --min-bucket-matches, --max-remaining-goals, --smoothing.");
-        Console.WriteLine("  --correction-shrink-rows, --min-correction-factor, --max-correction-factor for EmpiricalStateVolume.");
     }
 
     public static void PrintFitWeibull()
