@@ -31,7 +31,7 @@ src/
   LiveTotalsHelper.Modeling/
     Odds-to-xG converter
     Weibull timing math
-    Poisson remaining-goals pricing
+    Empirical remaining-goals settlement pricing
     Bet decision service
 
   LiveTotalsHelper.Infrastructure/
@@ -81,7 +81,6 @@ Currently represented by:
 LiveTotalsHelper.Modeling
   BettingModelService
   WeibullMath
-  PoissonMath
 ```
 
 Current first-version flow:

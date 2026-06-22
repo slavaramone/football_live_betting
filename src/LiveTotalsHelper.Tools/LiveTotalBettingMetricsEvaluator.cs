@@ -294,7 +294,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
     {
         try
         {
-            OverSettlementProbabilities p = TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(line, currentGoals, remainingGoals);
+            OverSettlementProbabilities p = TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(line, currentGoals, TotalGoalsPricingCalculator.BuildMeanDistribution(remainingGoals));
             double decisive = p.WinProbability + p.LossProbability;
             if (decisive <= 1e-12)
                 return null;

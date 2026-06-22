@@ -18,8 +18,6 @@ public static class HelpPrinter
         Console.WriteLine("  fit-live-total-empirical-settlement   Fit empirical remaining-goals settlement tables.");
         Console.WriteLine("  evaluate-live-total-model             Evaluate baseline vs exact trigger/state correction.");
         Console.WriteLine("  evaluate-live-total-betting-metrics   Evaluate line-specific Brier/log-loss/direction metrics.");
-        Console.WriteLine("  compare-goal-models                   Compare Poisson and empirical settlement forecasts and betting value.");
-        Console.WriteLine("  compare-poisson-empirical             Alias for compare-goal-models.");
         Console.WriteLine("  fit-weibull                           Fit a league-wide Weibull timing model from imported DB events.");
         Console.WriteLine("  price-live-total                      Price live Over totals from starting odds, score state and fitted timing model.");
         Console.WriteLine();
@@ -246,6 +244,7 @@ public static class HelpPrinter
         Console.WriteLine("  Edge bucket CSV groups by scope and corrected probability move vs baseline probability.");
     }
 
+
     public static void PrintFitWeibull()
     {
         Console.WriteLine("Fit Weibull usage:");
@@ -312,7 +311,7 @@ public static class HelpPrinter
         Console.WriteLine("  --home-goals         Required current home goals.");
         Console.WriteLine("  --away-goals         Required current away goals.");
         Console.WriteLine("  --live-over-odds / --live-under-odds Optional bookmaker live odds, needed for edge/bet decisions.");
-        Console.WriteLine("  --empirical-settlement Optional empirical remaining-goals settlement JSON. Defaults to profile empiricalSettlementPath.");
+        Console.WriteLine("  --empirical-settlement Required empirical remaining-goals settlement JSON. Defaults to profile empiricalSettlementPath when --profile is used.");
         Console.WriteLine("  --use-probability-move-filter true|false Optional; require probability move threshold before BET/LEAN.");
         Console.WriteLine("  --min-over-probability-move 0.10      Optional global Over move threshold.");
         Console.WriteLine("  --min-under-probability-move -0.12    Optional global Under move threshold.");

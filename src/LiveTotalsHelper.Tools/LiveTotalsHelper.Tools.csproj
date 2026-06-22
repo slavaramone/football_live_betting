@@ -26,4 +26,15 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+  <ItemGroup>
+    <!-- Exclude removed prototype comparison files when this patch is applied over an existing working tree.
+         SDK-style projects compile every *.cs file by default, so stale deleted files left on disk
+         would otherwise still be compiled. -->
+    <Compile Remove="**/GoalModelComparisonEvaluator.cs" />
+    <Compile Remove="**/LiveTotalBaselineComparer.cs" />
+    <Compile Remove="**/CompareGoalModels*.cs" />
+    <Compile Remove="**/CompareLiveTotalBaselines*.cs" />
+    <Compile Remove="**/Poisson*.cs" />
+  </ItemGroup>
+
 </Project>

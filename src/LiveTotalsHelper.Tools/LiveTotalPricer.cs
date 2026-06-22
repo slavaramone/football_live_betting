@@ -70,7 +70,7 @@ public sealed class LiveTotalPriceResult
     public string DecisionRulesSummary { get; set; } = string.Empty;
     public double RemainingXg { get; set; }
     public bool EmpiricalSettlementSupported { get; set; } = true;
-    public string EmpiricalSettlementSource { get; set; } = "poisson fallback - no empirical settlement table configured";
+    public string EmpiricalSettlementSource { get; set; } = "empirical settlement required";
     public int HomeRedCards { get; set; }
     public int AwayRedCards { get; set; }
     public string RedCardWarning { get; set; } = string.Empty;
@@ -137,7 +137,7 @@ public sealed class LiveTotalPricer
             _options.EmpiricalWeight);
 
         double startingFairOverProbability = TotalGoalsPricingCalculator.RemoveTwoWayMargin(_options.StartingOverOdds, _options.StartingUnderOdds);
-        double startingTotalXg = TotalGoalsPricingCalculator.SolveTotalXg(_options.StartingLine, startingFairOverProbability);
+        double startingTotalXg = TotalGoalsPricingCalculator.EstimateMarketTotalGoals(_options.StartingLine, startingFairOverProbability);
         double remainingXgBeforeStateCorrection = startingTotalXg * timing.TimingRemainingShare;
 
         LiveTotalStateCorrectionResolution stateCorrection = await ResolveStateCorrectionAsync(cancellationToken);
@@ -145,6 +145,8 @@ public sealed class LiveTotalPricer
         double volumeFactor = Math.Clamp(_options.VolumeFactor, 0.20, 2.50);
         double remainingXg = remainingXgBeforeVolume * volumeFactor;
         LiveTotalEmpiricalSettlementResolution empiricalSettlement = await ResolveEmpiricalSettlementAsync(cancellationToken);
+        if (!empiricalSettlement.IsSupported)
+            throw new InvalidOperationException($"Empirical settlement is required but unavailable: {empiricalSettlement.Source}");
 
         var result = new LiveTotalPriceResult
         {
@@ -178,10 +180,8 @@ public sealed class LiveTotalPricer
             VolumeFactorSource = _options.VolumeFactorSource,
             DecisionRulesSummary = _options.DecisionRules.Summary(),
             RemainingXg = remainingXg,
-            EmpiricalSettlementSupported = empiricalSettlement.IsSupported || string.IsNullOrWhiteSpace(_options.EmpiricalSettlementPath),
-            EmpiricalSettlementSource = empiricalSettlement.IsSupported
-                ? empiricalSettlement.Source
-                : "poisson fallback - " + empiricalSettlement.Source,
+            EmpiricalSettlementSupported = empiricalSettlement.IsSupported,
+            EmpiricalSettlementSource = empiricalSettlement.Source,
             HomeRedCards = _options.HomeRedCards,
             AwayRedCards = _options.AwayRedCards,
             LastGoalMinute = _options.LastGoalMinute
@@ -190,10 +190,6 @@ public sealed class LiveTotalPricer
         if (!string.IsNullOrWhiteSpace(timing.TimingFallback))
             result.Warnings.Add(timing.TimingFallback);
 
-        if (!empiricalSettlement.IsSupported)
-            result.Warnings.Add(string.IsNullOrWhiteSpace(_options.EmpiricalSettlementPath)
-                ? "POISSON FALLBACK - no empirical settlement table configured."
-                : $"POISSON FALLBACK - {empiricalSettlement.Source}");
 
         if (_options.HomeRedCards + _options.AwayRedCards > 0)
         {
@@ -312,16 +308,14 @@ public sealed class LiveTotalPricer
         double remainingGoalsMean,
         LiveTotalEmpiricalSettlementResolution empiricalSettlement)
     {
-        if (empiricalSettlement.IsSupported)
-        {
-            return TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(
-                line,
-                currentGoals,
-                empiricalSettlement.Probabilities,
-                remainingGoalsMean);
-        }
+        if (!empiricalSettlement.IsSupported)
+            throw new InvalidOperationException($"Empirical settlement is required but unavailable: {empiricalSettlement.Source}");
 
-        return TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(line, currentGoals, remainingGoalsMean);
+        return TotalGoalsPricingCalculator.CalculateOverSettlementProbabilities(
+            line,
+            currentGoals,
+            empiricalSettlement.Probabilities,
+            remainingGoalsMean);
     }
 
     private async Task<LiveTotalStateCorrectionResolution> ResolveStateCorrectionAsync(CancellationToken cancellationToken)
@@ -437,6 +431,10 @@ public sealed class LiveTotalPricer
             throw new ArgumentException("Missing required argument --model.");
         if (!File.Exists(_options.ModelPath))
             throw new FileNotFoundException("Timing model JSON was not found.", _options.ModelPath);
+        if (string.IsNullOrWhiteSpace(_options.EmpiricalSettlementPath))
+            throw new ArgumentException("Missing required argument --empirical-settlement. Empirical settlement is required for pricing.");
+        if (!File.Exists(_options.EmpiricalSettlementPath))
+            throw new FileNotFoundException("Empirical settlement JSON was not found.", _options.EmpiricalSettlementPath);
         if (_options.StartingLine <= 0)
             throw new ArgumentException("--starting-line must be greater than 0.");
         if (_options.StartingOverOdds <= 1.0)
