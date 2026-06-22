@@ -32,6 +32,7 @@ try
         "fit-live-total-empirical-settlement" => await RunFitLiveTotalEmpiricalSettlement(commandArgs),
         "evaluate-live-total-model" => await RunEvaluateLiveTotalModel(commandArgs),
         "evaluate-live-total-betting-metrics" => await RunEvaluateLiveTotalBettingMetrics(commandArgs),
+        "compare-live-total-baselines" => await RunCompareLiveTotalBaselines(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
         "price-live-total" => await RunPriceLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
@@ -512,6 +513,102 @@ static async Task<int> RunEvaluateLiveTotalBettingMetrics(string[] args)
     foreach (LiveTotalBettingMetricSummary row in result.Summaries.Where(x => x.StateTrigger == "All" || x.StateTrigger == LiveTotalStateTrigger.FixedMinute || x.StateTrigger == LiveTotalStateTrigger.AfterGoal))
     {
         Console.WriteLine($"{row.Scope,-24} {row.StateTrigger,-13} {row.Line,4:0.##} {row.Rows,5}  {row.BaselineBrier,6:0.###}  {row.CorrectedBrier,6:0.###}  {row.BrierImprovementPct,6:0.#}  {row.BaselineLogLoss,6:0.###}  {row.CorrectedLogLoss,6:0.###}  {row.LogLossImprovementPct,6:0.#}  {row.BaselineDirectionAccuracy,7:P1}  {row.CorrectedDirectionAccuracy,7:P1}  {row.DirectionAccuracyDiffPctPoints,7:0.#}");
+    }
+
+    return 0;
+}
+
+
+static async Task<int> RunCompareLiveTotalBaselines(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+
+    string defaultOutput = string.Empty;
+    if (!string.IsNullOrWhiteSpace(defaultInput))
+    {
+        string directory = Path.GetDirectoryName(defaultInput) ?? ".";
+        string fileName = Path.GetFileNameWithoutExtension(defaultInput);
+        defaultOutput = Path.Combine(directory, $"{fileName}-baseline-comparison-summary.csv");
+    }
+
+    var options = new LiveTotalBaselineComparisonOptions
+    {
+        InputPath = parsed.String("input", defaultInput),
+        OutputPath = parsed.String("output", defaultOutput),
+        MinuteOutputPath = parsed.String("minute-output", string.Empty),
+        ScoreStateOutputPath = parsed.String("score-state-output", string.Empty),
+        LineOutputPath = parsed.String("line-output", string.Empty),
+        CalibrationOutputPath = parsed.String("calibration-output", string.Empty),
+        DecisionScope = parsed.String("scope", parsed.String("decision-scope", LiveTotalDecisionScope.FullModel)),
+        CompareScopes = parsed.Bool("compare-scopes", false),
+        MinBucketRows = parsed.Int("min-bucket-rows", 80),
+        MinBucketMatches = parsed.Int("min-bucket-matches", 40),
+        CorrectionShrinkRows = parsed.Int("correction-shrink-rows", 100),
+        MinCorrectionFactor = parsed.Double("min-correction-factor", 0.50),
+        MaxCorrectionFactor = parsed.Double("max-correction-factor", 1.75),
+        MaxRemainingGoals = parsed.Int("max-remaining-goals", 8),
+        Smoothing = parsed.Double("smoothing", 0.25)
+    };
+
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
+
+    if (parsed.Has("target-lines"))
+        AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
+    else if (profile?.TargetLines is { Count: > 0 })
+    {
+        options.TargetLines.Clear();
+        foreach (double line in profile.TargetLines)
+            options.TargetLines.Add(line);
+    }
+
+    if (parsed.Has("training-season-ids"))
+        AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
+    else if (profile is not null)
+        AddProfileSeasonIds(options.TrainingSeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
+
+    if (parsed.Has("test-season-ids"))
+        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
+    else if (profile is not null && validationMode)
+        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
+
+    if (options.TrainingSeasonIds.Count == 0)
+        throw new ArgumentException("Missing required argument --training-season-ids, or provide --profile with training season ids.");
+    if (options.TestSeasonIds.Count == 0)
+        throw new ArgumentException("Missing required argument --test-season-ids, or use --validation true with a profile validation split.");
+
+    var comparer = new LiveTotalBaselineComparer(options);
+    LiveTotalBaselineComparisonResult result = await comparer.CompareAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Live total baseline comparison done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"Rows read: {result.RowsRead}");
+    Console.WriteLine($"Training rows: {result.TrainingRows}");
+    Console.WriteLine($"Test rows: {result.TestRows}");
+    Console.WriteLine($"Training average final goals: {result.TrainingAverageFinalGoals:0.###}");
+    Console.WriteLine($"Empirical state/volume global factor: {result.EmpiricalStateVolumeGlobalFactor:0.###}");
+    Console.WriteLine($"Empirical state/volume correction buckets: {result.EmpiricalStateVolumeUsableCorrectionBuckets}/{result.EmpiricalStateVolumeCorrectionBuckets} usable");
+    Console.WriteLine($"Remaining-goal observations: {result.RemainingObservations}");
+    Console.WriteLine($"Line observations: {result.LineObservations}");
+    Console.WriteLine($"Scopes: {string.Join(", ", result.ScopesEvaluated)}");
+    Console.WriteLine($"Summary CSV: {result.SummaryOutputPath}");
+    Console.WriteLine($"Minute CSV: {result.MinuteOutputPath}");
+    Console.WriteLine($"Score-state CSV: {result.ScoreStateOutputPath}");
+    Console.WriteLine($"Line CSV: {result.LineOutputPath}");
+    Console.WriteLine($"Calibration CSV: {result.CalibrationOutputPath}");
+
+    Console.WriteLine();
+    Console.WriteLine("Method        Scope                    Trigger        Rows  Matches  MAE     RMSE    Bias    Brier   LogLoss  DirAcc");
+    foreach (LiveTotalBaselineSummaryRow row in result.Summaries.Where(x => x.StateTrigger == "All" || x.StateTrigger == LiveTotalStateTrigger.FixedMinute || x.StateTrigger == LiveTotalStateTrigger.AfterGoal))
+    {
+        Console.WriteLine($"{row.Method,-13} {row.Scope,-24} {row.StateTrigger,-13} {row.Rows,5}  {row.Matches,7}  {row.Mae,6:0.###}  {row.Rmse,6:0.###}  {row.Bias,7:0.###}  {row.Brier,6:0.###}  {row.LogLoss,7:0.###}  {row.DirectionAccuracy,6:P1}");
     }
 
     return 0;
