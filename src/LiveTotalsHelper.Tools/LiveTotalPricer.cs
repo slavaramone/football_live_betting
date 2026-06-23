@@ -10,6 +10,7 @@ public sealed class LiveTotalPriceOptions
     public string StateCorrectionPath { get; set; } = string.Empty;
     public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public string StateCorrectionDirectionGuard { get; set; } = LiveTotalStateCorrectionDirectionGuard.UpOnly;
+    public LiveTotalLateGameCorrectionOptions LateGameCorrection { get; set; } = LiveTotalLateGameCorrectionOptions.BoostUpDefault();
     public string EmpiricalSettlementPath { get; set; } = string.Empty;
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public double StartingLine { get; set; }
@@ -43,6 +44,7 @@ public sealed class LiveTotalPriceResult
     public string StateCorrectionPath { get; set; } = string.Empty;
     public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public string StateCorrectionDirectionGuard { get; set; } = LiveTotalStateCorrectionDirectionGuard.UpOnly;
+    public LiveTotalLateGameCorrectionOptions LateGameCorrection { get; set; } = LiveTotalLateGameCorrectionOptions.BoostUpDefault();
     public string EmpiricalSettlementPath { get; set; } = string.Empty;
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string League { get; set; } = string.Empty;
@@ -348,7 +350,15 @@ public sealed class LiveTotalPricer
             PropertyNameCaseInsensitive = true
         }, cancellationToken) ?? throw new InvalidOperationException("Could not read state correction JSON.");
 
-        return LiveTotalStateCorrectionGate.Resolve(correction, _options.StateCorrectionScope, _options.StateCorrectionDirectionGuard, _options.StateTrigger, _options.Minute, _options.HomeGoals, _options.AwayGoals);
+        return LiveTotalStateCorrectionGate.Resolve(
+            correction,
+            _options.StateCorrectionScope,
+            _options.StateCorrectionDirectionGuard,
+            _options.LateGameCorrection,
+            _options.StateTrigger,
+            _options.Minute,
+            _options.HomeGoals,
+            _options.AwayGoals);
     }
 
     private LiveTotalSideDecision BuildSideDecision(double line, double? edge, double probabilityMove, bool stateCorrectionSupported, string stateTrigger, bool hasRecentGoal, bool hasRedCard, string side)
@@ -439,6 +449,7 @@ public sealed class LiveTotalPricer
             throw new FileNotFoundException("Timing model JSON was not found.", _options.ModelPath);
         _ = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope);
         _ = LiveTotalStateCorrectionDirectionGuard.Normalize(_options.StateCorrectionDirectionGuard);
+        _ = _options.LateGameCorrection.Normalized();
 
         if (_options.StartingLine <= 0)
             throw new ArgumentException("--starting-line must be greater than 0.");

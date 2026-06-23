@@ -1,27 +1,53 @@
-# Patch notes — state correction shrinkage
+# Late-game attack patch
 
-Changed state-correction fitting so fitted correction factors are shrunk toward 1.0 before being saved and used by evaluation/pricing.
+Implemented first late-game special-handling attempt on top of the current baseline:
 
-Formula:
+- MarketTotal base
+- FixedMinute-only state correction
+- shrinkMatches = 25
+- up-only direction guard
+
+## New late-game correction mode
+
+Added a configurable late FixedMinute boost:
 
 ```text
-weight = matches / (matches + shrinkMatches)
-factor = clamp(1 + weight * (rawFactor - 1), minFactor, maxFactor)
+--late-game-correction boost-up|off
+--late-game-start-minute 70
+--late-game-factor-multiplier 1.15
+--late-game-max-factor 2.5
 ```
 
-Default:
+Default profile values enable the first attacking attempt:
+
+```json
+"stateCorrectionLateGameMode": "boost-up",
+"stateCorrectionLateGameStartMinute": 70,
+"stateCorrectionLateGameFactorMultiplier": 1.15,
+"stateCorrectionLateGameMaxFactor": 2.5
+```
+
+Behavior:
 
 ```text
---shrink-matches 300
+FixedMinute, minute >= 70, factor > 1.0:
+    factor = min(maxFactor, 1 + (factor - 1) * multiplier)
+
+All other rows:
+    unchanged
 ```
 
-Use `--shrink-matches 0` to disable shrinkage and reproduce the old raw factor behavior.
+The existing up-only direction guard still runs first, so downward factors are still gated to 1.0 before late-game logic.
 
-Updated:
+## Reporting
 
-- `fit-live-total-state-correction`
-- state-correction JSON output
-- profile config default
-- help text
+Added late-game diagnostics:
 
-The saved bucket still contains `RawFactor`; new `ShrinkWeight` shows how much of the raw correction was retained.
+- `LateGameBoostedRows` column in model evaluation CSV
+- `LateGameBoostedRows` column in betting metrics CSV
+- `LateGameBoostedRows` column in probability move bucket CSV
+- `FixedMinuteLateGame` summary rows in model and betting metrics outputs
+
+## Price command
+
+`price-live-total` now uses the same late-game boost logic and prints the active late-game correction settings.

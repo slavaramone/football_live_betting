@@ -45,7 +45,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset --profile china-super-league --validation true");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration --profile china-super-league --validation true");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction --profile china-super-league --validation true");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-performance --profile china-super-league --validation true --compare-scopes true --state-correction-scope fixed-minute");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-performance --profile china-super-league --validation true --compare-scopes true --state-correction-scope fixed-minute --late-game-correction boost-up");
     }
 
     private static void PrintCommonArguments()
@@ -59,6 +59,10 @@ public static class HelpPrinter
         Console.WriteLine("  --state-correction                State correction JSON override.");
         Console.WriteLine("  --state-correction-scope          fixed-minute | all | none. Default: fixed-minute.");
         Console.WriteLine("  --state-correction-direction      up-only | both. Default: up-only; down factors become 1.0.");
+        Console.WriteLine("  --late-game-correction            boost-up | off. Default: boost-up from profile.");
+        Console.WriteLine("  --late-game-start-minute          Default: 70.");
+        Console.WriteLine("  --late-game-factor-multiplier     Extra multiplier for positive late FixedMinute factors. Default: 1.15.");
+        Console.WriteLine("  --late-game-max-factor            Max factor after late boost. Default: 2.5.");
         Console.WriteLine("  --shrink-matches                  State-correction shrink strength. Profile default: 25; 0 disables.");
         Console.WriteLine("  --model-output                    Model evaluation CSV path for evaluate-live-total-performance.");
         Console.WriteLine("  --betting-output                  Betting metrics CSV path for evaluate-live-total-performance.");

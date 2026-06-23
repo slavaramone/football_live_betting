@@ -13,6 +13,7 @@ public sealed class LiveTotalModelEvaluationOptions
     public string DecisionScope { get; set; } = LiveTotalDecisionScope.FullModel;
     public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public string StateCorrectionDirectionGuard { get; set; } = LiveTotalStateCorrectionDirectionGuard.UpOnly;
+    public LiveTotalLateGameCorrectionOptions LateGameCorrection { get; set; } = LiveTotalLateGameCorrectionOptions.Disabled();
     public bool CompareScopes { get; set; }
 }
 
@@ -27,8 +28,10 @@ public sealed class LiveTotalModelEvaluationResult
     public int SupportedRows { get; set; }
     public int StateCorrectionAppliedRows { get; set; }
     public int StateCorrectionGatedRows { get; set; }
+    public int LateGameBoostedRows { get; set; }
     public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public string StateCorrectionDirectionGuard { get; set; } = LiveTotalStateCorrectionDirectionGuard.UpOnly;
+    public string LateGameCorrectionSummary { get; set; } = string.Empty;
     public List<string> ScopesEvaluated { get; } = [];
     public List<LiveTotalModelEvaluationSummary> Summaries { get; } = [];
 }
@@ -47,6 +50,7 @@ public sealed class LiveTotalModelEvaluationSummary
     public double StateCorrectedRmse { get; set; }
     public int StateCorrectionAppliedRows { get; set; }
     public int StateCorrectionGatedRows { get; set; }
+    public int LateGameBoostedRows { get; set; }
 }
 
 public sealed class LiveTotalModelEvaluator
@@ -91,6 +95,7 @@ public sealed class LiveTotalModelEvaluator
                 correction,
                 _options.StateCorrectionScope,
                 _options.StateCorrectionDirectionGuard,
+                _options.LateGameCorrection,
                 row.StateTrigger,
                 row.Minute,
                 row.HomeGoals,
@@ -114,7 +119,8 @@ public sealed class LiveTotalModelEvaluator
                     Baseline = baseline,
                     StateCorrected = stateCorrected,
                     StateCorrectionApplied = LiveTotalStateCorrectionGate.IsApplied(resolved),
-                    StateCorrectionGated = LiveTotalStateCorrectionGate.IsGatedOut(resolved)
+                    StateCorrectionGated = LiveTotalStateCorrectionGate.IsGatedOut(resolved),
+                    LateGameBoosted = LiveTotalStateCorrectionGate.IsLateGameBoosted(resolved)
                 });
             }
         }
@@ -130,8 +136,10 @@ public sealed class LiveTotalModelEvaluator
             SupportedRows = observations.Count,
             StateCorrectionAppliedRows = observations.Count(x => x.StateCorrectionApplied),
             StateCorrectionGatedRows = observations.Count(x => x.StateCorrectionGated),
+            LateGameBoostedRows = observations.Count(x => x.LateGameBoosted),
             StateCorrectionScope = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope),
-            StateCorrectionDirectionGuard = LiveTotalStateCorrectionDirectionGuard.Normalize(_options.StateCorrectionDirectionGuard)
+            StateCorrectionDirectionGuard = LiveTotalStateCorrectionDirectionGuard.Normalize(_options.StateCorrectionDirectionGuard),
+            LateGameCorrectionSummary = _options.LateGameCorrection.Summary()
         };
         result.ScopesEvaluated.AddRange(scopes);
 
@@ -147,6 +155,10 @@ public sealed class LiveTotalModelEvaluator
             {
                 result.Summaries.Add(BuildSummary(scopeGroup.Key, group.Key, group.ToList()));
             }
+
+            List<Observation> lateFixedMinuteRows = scoped.Where(IsLateFixedMinute).ToList();
+            if (lateFixedMinuteRows.Count > 0)
+                result.Summaries.Add(BuildSummary(scopeGroup.Key, "FixedMinuteLateGame", lateFixedMinuteRows));
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(result.OutputPath)) ?? ".");
@@ -172,7 +184,8 @@ public sealed class LiveTotalModelEvaluator
             BaselineRmse = Math.Sqrt(rows.Average(x => Squared(x.Baseline - x.Row.ActualRemainingGoals))),
             StateCorrectedRmse = Math.Sqrt(rows.Average(x => Squared(x.StateCorrected - x.Row.ActualRemainingGoals))),
             StateCorrectionAppliedRows = rows.Count(x => x.StateCorrectionApplied),
-            StateCorrectionGatedRows = rows.Count(x => x.StateCorrectionGated)
+            StateCorrectionGatedRows = rows.Count(x => x.StateCorrectionGated),
+            LateGameBoostedRows = rows.Count(x => x.LateGameBoosted)
         };
     }
 
@@ -191,6 +204,7 @@ public sealed class LiveTotalModelEvaluator
         _ = LiveTotalDecisionScope.Normalize(_options.DecisionScope);
         _ = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope);
         _ = LiveTotalStateCorrectionDirectionGuard.Normalize(_options.StateCorrectionDirectionGuard);
+        _ = _options.LateGameCorrection.Normalized();
     }
 
     private string ResolveOutputPath()
@@ -260,7 +274,7 @@ public sealed class LiveTotalModelEvaluator
     private static string ToCsv(IReadOnlyCollection<LiveTotalModelEvaluationSummary> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Scope,StateTrigger,Rows,Matches,BaselineMae,StateCorrectedMae,BaselineBias,StateCorrectedBias,BaselineRmse,StateCorrectedRmse,StateCorrectionAppliedRows,StateCorrectionGatedRows");
+        sb.AppendLine("Scope,StateTrigger,Rows,Matches,BaselineMae,StateCorrectedMae,BaselineBias,StateCorrectedBias,BaselineRmse,StateCorrectedRmse,StateCorrectionAppliedRows,StateCorrectionGatedRows,LateGameBoostedRows");
         foreach (LiveTotalModelEvaluationSummary row in rows)
         {
             sb.AppendLine(string.Join(',',
@@ -275,11 +289,18 @@ public sealed class LiveTotalModelEvaluator
                 D(row.BaselineRmse),
                 D(row.StateCorrectedRmse),
                 row.StateCorrectionAppliedRows.ToString(CultureInfo.InvariantCulture),
-                row.StateCorrectionGatedRows.ToString(CultureInfo.InvariantCulture)));
+                row.StateCorrectionGatedRows.ToString(CultureInfo.InvariantCulture),
+                row.LateGameBoostedRows.ToString(CultureInfo.InvariantCulture)));
         }
 
         return sb.ToString();
     }
+
+    private static bool IsLateFixedMinute(Observation observation) =>
+        observation.Row.StateTrigger.Equals(LiveTotalStateTrigger.FixedMinute, StringComparison.OrdinalIgnoreCase) &&
+        observation.Row.Minute >= _LateGameSummaryStartMinute;
+
+    private const int _LateGameSummaryStartMinute = 70;
 
     private static double Squared(double value) => value * value;
 
@@ -287,8 +308,9 @@ public sealed class LiveTotalModelEvaluator
     {
         "All" => 0,
         LiveTotalStateTrigger.FixedMinute => 1,
-        LiveTotalStateTrigger.AfterGoal => 2,
-        LiveTotalStateTrigger.AfterRedCard => 3,
+        "FixedMinuteLateGame" => 2,
+        LiveTotalStateTrigger.AfterGoal => 3,
+        LiveTotalStateTrigger.AfterRedCard => 4,
         _ => 99
     };
 
@@ -420,5 +442,6 @@ public sealed class LiveTotalModelEvaluator
         public double StateCorrected { get; set; }
         public bool StateCorrectionApplied { get; set; }
         public bool StateCorrectionGated { get; set; }
+        public bool LateGameBoosted { get; set; }
     }
 }

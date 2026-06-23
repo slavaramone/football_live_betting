@@ -61,6 +61,10 @@ public sealed class LeagueProfile
     public double StateCorrectionMinFactor { get; set; } = 0.50;
     public double StateCorrectionMaxFactor { get; set; } = 2.50;
     public int StateCorrectionShrinkMatches { get; set; } = 300;
+    public string StateCorrectionLateGameMode { get; set; } = LiveTotalLateGameCorrectionMode.BoostUp;
+    public int StateCorrectionLateGameStartMinute { get; set; } = 70;
+    public double StateCorrectionLateGameFactorMultiplier { get; set; } = 1.15;
+    public double StateCorrectionLateGameMaxFactor { get; set; } = 2.50;
 
     // Live pricing/current-season volume defaults.
     public List<int> BaseSeasonIds { get; set; } = [];

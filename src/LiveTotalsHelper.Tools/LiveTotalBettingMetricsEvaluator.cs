@@ -22,6 +22,7 @@ public sealed class LiveTotalBettingMetricsEvaluationOptions
     public string DecisionScope { get; set; } = LiveTotalDecisionScope.FullModel;
     public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public string StateCorrectionDirectionGuard { get; set; } = LiveTotalStateCorrectionDirectionGuard.UpOnly;
+    public LiveTotalLateGameCorrectionOptions LateGameCorrection { get; set; } = LiveTotalLateGameCorrectionOptions.Disabled();
     public bool CompareScopes { get; set; }
 }
 
@@ -38,8 +39,10 @@ public sealed class LiveTotalBettingMetricsEvaluationResult
     public int UnsupportedEmpiricalRows { get; set; }
     public int StateCorrectionAppliedRows { get; set; }
     public int StateCorrectionGatedRows { get; set; }
+    public int LateGameBoostedRows { get; set; }
     public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public string StateCorrectionDirectionGuard { get; set; } = LiveTotalStateCorrectionDirectionGuard.UpOnly;
+    public string LateGameCorrectionSummary { get; set; } = string.Empty;
     public List<string> ScopesEvaluated { get; } = [];
     public List<LiveTotalBettingMetricSummary> Summaries { get; } = [];
     public List<LiveTotalBettingEdgeBucketSummary> EdgeBuckets { get; } = [];
@@ -76,6 +79,7 @@ public sealed class LiveTotalBettingMetricSummary
     public double CorrectedWorseRate { get; set; }
     public int StateCorrectionAppliedRows { get; set; }
     public int StateCorrectionGatedRows { get; set; }
+    public int LateGameBoostedRows { get; set; }
 }
 
 public sealed class LiveTotalBettingEdgeBucketSummary
@@ -94,6 +98,7 @@ public sealed class LiveTotalBettingEdgeBucketSummary
     public double CorrectedBrier { get; set; }
     public int StateCorrectionAppliedRows { get; set; }
     public int StateCorrectionGatedRows { get; set; }
+    public int LateGameBoostedRows { get; set; }
 }
 
 public sealed class LiveTotalBettingMetricsEvaluator
@@ -143,6 +148,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 correction,
                 _options.StateCorrectionScope,
                 _options.StateCorrectionDirectionGuard,
+                _options.LateGameCorrection,
                 row.StateTrigger,
                 row.Minute,
                 row.HomeGoals,
@@ -183,12 +189,14 @@ public sealed class LiveTotalBettingMetricsEvaluator
                         Scope = scope,
                         StateTrigger = row.StateTrigger,
                         MatchId = row.MatchId,
+                        Minute = row.Minute,
                         Line = line,
                         ActualOver = actualOver.Value,
                         BaselineProbability = baselineP.Value,
                         CorrectedProbability = correctedP.Value,
                         StateCorrectionApplied = LiveTotalStateCorrectionGate.IsApplied(resolved),
-                        StateCorrectionGated = LiveTotalStateCorrectionGate.IsGatedOut(resolved)
+                        StateCorrectionGated = LiveTotalStateCorrectionGate.IsGatedOut(resolved),
+                        LateGameBoosted = LiveTotalStateCorrectionGate.IsLateGameBoosted(resolved)
                     });
                 }
             }
@@ -207,8 +215,10 @@ public sealed class LiveTotalBettingMetricsEvaluator
             UnsupportedEmpiricalRows = unsupportedEmpiricalRows,
             StateCorrectionAppliedRows = lineRows.Count(x => x.StateCorrectionApplied),
             StateCorrectionGatedRows = lineRows.Count(x => x.StateCorrectionGated),
+            LateGameBoostedRows = lineRows.Count(x => x.LateGameBoosted),
             StateCorrectionScope = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope),
-            StateCorrectionDirectionGuard = LiveTotalStateCorrectionDirectionGuard.Normalize(_options.StateCorrectionDirectionGuard)
+            StateCorrectionDirectionGuard = LiveTotalStateCorrectionDirectionGuard.Normalize(_options.StateCorrectionDirectionGuard),
+            LateGameCorrectionSummary = _options.LateGameCorrection.Summary()
         };
         result.ScopesEvaluated.AddRange(scopes);
 
@@ -227,11 +237,18 @@ public sealed class LiveTotalBettingMetricsEvaluator
     private static List<LiveTotalBettingMetricSummary> BuildSummaries(IReadOnlyCollection<LineRow> lineRows)
     {
         var groups = lineRows
-            .SelectMany(x => new[]
-            {
-                new { x.Scope, Key = "All", Row = x },
-                new { x.Scope, Key = x.StateTrigger, Row = x }
-            })
+            .SelectMany(x => IsLateFixedMinute(x)
+                ? new[]
+                {
+                    new { x.Scope, Key = "All", Row = x },
+                    new { x.Scope, Key = x.StateTrigger, Row = x },
+                    new { x.Scope, Key = "FixedMinuteLateGame", Row = x }
+                }
+                : new[]
+                {
+                    new { x.Scope, Key = "All", Row = x },
+                    new { x.Scope, Key = x.StateTrigger, Row = x }
+                })
             .GroupBy(x => new { x.Scope, x.Key, x.Row.Line })
             .OrderBy(x => LiveTotalDecisionScope.Order(x.Key.Scope))
             .ThenBy(x => TriggerOrder(x.Key.Key))
@@ -297,18 +314,26 @@ public sealed class LiveTotalBettingMetricsEvaluator
             CorrectedBetterRate = correctedBetter / (double)n,
             CorrectedWorseRate = correctedWorse / (double)n,
             StateCorrectionAppliedRows = rows.Count(x => x.StateCorrectionApplied),
-            StateCorrectionGatedRows = rows.Count(x => x.StateCorrectionGated)
+            StateCorrectionGatedRows = rows.Count(x => x.StateCorrectionGated),
+            LateGameBoostedRows = rows.Count(x => x.LateGameBoosted)
         };
     }
 
     private List<LiveTotalBettingEdgeBucketSummary> BuildEdgeBuckets(IReadOnlyCollection<LineRow> lineRows)
     {
         var groups = lineRows
-            .SelectMany(x => new[]
-            {
-                new { x.Scope, Key = "All", Row = x },
-                new { x.Scope, Key = x.StateTrigger, Row = x }
-            })
+            .SelectMany(x => IsLateFixedMinute(x)
+                ? new[]
+                {
+                    new { x.Scope, Key = "All", Row = x },
+                    new { x.Scope, Key = x.StateTrigger, Row = x },
+                    new { x.Scope, Key = "FixedMinuteLateGame", Row = x }
+                }
+                : new[]
+                {
+                    new { x.Scope, Key = "All", Row = x },
+                    new { x.Scope, Key = x.StateTrigger, Row = x }
+                })
             .GroupBy(x => new { x.Scope, x.Key, x.Row.Line, Bucket = ProbabilityMoveBucket(x.Row.CorrectedProbability - x.Row.BaselineProbability) })
             .OrderBy(x => LiveTotalDecisionScope.Order(x.Key.Scope))
             .ThenBy(x => TriggerOrder(x.Key.Key))
@@ -335,7 +360,8 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 BaselineBrier = rows.Average(x => Squared(x.BaselineProbability - BoolToDouble(x.ActualOver))),
                 CorrectedBrier = rows.Average(x => Squared(x.CorrectedProbability - BoolToDouble(x.ActualOver))),
                 StateCorrectionAppliedRows = rows.Count(x => x.StateCorrectionApplied),
-                StateCorrectionGatedRows = rows.Count(x => x.StateCorrectionGated)
+                StateCorrectionGatedRows = rows.Count(x => x.StateCorrectionGated),
+                LateGameBoostedRows = rows.Count(x => x.LateGameBoosted)
             });
         }
 
@@ -512,18 +538,21 @@ public sealed class LiveTotalBettingMetricsEvaluator
         _ = LiveTotalDecisionScope.Normalize(_options.DecisionScope);
         _ = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope);
         _ = LiveTotalStateCorrectionDirectionGuard.Normalize(_options.StateCorrectionDirectionGuard);
+        _ = _options.LateGameCorrection.Normalized();
     }
 
     private static int TriggerOrder(string stateTrigger)
     {
         if (stateTrigger.Equals("All", StringComparison.OrdinalIgnoreCase))
             return 0;
+        if (stateTrigger.Equals("FixedMinuteLateGame", StringComparison.OrdinalIgnoreCase))
+            return 2;
 
         return LiveTotalStateTrigger.Normalize(stateTrigger) switch
         {
             LiveTotalStateTrigger.FixedMinute => 1,
-            LiveTotalStateTrigger.AfterGoal => 2,
-            LiveTotalStateTrigger.AfterRedCard => 3,
+            LiveTotalStateTrigger.AfterGoal => 3,
+            LiveTotalStateTrigger.AfterRedCard => 4,
             _ => 99
         };
     }
@@ -690,7 +719,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
     private static string ToSummaryCsv(IReadOnlyCollection<LiveTotalBettingMetricSummary> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Scope,StateTrigger,Line,Rows,Matches,BaselineAvgProb,CorrectedAvgProb,ActualOverRate,BaselineBrier,CorrectedBrier,BrierImprovementPct,BaselineLogLoss,CorrectedLogLoss,LogLossImprovementPct,BaselineDirectionAccuracy,CorrectedDirectionAccuracy,DirectionAccuracyDiffPctPoints,AverageProbabilityMove,CorrectedBetterRows,CorrectedWorseRows,CorrectedBetterRate,CorrectedWorseRate,StateCorrectionAppliedRows,StateCorrectionGatedRows");
+        sb.AppendLine("Scope,StateTrigger,Line,Rows,Matches,BaselineAvgProb,CorrectedAvgProb,ActualOverRate,BaselineBrier,CorrectedBrier,BrierImprovementPct,BaselineLogLoss,CorrectedLogLoss,LogLossImprovementPct,BaselineDirectionAccuracy,CorrectedDirectionAccuracy,DirectionAccuracyDiffPctPoints,AverageProbabilityMove,CorrectedBetterRows,CorrectedWorseRows,CorrectedBetterRate,CorrectedWorseRate,StateCorrectionAppliedRows,StateCorrectionGatedRows,LateGameBoostedRows");
 
         foreach (LiveTotalBettingMetricSummary row in rows)
         {
@@ -718,7 +747,8 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 D(row.CorrectedBetterRate),
                 D(row.CorrectedWorseRate),
                 row.StateCorrectionAppliedRows.ToString(CultureInfo.InvariantCulture),
-                row.StateCorrectionGatedRows.ToString(CultureInfo.InvariantCulture)));
+                row.StateCorrectionGatedRows.ToString(CultureInfo.InvariantCulture),
+                row.LateGameBoostedRows.ToString(CultureInfo.InvariantCulture)));
         }
 
         return sb.ToString();
@@ -727,7 +757,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
     private static string ToEdgeBucketCsv(IReadOnlyCollection<LiveTotalBettingEdgeBucketSummary> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Scope,StateTrigger,Line,EdgeBucket,Rows,Matches,AverageBaselineProbability,AverageCorrectedProbability,AverageProbabilityMove,ActualOverRate,BaselineBrier,CorrectedBrier,StateCorrectionAppliedRows,StateCorrectionGatedRows");
+        sb.AppendLine("Scope,StateTrigger,Line,EdgeBucket,Rows,Matches,AverageBaselineProbability,AverageCorrectedProbability,AverageProbabilityMove,ActualOverRate,BaselineBrier,CorrectedBrier,StateCorrectionAppliedRows,StateCorrectionGatedRows,LateGameBoostedRows");
 
         foreach (LiveTotalBettingEdgeBucketSummary row in rows)
         {
@@ -745,7 +775,8 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 D(row.BaselineBrier),
                 D(row.CorrectedBrier),
                 row.StateCorrectionAppliedRows.ToString(CultureInfo.InvariantCulture),
-                row.StateCorrectionGatedRows.ToString(CultureInfo.InvariantCulture)));
+                row.StateCorrectionGatedRows.ToString(CultureInfo.InvariantCulture),
+                row.LateGameBoostedRows.ToString(CultureInfo.InvariantCulture)));
         }
 
         return sb.ToString();
@@ -760,6 +791,12 @@ public sealed class LiveTotalBettingMetricsEvaluator
 
         return value;
     }
+
+    private static bool IsLateFixedMinute(LineRow row) =>
+        row.StateTrigger.Equals(LiveTotalStateTrigger.FixedMinute, StringComparison.OrdinalIgnoreCase) &&
+        row.Minute >= _LateGameSummaryStartMinute;
+
+    private const int _LateGameSummaryStartMinute = 70;
 
     private sealed class InputRow
     {
@@ -781,11 +818,13 @@ public sealed class LiveTotalBettingMetricsEvaluator
         public string Scope { get; set; } = LiveTotalDecisionScope.FullModel;
         public string StateTrigger { get; set; } = string.Empty;
         public int MatchId { get; set; }
+        public int Minute { get; set; }
         public double Line { get; set; }
         public bool ActualOver { get; set; }
         public double BaselineProbability { get; set; }
         public double CorrectedProbability { get; set; }
         public bool StateCorrectionApplied { get; set; }
         public bool StateCorrectionGated { get; set; }
+        public bool LateGameBoosted { get; set; }
     }
 }

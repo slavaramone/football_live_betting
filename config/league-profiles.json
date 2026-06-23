@@ -59,6 +59,10 @@
       "stateCorrectionMinFactor": 0.5,
       "stateCorrectionMaxFactor": 2.5,
       "stateCorrectionShrinkMatches": 25,
+      "stateCorrectionLateGameMode": "boost-up",
+      "stateCorrectionLateGameStartMinute": 70,
+      "stateCorrectionLateGameFactorMultiplier": 1.15,
+      "stateCorrectionLateGameMaxFactor": 2.5,
       "baseSeasonIds": [
         2023,
         2024,

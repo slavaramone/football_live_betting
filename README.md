@@ -1,29 +1,19 @@
-# FLB shrink correction patch
+Patched live-total model with first late-game attack attempt.
 
-Run state-correction fit after this patch:
-
-```bash
-dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction --profile china-super-league --validation true --shrink-matches 300
-```
-
-Then evaluate:
+Run validation:
 
 ```bash
-dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-performance --profile china-super-league --validation true --compare-scopes true --state-correction-scope fixed-minute
+dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-performance --profile china-super-league --validation true --compare-scopes true --state-correction-scope fixed-minute --state-correction-direction up-only --late-game-correction boost-up
 ```
 
-To test stronger shrink:
+Compare against previous baseline:
 
 ```bash
---shrink-matches 500
+dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-performance --profile china-super-league --validation true --compare-scopes true --state-correction-scope fixed-minute --state-correction-direction up-only --late-game-correction off
 ```
 
-To disable shrink:
+Main new output row to inspect:
 
-```bash
---shrink-matches 0
+```text
+FixedMinuteLateGame
 ```
-
-## Direction guard patch
-
-State correction now supports `--state-correction-direction up-only|both`. Default is `up-only`, so downward correction factors are gated to `1.0`; upward factors are still applied. Use `both` to disable this guard.
