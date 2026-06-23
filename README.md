@@ -31,3 +31,7 @@ correction factor > 1.0
 ```
 
 Use `--late-game-max-line 2.5` to keep the current behavior, or lower/raise it for experiments.
+
+## Patch: better market-total selector
+
+`build-live-total-calibration-dataset` now selects the main market total from the most balanced O/U line instead of taking the median expected goals across all available total lines. Alternative lines are ignored after the selected balanced line is chosen.

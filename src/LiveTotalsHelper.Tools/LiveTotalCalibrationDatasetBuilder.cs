@@ -356,18 +356,23 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         var candidates = new List<MarketTotalCandidate>();
         foreach (var group in odds
             .Where(x => IsTotalMarket(x.Market))
-            .GroupBy(x => new { x.MatchId, x.Bookmaker, Line = Math.Round(x.Line!.Value, 2) }))
+            .GroupBy(x => new
+            {
+                x.MatchId,
+                Bookmaker = NormalizeBookmaker(x.Bookmaker),
+                Line = Math.Round(x.Line!.Value, 2)
+            }))
         {
             FlashscoreOddsEntity? over = group
                 .Where(x => IsOverSelection(x.Selection))
-                .OrderByDescending(x => x.DownloadedAtUtc ?? DateTime.MinValue)
-                .ThenByDescending(x => x.ImportedAtUtc)
-                .FirstOrDefault();
+                .OrderBy(OddsTimestamp)
+                .ThenBy(x => x.Id)
+                .LastOrDefault();
             FlashscoreOddsEntity? under = group
                 .Where(x => IsUnderSelection(x.Selection))
-                .OrderByDescending(x => x.DownloadedAtUtc ?? DateTime.MinValue)
-                .ThenByDescending(x => x.ImportedAtUtc)
-                .FirstOrDefault();
+                .OrderBy(OddsTimestamp)
+                .ThenBy(x => x.Id)
+                .LastOrDefault();
 
             if (over is null || under is null)
                 continue;
@@ -378,6 +383,8 @@ public sealed class LiveTotalCalibrationDatasetBuilder
 
             double fairOver = TotalGoalsPricingCalculator.RemoveTwoWayMargin(over.Odds, under.Odds);
             double expected = TotalGoalsPricingCalculator.EstimateTotalGoalsFromLine(group.Key.Line, fairOver);
+            DateTimeOffset timestamp = OddsTimestamp(over) > OddsTimestamp(under) ? OddsTimestamp(over) : OddsTimestamp(under);
+
             candidates.Add(new MarketTotalCandidate(
                 group.Key.MatchId,
                 group.Key.Bookmaker,
@@ -386,25 +393,62 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                 under.Odds,
                 fairOver,
                 expected,
-                overround));
+                overround,
+                timestamp));
         }
 
         return candidates
             .GroupBy(x => x.MatchId)
             .ToDictionary(
                 x => x.Key,
-                x =>
-                {
-                    List<MarketTotalCandidate> matchCandidates = x.ToList();
-                    MarketTotalCandidate representative = matchCandidates
-                        .OrderBy(c => Math.Abs(c.FairOverProbability - 0.50))
-                        .ThenBy(c => Math.Abs(c.Overround - 1.0))
-                        .First();
-                    double expected = Median(matchCandidates.Select(c => c.ExpectedFinalGoals));
-                    string source = $"{matchCandidates.Count} clean O/U pair(s); representative {representative.Bookmaker} line {representative.Line:0.##} O {representative.OverOdds:0.###} U {representative.UnderOdds:0.###}";
-                    return new SelectedMarketTotal(representative.Line, expected, source);
-                });
+                x => SelectMarketTotal(x.ToList()));
     }
+
+    private static SelectedMarketTotal SelectMarketTotal(List<MarketTotalCandidate> matchCandidates)
+    {
+        List<LineMarketSummary> lineSummaries = matchCandidates
+            .GroupBy(x => x.Line)
+            .Select(g =>
+            {
+                List<MarketTotalCandidate> lineCandidates = g.ToList();
+                MarketTotalCandidate representative = lineCandidates
+                    .OrderBy(c => Math.Abs(c.FairOverProbability - 0.50))
+                    .ThenBy(c => Math.Abs(c.Overround - 1.0))
+                    .ThenByDescending(c => c.Timestamp)
+                    .First();
+
+                return new LineMarketSummary(
+                    Line: g.Key,
+                    PairCount: lineCandidates.Count,
+                    MedianFairOverProbability: Median(lineCandidates.Select(c => c.FairOverProbability)),
+                    MedianExpectedFinalGoals: Median(lineCandidates.Select(c => c.ExpectedFinalGoals)),
+                    MedianOverround: Median(lineCandidates.Select(c => c.Overround)),
+                    LatestTimestamp: lineCandidates.Max(c => c.Timestamp),
+                    Representative: representative);
+            })
+            .ToList();
+
+        LineMarketSummary selected = lineSummaries
+            .OrderBy(x => Math.Abs(x.MedianFairOverProbability - 0.50))
+            .ThenByDescending(x => x.PairCount)
+            .ThenBy(x => Math.Abs(x.MedianOverround - 1.0))
+            .ThenByDescending(x => x.LatestTimestamp)
+            .First();
+
+        MarketTotalCandidate representative = selected.Representative;
+        int ignoredPairs = Math.Max(0, matchCandidates.Count - selected.PairCount);
+        string source = $"balanced-line selector: selected line {selected.Line:0.##} from {selected.PairCount}/{matchCandidates.Count} clean O/U pair(s), median fairOver={selected.MedianFairOverProbability:0.###}, expected={selected.MedianExpectedFinalGoals:0.###}; representative {representative.Bookmaker} O {representative.OverOdds:0.###} U {representative.UnderOdds:0.###}; ignored alternative-line pairs={ignoredPairs}";
+
+        return new SelectedMarketTotal(selected.Line, selected.MedianExpectedFinalGoals, source);
+    }
+
+    private static DateTimeOffset OddsTimestamp(FlashscoreOddsEntity row)
+        => row.DownloadedAtUtc.HasValue
+            ? new DateTimeOffset(DateTime.SpecifyKind(row.DownloadedAtUtc.Value, DateTimeKind.Utc))
+            : row.ImportedAtUtc;
+
+    private static string NormalizeBookmaker(string bookmaker)
+        => string.IsNullOrWhiteSpace(bookmaker) ? "unknown" : bookmaker.Trim();
 
     private static double Median(IEnumerable<double> values)
     {
@@ -514,7 +558,9 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         "ActualFinalHomeGoals", "ActualFinalAwayGoals", "ActualFinalTotalGoals", "ActualRemainingGoals", "AnyFutureGoal", "IsReliableMatch"
     ];
 
-    private sealed record MarketTotalCandidate(int MatchId, string Bookmaker, double Line, double OverOdds, double UnderOdds, double FairOverProbability, double ExpectedFinalGoals, double Overround);
+    private sealed record MarketTotalCandidate(int MatchId, string Bookmaker, double Line, double OverOdds, double UnderOdds, double FairOverProbability, double ExpectedFinalGoals, double Overround, DateTimeOffset Timestamp);
+
+    private sealed record LineMarketSummary(double Line, int PairCount, double MedianFairOverProbability, double MedianExpectedFinalGoals, double MedianOverround, DateTimeOffset LatestTimestamp, MarketTotalCandidate Representative);
 
     private sealed record SelectedMarketTotal(double RepresentativeLine, double ExpectedFinalGoals, string Source);
 
