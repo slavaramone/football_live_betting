@@ -20,6 +20,7 @@ public sealed class LiveTotalBettingMetricsEvaluationOptions
     public double EmpiricalSettlementSmoothing { get; set; } = 0.25;
     public double EdgeBucketStep { get; set; } = 0.02;
     public string DecisionScope { get; set; } = LiveTotalDecisionScope.FullModel;
+    public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public bool CompareScopes { get; set; }
 }
 
@@ -34,6 +35,9 @@ public sealed class LiveTotalBettingMetricsEvaluationResult
     public int RowsSkippedMissingExpectedFinalGoals { get; set; }
     public int LineRows { get; set; }
     public int UnsupportedEmpiricalRows { get; set; }
+    public int StateCorrectionAppliedRows { get; set; }
+    public int StateCorrectionGatedRows { get; set; }
+    public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public List<string> ScopesEvaluated { get; } = [];
     public List<LiveTotalBettingMetricSummary> Summaries { get; } = [];
     public List<LiveTotalBettingEdgeBucketSummary> EdgeBuckets { get; } = [];
@@ -68,6 +72,8 @@ public sealed class LiveTotalBettingMetricSummary
     public int CorrectedWorseRows { get; set; }
     public double CorrectedBetterRate { get; set; }
     public double CorrectedWorseRate { get; set; }
+    public int StateCorrectionAppliedRows { get; set; }
+    public int StateCorrectionGatedRows { get; set; }
 }
 
 public sealed class LiveTotalBettingEdgeBucketSummary
@@ -84,6 +90,8 @@ public sealed class LiveTotalBettingEdgeBucketSummary
     public double ActualOverRate { get; set; }
     public double BaselineBrier { get; set; }
     public double CorrectedBrier { get; set; }
+    public int StateCorrectionAppliedRows { get; set; }
+    public int StateCorrectionGatedRows { get; set; }
 }
 
 public sealed class LiveTotalBettingMetricsEvaluator
@@ -129,8 +137,9 @@ public sealed class LiveTotalBettingMetricsEvaluator
             }
 
             double baselineRemaining = row.ExpectedFinalGoals.Value * row.TimingRemainingShare;
-            LiveTotalStateCorrectionResolution resolved = LiveTotalStateCorrectionResolver.Resolve(
+            LiveTotalStateCorrectionResolution resolved = LiveTotalStateCorrectionGate.Resolve(
                 correction,
+                _options.StateCorrectionScope,
                 row.StateTrigger,
                 row.Minute,
                 row.HomeGoals,
@@ -174,7 +183,9 @@ public sealed class LiveTotalBettingMetricsEvaluator
                         Line = line,
                         ActualOver = actualOver.Value,
                         BaselineProbability = baselineP.Value,
-                        CorrectedProbability = correctedP.Value
+                        CorrectedProbability = correctedP.Value,
+                        StateCorrectionApplied = LiveTotalStateCorrectionGate.IsApplied(resolved),
+                        StateCorrectionGated = LiveTotalStateCorrectionGate.IsGatedOut(resolved)
                     });
                 }
             }
@@ -190,7 +201,10 @@ public sealed class LiveTotalBettingMetricsEvaluator
             TestRows = testRows.Count,
             RowsSkippedMissingExpectedFinalGoals = rowsSkippedMissingExpectedFinalGoals,
             LineRows = lineRows.Count,
-            UnsupportedEmpiricalRows = unsupportedEmpiricalRows
+            UnsupportedEmpiricalRows = unsupportedEmpiricalRows,
+            StateCorrectionAppliedRows = lineRows.Count(x => x.StateCorrectionApplied),
+            StateCorrectionGatedRows = lineRows.Count(x => x.StateCorrectionGated),
+            StateCorrectionScope = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope)
         };
         result.ScopesEvaluated.AddRange(scopes);
 
@@ -277,7 +291,9 @@ public sealed class LiveTotalBettingMetricsEvaluator
             CorrectedBetterRows = correctedBetter,
             CorrectedWorseRows = correctedWorse,
             CorrectedBetterRate = correctedBetter / (double)n,
-            CorrectedWorseRate = correctedWorse / (double)n
+            CorrectedWorseRate = correctedWorse / (double)n,
+            StateCorrectionAppliedRows = rows.Count(x => x.StateCorrectionApplied),
+            StateCorrectionGatedRows = rows.Count(x => x.StateCorrectionGated)
         };
     }
 
@@ -313,7 +329,9 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 AverageProbabilityMove = rows.Average(x => x.CorrectedProbability - x.BaselineProbability),
                 ActualOverRate = rows.Average(x => BoolToDouble(x.ActualOver)),
                 BaselineBrier = rows.Average(x => Squared(x.BaselineProbability - BoolToDouble(x.ActualOver))),
-                CorrectedBrier = rows.Average(x => Squared(x.CorrectedProbability - BoolToDouble(x.ActualOver)))
+                CorrectedBrier = rows.Average(x => Squared(x.CorrectedProbability - BoolToDouble(x.ActualOver))),
+                StateCorrectionAppliedRows = rows.Count(x => x.StateCorrectionApplied),
+                StateCorrectionGatedRows = rows.Count(x => x.StateCorrectionGated)
             });
         }
 
@@ -488,6 +506,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
         if (_options.TargetLines.Count == 0)
             throw new ArgumentException("At least one target line is required.");
         _ = LiveTotalDecisionScope.Normalize(_options.DecisionScope);
+        _ = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope);
     }
 
     private static int TriggerOrder(string stateTrigger)
@@ -666,7 +685,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
     private static string ToSummaryCsv(IReadOnlyCollection<LiveTotalBettingMetricSummary> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Scope,StateTrigger,Line,Rows,Matches,BaselineAvgProb,CorrectedAvgProb,ActualOverRate,BaselineBrier,CorrectedBrier,BrierImprovementPct,BaselineLogLoss,CorrectedLogLoss,LogLossImprovementPct,BaselineDirectionAccuracy,CorrectedDirectionAccuracy,DirectionAccuracyDiffPctPoints,AverageProbabilityMove,CorrectedBetterRows,CorrectedWorseRows,CorrectedBetterRate,CorrectedWorseRate");
+        sb.AppendLine("Scope,StateTrigger,Line,Rows,Matches,BaselineAvgProb,CorrectedAvgProb,ActualOverRate,BaselineBrier,CorrectedBrier,BrierImprovementPct,BaselineLogLoss,CorrectedLogLoss,LogLossImprovementPct,BaselineDirectionAccuracy,CorrectedDirectionAccuracy,DirectionAccuracyDiffPctPoints,AverageProbabilityMove,CorrectedBetterRows,CorrectedWorseRows,CorrectedBetterRate,CorrectedWorseRate,StateCorrectionAppliedRows,StateCorrectionGatedRows");
 
         foreach (LiveTotalBettingMetricSummary row in rows)
         {
@@ -692,7 +711,9 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 row.CorrectedBetterRows.ToString(CultureInfo.InvariantCulture),
                 row.CorrectedWorseRows.ToString(CultureInfo.InvariantCulture),
                 D(row.CorrectedBetterRate),
-                D(row.CorrectedWorseRate)));
+                D(row.CorrectedWorseRate),
+                row.StateCorrectionAppliedRows.ToString(CultureInfo.InvariantCulture),
+                row.StateCorrectionGatedRows.ToString(CultureInfo.InvariantCulture)));
         }
 
         return sb.ToString();
@@ -701,7 +722,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
     private static string ToEdgeBucketCsv(IReadOnlyCollection<LiveTotalBettingEdgeBucketSummary> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Scope,StateTrigger,Line,EdgeBucket,Rows,Matches,AverageBaselineProbability,AverageCorrectedProbability,AverageProbabilityMove,ActualOverRate,BaselineBrier,CorrectedBrier");
+        sb.AppendLine("Scope,StateTrigger,Line,EdgeBucket,Rows,Matches,AverageBaselineProbability,AverageCorrectedProbability,AverageProbabilityMove,ActualOverRate,BaselineBrier,CorrectedBrier,StateCorrectionAppliedRows,StateCorrectionGatedRows");
 
         foreach (LiveTotalBettingEdgeBucketSummary row in rows)
         {
@@ -717,7 +738,9 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 D(row.AverageProbabilityMove),
                 D(row.ActualOverRate),
                 D(row.BaselineBrier),
-                D(row.CorrectedBrier)));
+                D(row.CorrectedBrier),
+                row.StateCorrectionAppliedRows.ToString(CultureInfo.InvariantCulture),
+                row.StateCorrectionGatedRows.ToString(CultureInfo.InvariantCulture)));
         }
 
         return sb.ToString();
@@ -757,5 +780,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
         public bool ActualOver { get; set; }
         public double BaselineProbability { get; set; }
         public double CorrectedProbability { get; set; }
+        public bool StateCorrectionApplied { get; set; }
+        public bool StateCorrectionGated { get; set; }
     }
 }

@@ -45,7 +45,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset --profile china-super-league --validation true");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration --profile china-super-league --validation true");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction --profile china-super-league --validation true");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-performance --profile china-super-league --validation true --compare-scopes true");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-performance --profile china-super-league --validation true --compare-scopes true --state-correction-scope fixed-minute");
     }
 
     private static void PrintCommonArguments()
@@ -57,6 +57,7 @@ public static class HelpPrinter
         Console.WriteLine("  --test-season-ids                 Comma-separated test season ids override.");
         Console.WriteLine("  --input                           Calibration dataset CSV override.");
         Console.WriteLine("  --state-correction                State correction JSON override.");
+        Console.WriteLine("  --state-correction-scope          fixed-minute | all | none. Default: fixed-minute.");
         Console.WriteLine("  --model-output                    Model evaluation CSV path for evaluate-live-total-performance.");
         Console.WriteLine("  --betting-output                  Betting metrics CSV path for evaluate-live-total-performance.");
         Console.WriteLine("  --edge-output                     Probability move bucket CSV path.");

@@ -30,3 +30,11 @@ For each match:
 ## Missing odds
 
 Rows without market total remain in the calibration CSV but are skipped by fitting/evaluation commands.
+
+## Correction gating patch
+
+- Added `--state-correction-scope fixed-minute|all|none` to `evaluate-live-total-performance` and `price-live-total`.
+- Default scope is `fixed-minute`.
+- When correction is gated out, factor is forced to `1.0` and the row remains eligible instead of being blocked as an unsupported sparse bucket.
+- `AfterGoal` and `AfterRedCard` are therefore baseline-only by default.
+- Added `StateCorrectionAppliedRows` and `StateCorrectionGatedRows` to model evaluation, betting metrics, and probability-move bucket CSV output.

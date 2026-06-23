@@ -11,6 +11,7 @@ public sealed class LiveTotalModelEvaluationOptions
     public string OutputPath { get; set; } = string.Empty;
     public List<int> TestSeasonIds { get; } = [];
     public string DecisionScope { get; set; } = LiveTotalDecisionScope.FullModel;
+    public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public bool CompareScopes { get; set; }
 }
 
@@ -23,6 +24,9 @@ public sealed class LiveTotalModelEvaluationResult
     public int TestRows { get; set; }
     public int RowsSkippedMissingExpectedFinalGoals { get; set; }
     public int SupportedRows { get; set; }
+    public int StateCorrectionAppliedRows { get; set; }
+    public int StateCorrectionGatedRows { get; set; }
+    public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public List<string> ScopesEvaluated { get; } = [];
     public List<LiveTotalModelEvaluationSummary> Summaries { get; } = [];
 }
@@ -39,6 +43,8 @@ public sealed class LiveTotalModelEvaluationSummary
     public double StateCorrectedBias { get; set; }
     public double BaselineRmse { get; set; }
     public double StateCorrectedRmse { get; set; }
+    public int StateCorrectionAppliedRows { get; set; }
+    public int StateCorrectionGatedRows { get; set; }
 }
 
 public sealed class LiveTotalModelEvaluator
@@ -79,8 +85,9 @@ public sealed class LiveTotalModelEvaluator
                 continue;
             }
 
-            LiveTotalStateCorrectionResolution resolved = LiveTotalStateCorrectionResolver.Resolve(
+            LiveTotalStateCorrectionResolution resolved = LiveTotalStateCorrectionGate.Resolve(
                 correction,
+                _options.StateCorrectionScope,
                 row.StateTrigger,
                 row.Minute,
                 row.HomeGoals,
@@ -102,7 +109,9 @@ public sealed class LiveTotalModelEvaluator
                     Scope = scope,
                     Row = row,
                     Baseline = baseline,
-                    StateCorrected = stateCorrected
+                    StateCorrected = stateCorrected,
+                    StateCorrectionApplied = LiveTotalStateCorrectionGate.IsApplied(resolved),
+                    StateCorrectionGated = LiveTotalStateCorrectionGate.IsGatedOut(resolved)
                 });
             }
         }
@@ -115,7 +124,10 @@ public sealed class LiveTotalModelEvaluator
             RowsRead = rows.Count,
             TestRows = testRows.Count,
             RowsSkippedMissingExpectedFinalGoals = rowsSkippedMissingExpectedFinalGoals,
-            SupportedRows = observations.Count
+            SupportedRows = observations.Count,
+            StateCorrectionAppliedRows = observations.Count(x => x.StateCorrectionApplied),
+            StateCorrectionGatedRows = observations.Count(x => x.StateCorrectionGated),
+            StateCorrectionScope = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope)
         };
         result.ScopesEvaluated.AddRange(scopes);
 
@@ -154,7 +166,9 @@ public sealed class LiveTotalModelEvaluator
             BaselineBias = rows.Average(x => x.Baseline - x.Row.ActualRemainingGoals),
             StateCorrectedBias = rows.Average(x => x.StateCorrected - x.Row.ActualRemainingGoals),
             BaselineRmse = Math.Sqrt(rows.Average(x => Squared(x.Baseline - x.Row.ActualRemainingGoals))),
-            StateCorrectedRmse = Math.Sqrt(rows.Average(x => Squared(x.StateCorrected - x.Row.ActualRemainingGoals)))
+            StateCorrectedRmse = Math.Sqrt(rows.Average(x => Squared(x.StateCorrected - x.Row.ActualRemainingGoals))),
+            StateCorrectionAppliedRows = rows.Count(x => x.StateCorrectionApplied),
+            StateCorrectionGatedRows = rows.Count(x => x.StateCorrectionGated)
         };
     }
 
@@ -171,6 +185,7 @@ public sealed class LiveTotalModelEvaluator
         if (_options.TestSeasonIds.Count == 0)
             throw new ArgumentException("Missing required argument --test-season-ids.");
         _ = LiveTotalDecisionScope.Normalize(_options.DecisionScope);
+        _ = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope);
     }
 
     private string ResolveOutputPath()
@@ -240,7 +255,7 @@ public sealed class LiveTotalModelEvaluator
     private static string ToCsv(IReadOnlyCollection<LiveTotalModelEvaluationSummary> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Scope,StateTrigger,Rows,Matches,BaselineMae,StateCorrectedMae,BaselineBias,StateCorrectedBias,BaselineRmse,StateCorrectedRmse");
+        sb.AppendLine("Scope,StateTrigger,Rows,Matches,BaselineMae,StateCorrectedMae,BaselineBias,StateCorrectedBias,BaselineRmse,StateCorrectedRmse,StateCorrectionAppliedRows,StateCorrectionGatedRows");
         foreach (LiveTotalModelEvaluationSummary row in rows)
         {
             sb.AppendLine(string.Join(',',
@@ -253,7 +268,9 @@ public sealed class LiveTotalModelEvaluator
                 D(row.BaselineBias),
                 D(row.StateCorrectedBias),
                 D(row.BaselineRmse),
-                D(row.StateCorrectedRmse)));
+                D(row.StateCorrectedRmse),
+                row.StateCorrectionAppliedRows.ToString(CultureInfo.InvariantCulture),
+                row.StateCorrectionGatedRows.ToString(CultureInfo.InvariantCulture)));
         }
 
         return sb.ToString();
@@ -396,5 +413,7 @@ public sealed class LiveTotalModelEvaluator
         public InputRow Row { get; set; } = new();
         public double Baseline { get; set; }
         public double StateCorrected { get; set; }
+        public bool StateCorrectionApplied { get; set; }
+        public bool StateCorrectionGated { get; set; }
     }
 }

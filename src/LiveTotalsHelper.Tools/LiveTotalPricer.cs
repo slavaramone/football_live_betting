@@ -8,6 +8,7 @@ public sealed class LiveTotalPriceOptions
 {
     public string ModelPath { get; set; } = string.Empty;
     public string StateCorrectionPath { get; set; } = string.Empty;
+    public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public string EmpiricalSettlementPath { get; set; } = string.Empty;
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public double StartingLine { get; set; }
@@ -39,6 +40,7 @@ public sealed class LiveTotalPriceResult
 {
     public string ModelPath { get; set; } = string.Empty;
     public string StateCorrectionPath { get; set; } = string.Empty;
+    public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
     public string EmpiricalSettlementPath { get; set; } = string.Empty;
     public string StateTrigger { get; set; } = LiveTotalStateTrigger.FixedMinute;
     public string League { get; set; } = string.Empty;
@@ -150,6 +152,7 @@ public sealed class LiveTotalPricer
         {
             ModelPath = _options.ModelPath,
             StateCorrectionPath = _options.StateCorrectionPath,
+            StateCorrectionScope = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope),
             EmpiricalSettlementPath = _options.EmpiricalSettlementPath,
             StateTrigger = LiveTotalStateTrigger.Normalize(_options.StateTrigger),
             League = model.League,
@@ -342,7 +345,7 @@ public sealed class LiveTotalPricer
             PropertyNameCaseInsensitive = true
         }, cancellationToken) ?? throw new InvalidOperationException("Could not read state correction JSON.");
 
-        return LiveTotalStateCorrectionResolver.Resolve(correction, _options.StateTrigger, _options.Minute, _options.HomeGoals, _options.AwayGoals);
+        return LiveTotalStateCorrectionGate.Resolve(correction, _options.StateCorrectionScope, _options.StateTrigger, _options.Minute, _options.HomeGoals, _options.AwayGoals);
     }
 
     private LiveTotalSideDecision BuildSideDecision(double line, double? edge, double probabilityMove, bool stateCorrectionSupported, string stateTrigger, bool hasRecentGoal, bool hasRedCard, string side)
@@ -431,6 +434,8 @@ public sealed class LiveTotalPricer
             throw new ArgumentException("Missing required argument --model.");
         if (!File.Exists(_options.ModelPath))
             throw new FileNotFoundException("Timing model JSON was not found.", _options.ModelPath);
+        _ = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope);
+
         if (_options.StartingLine <= 0)
             throw new ArgumentException("--starting-line must be greater than 0.");
         if (_options.StartingOverOdds <= 1.0)

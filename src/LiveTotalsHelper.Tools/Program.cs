@@ -367,6 +367,7 @@ static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
         throw new ArgumentException("Missing required argument --training-season-ids, or provide --profile with training season ids.");
 
     string decisionScope = parsed.String("scope", parsed.String("decision-scope", LiveTotalDecisionScope.FullModel));
+    string stateCorrectionScope = parsed.String("state-correction-scope", parsed.String("correction-scope", LiveTotalStateCorrectionScope.FixedMinute));
     bool compareScopes = parsed.Bool("compare-scopes", false);
 
     var modelOptions = new LiveTotalModelEvaluationOptions
@@ -375,6 +376,7 @@ static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
         StateCorrectionPath = stateCorrectionPath,
         OutputPath = parsed.String("model-output", parsed.String("output", defaultModelOutput)),
         DecisionScope = decisionScope,
+        StateCorrectionScope = stateCorrectionScope,
         CompareScopes = compareScopes
     };
     foreach (int seasonId in testSeasonIds)
@@ -403,6 +405,7 @@ static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
         EdgeBucketOutputPath = parsed.String("edge-output", string.Empty),
         EdgeBucketStep = parsed.Double("edge-bucket-step", 0.02),
         DecisionScope = decisionScope,
+        StateCorrectionScope = stateCorrectionScope,
         CompareScopes = compareScopes,
         EmpiricalSettlementMinBucketRows = parsed.Int("settlement-min-bucket-rows", 80),
         EmpiricalSettlementMinBucketMatches = parsed.Int("settlement-min-bucket-matches", 40),
@@ -430,6 +433,7 @@ static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
     Console.WriteLine("Live total performance evaluation done.");
     Console.WriteLine($"Input: {inputPath}");
     Console.WriteLine($"State correction: {stateCorrectionPath}");
+    Console.WriteLine($"State correction scope: {LiveTotalStateCorrectionScope.Normalize(stateCorrectionScope)}");
     Console.WriteLine($"Training seasons: {string.Join(", ", trainingSeasonIds)}");
     Console.WriteLine($"Test seasons: {string.Join(", ", testSeasonIds)}");
     Console.WriteLine($"Scopes: {string.Join(", ", modelResult.ScopesEvaluated)}");
@@ -439,18 +443,20 @@ static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
     Console.WriteLine($"Model rows skipped without expected final goals: {modelResult.RowsSkippedMissingExpectedFinalGoals}");
     Console.WriteLine($"Betting rows skipped without expected final goals: {bettingResult.RowsSkippedMissingExpectedFinalGoals}");
     Console.WriteLine($"Empirical settlement unsupported rows skipped: {bettingResult.UnsupportedEmpiricalRows}");
+    Console.WriteLine($"Model state-correction applied rows: {modelResult.StateCorrectionAppliedRows}; gated rows: {modelResult.StateCorrectionGatedRows}");
+    Console.WriteLine($"Betting state-correction applied rows: {bettingResult.StateCorrectionAppliedRows}; gated rows: {bettingResult.StateCorrectionGatedRows}");
 
     Console.WriteLine();
     Console.WriteLine("Model metrics:");
-    Console.WriteLine("Scope                    Trigger       Rows  Matches  BaseMAE  CorrMAE  BaseBias  CorrBias");
+    Console.WriteLine("Scope                    Trigger       Rows  Matches  BaseMAE  CorrMAE  BaseBias  CorrBias  Applied  Gated");
     foreach (LiveTotalModelEvaluationSummary summary in modelResult.Summaries.Where(x => x.StateTrigger == "All" || x.StateTrigger == LiveTotalStateTrigger.FixedMinute || x.StateTrigger == LiveTotalStateTrigger.AfterGoal))
-        Console.WriteLine($"{summary.Scope,-24} {summary.StateTrigger,-13} {summary.Rows,5}  {summary.Matches,7}  {summary.BaselineMae,7:0.###}  {summary.StateCorrectedMae,7:0.###}  {summary.BaselineBias,8:0.###}  {summary.StateCorrectedBias,8:0.###}");
+        Console.WriteLine($"{summary.Scope,-24} {summary.StateTrigger,-13} {summary.Rows,5}  {summary.Matches,7}  {summary.BaselineMae,7:0.###}  {summary.StateCorrectedMae,7:0.###}  {summary.BaselineBias,8:0.###}  {summary.StateCorrectedBias,8:0.###}  {summary.StateCorrectionAppliedRows,7}  {summary.StateCorrectionGatedRows,5}");
 
     Console.WriteLine();
     Console.WriteLine("Betting metrics:");
-    Console.WriteLine("Scope                    Trigger       Line  Rows   BaseBr  CorrBr  BrImp%  BaseLL  CorrLL  LLImp%  BaseAcc  CorrAcc  AccDiff");
+    Console.WriteLine("Scope                    Trigger       Line  Rows   BaseBr  CorrBr  BrImp%  BaseLL  CorrLL  LLImp%  BaseAcc  CorrAcc  AccDiff  Applied  Gated");
     foreach (LiveTotalBettingMetricSummary row in bettingResult.Summaries.Where(x => x.StateTrigger == "All" || x.StateTrigger == LiveTotalStateTrigger.FixedMinute || x.StateTrigger == LiveTotalStateTrigger.AfterGoal))
-        Console.WriteLine($"{row.Scope,-24} {row.StateTrigger,-13} {row.Line,4:0.##} {row.Rows,5}  {row.BaselineBrier,6:0.###}  {row.CorrectedBrier,6:0.###}  {row.BrierImprovementPct,6:0.#}  {row.BaselineLogLoss,6:0.###}  {row.CorrectedLogLoss,6:0.###}  {row.LogLossImprovementPct,6:0.#}  {row.BaselineDirectionAccuracy,7:P1}  {row.CorrectedDirectionAccuracy,7:P1}  {row.DirectionAccuracyDiffPctPoints,7:0.#}");
+        Console.WriteLine($"{row.Scope,-24} {row.StateTrigger,-13} {row.Line,4:0.##} {row.Rows,5}  {row.BaselineBrier,6:0.###}  {row.CorrectedBrier,6:0.###}  {row.BrierImprovementPct,6:0.#}  {row.BaselineLogLoss,6:0.###}  {row.CorrectedLogLoss,6:0.###}  {row.LogLossImprovementPct,6:0.#}  {row.BaselineDirectionAccuracy,7:P1}  {row.CorrectedDirectionAccuracy,7:P1}  {row.DirectionAccuracyDiffPctPoints,7:0.#}  {row.StateCorrectionAppliedRows,7}  {row.StateCorrectionGatedRows,5}");
 
     return 0;
 }
@@ -593,6 +599,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     {
         ModelPath = modelPath,
         StateCorrectionPath = parsed.String("state-correction", profile?.StateCorrectionPath ?? string.Empty),
+        StateCorrectionScope = parsed.String("state-correction-scope", parsed.String("correction-scope", LiveTotalStateCorrectionScope.FixedMinute)),
         EmpiricalSettlementPath = parsed.String("empirical-settlement", profile?.GetEmpiricalSettlementPath() ?? string.Empty),
         StateTrigger = LiveTotalStateTrigger.Normalize(parsed.String("state-trigger", LiveTotalStateTrigger.FixedMinute)),
         StartingLine = parsed.RequiredDouble("starting-line"),
@@ -726,6 +733,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         Console.WriteLine($"Profile betting rules loaded: {options.LiveBettingRules.Count}");
     Console.WriteLine($"Remaining share: Weibull {result.WeibullRemainingShare:P1}, Empirical {result.EmpiricalRemainingShare:P1}, Used {result.TimingRemainingShare:P1}");
     Console.WriteLine($"Remaining xG before state correction: {result.RemainingXgBeforeStateCorrection:0.###}");
+    Console.WriteLine($"State correction scope: {LiveTotalStateCorrectionScope.Normalize(options.StateCorrectionScope)}");
     Console.WriteLine($"State correction: {result.StateCorrectionFactor:0.###} ({result.StateCorrectionSource})");
     Console.WriteLine($"State correction supported for betting: {result.StateCorrectionSupported}");
     Console.WriteLine($"Remaining xG before volume: {result.RemainingXgBeforeVolume:0.###}");
