@@ -1,15 +1,32 @@
-# Patch notes
+# Patch notes - market-total base
 
-- Removed goal-model comparison commands and implementation.
-- Removed all Poisson-related model/pricing code from the project.
-- Removed old app model service wiring that depended on Poisson calculations.
-- Kept only these modeling commands:
-  - `fit-weibull`
-  - `build-live-total-calibration-dataset`
-  - `analyze-live-total-calibration`
-  - `fit-live-total-state-correction`
-  - `evaluate-live-total-performance`
-- Replaced separate model and betting evaluation commands with `evaluate-live-total-performance`.
-- Betting metrics now use empirical remaining-goals settlement fitted internally from training seasons during evaluation.
-- Removed duplicate/old league profile files; only `config/league-profiles.json` remains.
-- Updated profile loading defaults to `config/league-profiles.json` and made relative profile resolution search upward from the app/tool output directory.
+Implemented market-total expected final goals as the offline live-total base.
+
+## Changed
+
+- `build-live-total-calibration-dataset` now reads imported Flashscore Over/Under odds and selects a market expected final-goals anchor per match.
+- Calibration CSV now includes:
+  - `MarketTotalLine`
+  - `MarketTotalSource`
+  - `MarketExpectedFinalGoals`
+  - `ExpectedFinalGoals`
+  - `ExpectedFinalGoalsSource`
+- State correction fitting now uses row-level market expected final goals:
+  - `baselineRemaining = ExpectedFinalGoals * TimingRemainingShare`
+  - rows without `ExpectedFinalGoals` are skipped.
+- Calibration analysis now uses market expected final goals instead of league average final goals.
+- Model evaluation now uses market expected final goals instead of league average final goals.
+- Betting metrics now uses market expected final goals instead of league average final goals.
+
+## Market total selection
+
+For each match:
+
+1. Clean complete Over/Under pairs are built from `FlashscoreOdds`.
+2. Suspicious overround pairs are ignored.
+3. Each line/odds pair is converted to expected final goals using the existing market-total estimator.
+4. The match anchor is the median expected final goals across clean pairs.
+
+## Missing odds
+
+Rows without market total remain in the calibration CSV but are skipped by fitting/evaluation commands.

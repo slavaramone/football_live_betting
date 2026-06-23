@@ -31,6 +31,7 @@ public sealed class LiveTotalBettingMetricsEvaluationResult
     public string EdgeBucketOutputPath { get; set; } = string.Empty;
     public int RowsRead { get; set; }
     public int TestRows { get; set; }
+    public int RowsSkippedMissingExpectedFinalGoals { get; set; }
     public int LineRows { get; set; }
     public int UnsupportedEmpiricalRows { get; set; }
     public List<string> ScopesEvaluated { get; } = [];
@@ -117,10 +118,17 @@ public sealed class LiveTotalBettingMetricsEvaluator
 
         var lineRows = new List<LineRow>();
         int unsupportedEmpiricalRows = 0;
+        int rowsSkippedMissingExpectedFinalGoals = 0;
 
         foreach (InputRow row in testRows)
         {
-            double baselineRemaining = correction.LeagueAverageFinalGoals * row.TimingRemainingShare;
+            if (!row.ExpectedFinalGoals.HasValue || row.ExpectedFinalGoals.Value <= 0.0)
+            {
+                rowsSkippedMissingExpectedFinalGoals++;
+                continue;
+            }
+
+            double baselineRemaining = row.ExpectedFinalGoals.Value * row.TimingRemainingShare;
             LiveTotalStateCorrectionResolution resolved = LiveTotalStateCorrectionResolver.Resolve(
                 correction,
                 row.StateTrigger,
@@ -180,6 +188,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
             EdgeBucketOutputPath = ResolveEdgeBucketOutputPath(),
             RowsRead = rows.Count,
             TestRows = testRows.Count,
+            RowsSkippedMissingExpectedFinalGoals = rowsSkippedMissingExpectedFinalGoals,
             LineRows = lineRows.Count,
             UnsupportedEmpiricalRows = unsupportedEmpiricalRows
         };
@@ -510,7 +519,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
         foreach (string required in new[]
         {
             "SeasonId", "MatchId", "StateTrigger", "Minute", "HomeGoals", "AwayGoals",
-            "CurrentTotalGoals", "TimingRemainingShare", "ActualFinalTotalGoals", "ActualRemainingGoals"
+            "CurrentTotalGoals", "TimingRemainingShare", "ExpectedFinalGoals", "ActualFinalTotalGoals", "ActualRemainingGoals"
         })
         {
             if (!index.ContainsKey(required))
@@ -531,6 +540,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 !TryGetInt(record, index, "AwayGoals", out int awayGoals) ||
                 !TryGetInt(record, index, "CurrentTotalGoals", out int currentTotalGoals) ||
                 !TryGetDouble(record, index, "TimingRemainingShare", out double timingRemainingShare) ||
+                !TryGetOptionalDouble(record, index, "ExpectedFinalGoals", out double? expectedFinalGoals) ||
                 !TryGetInt(record, index, "ActualFinalTotalGoals", out int actualFinalTotalGoals) ||
                 !TryGetInt(record, index, "ActualRemainingGoals", out int actualRemainingGoals))
                 continue;
@@ -545,6 +555,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 AwayGoals = awayGoals,
                 CurrentTotalGoals = currentTotalGoals,
                 TimingRemainingShare = timingRemainingShare,
+                ExpectedFinalGoals = expectedFinalGoals,
                 ActualFinalTotalGoals = actualFinalTotalGoals,
                 ActualRemainingGoals = actualRemainingGoals
             });
@@ -559,6 +570,21 @@ public sealed class LiveTotalBettingMetricsEvaluator
         return index.TryGetValue(column, out int position) &&
                position < record.Count &&
                int.TryParse(record[position], NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+    }
+
+    private static bool TryGetOptionalDouble(IReadOnlyList<string> record, IReadOnlyDictionary<string, int> index, string column, out double? value)
+    {
+        value = null;
+        if (!index.TryGetValue(column, out int position) || position >= record.Count)
+            return false;
+        if (string.IsNullOrWhiteSpace(record[position]))
+            return true;
+        if (double.TryParse(record[position], NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+        {
+            value = parsed;
+            return true;
+        }
+        return false;
     }
 
     private static bool TryGetDouble(IReadOnlyList<string> record, IReadOnlyDictionary<string, int> index, string column, out double value)
@@ -717,6 +743,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
         public int AwayGoals { get; set; }
         public int CurrentTotalGoals { get; set; }
         public double TimingRemainingShare { get; set; }
+        public double? ExpectedFinalGoals { get; set; }
         public int ActualFinalTotalGoals { get; set; }
         public int ActualRemainingGoals { get; set; }
     }

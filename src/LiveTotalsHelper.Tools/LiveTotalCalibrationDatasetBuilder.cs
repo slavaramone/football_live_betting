@@ -32,6 +32,10 @@ public sealed class LiveTotalCalibrationDatasetResult
     public int AfterGoalStatesWritten { get; set; }
     public int AfterRedCardStatesWritten { get; set; }
     public int StatesWritten => FixedMinuteStatesWritten + AfterGoalStatesWritten + AfterRedCardStatesWritten;
+    public int FinishedMatchesWithMarketTotal { get; set; }
+    public int FinishedMatchesMissingMarketTotal { get; set; }
+    public int RowsWithMarketTotal { get; set; }
+    public int RowsMissingMarketTotal { get; set; }
     public List<int> SeasonsIncluded { get; } = [];
     public string OutputPath { get; set; } = string.Empty;
     public List<string> Warnings { get; } = [];
@@ -83,6 +87,8 @@ public sealed class LiveTotalCalibrationDatasetBuilder
             .GroupBy(x => x.MatchId)
             .ToDictionary(x => x.Key, x => x.ToList());
 
+        Dictionary<int, SelectedMarketTotal> marketTotalsByMatch = await LoadSelectedMarketTotalsAsync(matchIds, cancellationToken);
+
         var rows = new List<LiveTotalCalibrationDatasetRow>();
         var unreliableExamples = new List<string>();
 
@@ -93,6 +99,12 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                 continue;
 
             result.FinishedMatches++;
+            marketTotalsByMatch.TryGetValue(match.Id, out SelectedMarketTotal? marketTotal);
+            if (marketTotal is null)
+                result.FinishedMatchesMissingMarketTotal++;
+            else
+                result.FinishedMatchesWithMarketTotal++;
+
             List<MatchEventEntity> matchEvents = eventsByMatch.GetValueOrDefault(match.Id) ?? [];
             List<MatchEventEntity> orderedEvents = matchEvents
                 .OrderBy(x => x.TimeSeconds ?? (x.Minute * 60))
@@ -132,6 +144,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                     finalAway,
                     finalTotal,
                     reliable,
+                    marketTotal,
                     minute,
                     LiveTotalStateTrigger.FixedMinute,
                     triggerEventMinute: -1,
@@ -163,6 +176,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                             finalAway,
                             finalTotal,
                             reliable,
+                            marketTotal,
                             e.Minute,
                             LiveTotalStateTrigger.AfterGoal,
                             e.Minute,
@@ -184,6 +198,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
                             finalAway,
                             finalTotal,
                             reliable,
+                            marketTotal,
                             e.Minute,
                             LiveTotalStateTrigger.AfterRedCard,
                             e.Minute,
@@ -196,8 +211,13 @@ public sealed class LiveTotalCalibrationDatasetBuilder
 
         }
 
+        result.RowsWithMarketTotal = rows.Count(x => x.ExpectedFinalGoals.HasValue);
+        result.RowsMissingMarketTotal = rows.Count - result.RowsWithMarketTotal;
+
         if (unreliableExamples.Count > 0)
             result.Warnings.Add($"Unreliable matches skipped: {result.UnreliableFinishedMatches}. Examples: {string.Join("; ", unreliableExamples)}");
+        if (result.FinishedMatchesMissingMarketTotal > 0)
+            result.Warnings.Add($"Market total missing for {result.FinishedMatchesMissingMarketTotal}/{result.FinishedMatches} finished matches. Model/evaluation commands skip rows without ExpectedFinalGoals.");
 
         string outputPath = ResolveOutputPath();
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
@@ -213,6 +233,7 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         int finalAway,
         int finalTotal,
         bool reliable,
+        SelectedMarketTotal? marketTotal,
         int minute,
         string stateTrigger,
         int triggerEventMinute,
@@ -263,6 +284,11 @@ public sealed class LiveTotalCalibrationDatasetBuilder
             WeibullRemainingShare = timing.WeibullRemainingShare,
             EmpiricalRemainingShare = timing.EmpiricalRemainingShare,
             TimingRemainingShare = timing.TimingRemainingShare,
+            MarketTotalLine = marketTotal?.RepresentativeLine,
+            MarketTotalSource = marketTotal?.Source ?? string.Empty,
+            MarketExpectedFinalGoals = marketTotal?.ExpectedFinalGoals,
+            ExpectedFinalGoals = marketTotal?.ExpectedFinalGoals,
+            ExpectedFinalGoalsSource = marketTotal is null ? string.Empty : "MarketTotal",
             ActualFinalHomeGoals = finalHome,
             ActualFinalAwayGoals = finalAway,
             ActualFinalTotalGoals = finalTotal,
@@ -320,6 +346,95 @@ public sealed class LiveTotalCalibrationDatasetBuilder
             .ThenBy(x => x.Sequence)
             .ToList();
     }
+
+    private async Task<Dictionary<int, SelectedMarketTotal>> LoadSelectedMarketTotalsAsync(HashSet<int> matchIds, CancellationToken cancellationToken)
+    {
+        List<FlashscoreOddsEntity> odds = await _db.FlashscoreOdds.AsNoTracking()
+            .Where(x => matchIds.Contains(x.MatchId) && x.Line.HasValue && x.Odds > 1.0)
+            .ToListAsync(cancellationToken);
+
+        var candidates = new List<MarketTotalCandidate>();
+        foreach (var group in odds
+            .Where(x => IsTotalMarket(x.Market))
+            .GroupBy(x => new { x.MatchId, x.Bookmaker, Line = Math.Round(x.Line!.Value, 2) }))
+        {
+            FlashscoreOddsEntity? over = group
+                .Where(x => IsOverSelection(x.Selection))
+                .OrderByDescending(x => x.DownloadedAtUtc ?? DateTime.MinValue)
+                .ThenByDescending(x => x.ImportedAtUtc)
+                .FirstOrDefault();
+            FlashscoreOddsEntity? under = group
+                .Where(x => IsUnderSelection(x.Selection))
+                .OrderByDescending(x => x.DownloadedAtUtc ?? DateTime.MinValue)
+                .ThenByDescending(x => x.ImportedAtUtc)
+                .FirstOrDefault();
+
+            if (over is null || under is null)
+                continue;
+
+            double overround = 1.0 / over.Odds + 1.0 / under.Odds;
+            if (overround < 0.90 || overround > 1.25)
+                continue;
+
+            double fairOver = TotalGoalsPricingCalculator.RemoveTwoWayMargin(over.Odds, under.Odds);
+            double expected = TotalGoalsPricingCalculator.EstimateTotalGoalsFromLine(group.Key.Line, fairOver);
+            candidates.Add(new MarketTotalCandidate(
+                group.Key.MatchId,
+                group.Key.Bookmaker,
+                group.Key.Line,
+                over.Odds,
+                under.Odds,
+                fairOver,
+                expected,
+                overround));
+        }
+
+        return candidates
+            .GroupBy(x => x.MatchId)
+            .ToDictionary(
+                x => x.Key,
+                x =>
+                {
+                    List<MarketTotalCandidate> matchCandidates = x.ToList();
+                    MarketTotalCandidate representative = matchCandidates
+                        .OrderBy(c => Math.Abs(c.FairOverProbability - 0.50))
+                        .ThenBy(c => Math.Abs(c.Overround - 1.0))
+                        .First();
+                    double expected = Median(matchCandidates.Select(c => c.ExpectedFinalGoals));
+                    string source = $"{matchCandidates.Count} clean O/U pair(s); representative {representative.Bookmaker} line {representative.Line:0.##} O {representative.OverOdds:0.###} U {representative.UnderOdds:0.###}";
+                    return new SelectedMarketTotal(representative.Line, expected, source);
+                });
+    }
+
+    private static double Median(IEnumerable<double> values)
+    {
+        List<double> ordered = values.Where(x => x > 0 && !double.IsNaN(x) && !double.IsInfinity(x)).OrderBy(x => x).ToList();
+        if (ordered.Count == 0)
+            return 0.0;
+        int mid = ordered.Count / 2;
+        return ordered.Count % 2 == 1 ? ordered[mid] : (ordered[mid - 1] + ordered[mid]) / 2.0;
+    }
+
+    private static bool IsTotalMarket(string market)
+    {
+        string normalized = NormalizeToken(market);
+        return normalized == "overunder" || normalized.Contains("overunder", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsOverSelection(string selection)
+    {
+        string normalized = NormalizeToken(selection);
+        return normalized == "over" || normalized.StartsWith("over", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUnderSelection(string selection)
+    {
+        string normalized = NormalizeToken(selection);
+        return normalized == "under" || normalized.StartsWith("under", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeToken(string value)
+        => new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 
     private static async Task<WeibullModelFile> LoadModelAsync(string modelPath, CancellationToken cancellationToken)
     {
@@ -395,8 +510,13 @@ public sealed class LiveTotalCalibrationDatasetBuilder
         "Minute", "HomeGoals", "AwayGoals", "CurrentTotalGoals", "GoalDifference", "ScoreState", "DetailedScoreState",
         "HomeRedCards", "AwayRedCards", "RedCardDifference", "LastGoalMinute", "MinutesSinceLastGoal", "HasRecentGoal",
         "SelectedTimingGroup", "TimingFallback", "EmpiricalWeight", "WeibullRemainingShare", "EmpiricalRemainingShare", "TimingRemainingShare",
+        "MarketTotalLine", "MarketTotalSource", "MarketExpectedFinalGoals", "ExpectedFinalGoals", "ExpectedFinalGoalsSource",
         "ActualFinalHomeGoals", "ActualFinalAwayGoals", "ActualFinalTotalGoals", "ActualRemainingGoals", "AnyFutureGoal", "IsReliableMatch"
     ];
+
+    private sealed record MarketTotalCandidate(int MatchId, string Bookmaker, double Line, double OverOdds, double UnderOdds, double FairOverProbability, double ExpectedFinalGoals, double Overround);
+
+    private sealed record SelectedMarketTotal(double RepresentativeLine, double ExpectedFinalGoals, string Source);
 
     private sealed class TriggerTimelineEvent
 {
@@ -461,6 +581,11 @@ internal sealed class LiveTotalCalibrationDatasetRow
     public double WeibullRemainingShare { get; set; }
     public double EmpiricalRemainingShare { get; set; }
     public double TimingRemainingShare { get; set; }
+    public double? MarketTotalLine { get; set; }
+    public string MarketTotalSource { get; set; } = string.Empty;
+    public double? MarketExpectedFinalGoals { get; set; }
+    public double? ExpectedFinalGoals { get; set; }
+    public string ExpectedFinalGoalsSource { get; set; } = string.Empty;
     public int ActualFinalHomeGoals { get; set; }
     public int ActualFinalAwayGoals { get; set; }
     public int ActualFinalTotalGoals { get; set; }
@@ -481,6 +606,7 @@ internal sealed class LiveTotalCalibrationDatasetRow
             Minute.ToString(CultureInfo.InvariantCulture), HomeGoals.ToString(CultureInfo.InvariantCulture), AwayGoals.ToString(CultureInfo.InvariantCulture), CurrentTotalGoals.ToString(CultureInfo.InvariantCulture), GoalDifference.ToString(CultureInfo.InvariantCulture), ScoreState, DetailedScoreState,
             HomeRedCards.ToString(CultureInfo.InvariantCulture), AwayRedCards.ToString(CultureInfo.InvariantCulture), RedCardDifference.ToString(CultureInfo.InvariantCulture), LastGoalMinute.ToString(CultureInfo.InvariantCulture), MinutesSinceLastGoal.ToString(CultureInfo.InvariantCulture), B(HasRecentGoal),
             SelectedTimingGroup, TimingFallback, D(EmpiricalWeight), D(WeibullRemainingShare), D(EmpiricalRemainingShare), D(TimingRemainingShare),
+            MarketTotalLine.HasValue ? D(MarketTotalLine.Value) : string.Empty, MarketTotalSource, MarketExpectedFinalGoals.HasValue ? D(MarketExpectedFinalGoals.Value) : string.Empty, ExpectedFinalGoals.HasValue ? D(ExpectedFinalGoals.Value) : string.Empty, ExpectedFinalGoalsSource,
             ActualFinalHomeGoals.ToString(CultureInfo.InvariantCulture), ActualFinalAwayGoals.ToString(CultureInfo.InvariantCulture), ActualFinalTotalGoals.ToString(CultureInfo.InvariantCulture), ActualRemainingGoals.ToString(CultureInfo.InvariantCulture), B(AnyFutureGoal), B(IsReliableMatch)
         ];
     }

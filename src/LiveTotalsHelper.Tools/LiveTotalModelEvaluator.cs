@@ -21,6 +21,7 @@ public sealed class LiveTotalModelEvaluationResult
     public string OutputPath { get; set; } = string.Empty;
     public int RowsRead { get; set; }
     public int TestRows { get; set; }
+    public int RowsSkippedMissingExpectedFinalGoals { get; set; }
     public int SupportedRows { get; set; }
     public List<string> ScopesEvaluated { get; } = [];
     public List<LiveTotalModelEvaluationSummary> Summaries { get; } = [];
@@ -69,8 +70,15 @@ public sealed class LiveTotalModelEvaluator
             : [LiveTotalDecisionScope.Normalize(_options.DecisionScope)];
 
         var observations = new List<Observation>();
+        int rowsSkippedMissingExpectedFinalGoals = 0;
         foreach (InputRow row in testRows)
         {
+            if (!row.ExpectedFinalGoals.HasValue || row.ExpectedFinalGoals.Value <= 0.0)
+            {
+                rowsSkippedMissingExpectedFinalGoals++;
+                continue;
+            }
+
             LiveTotalStateCorrectionResolution resolved = LiveTotalStateCorrectionResolver.Resolve(
                 correction,
                 row.StateTrigger,
@@ -81,7 +89,7 @@ public sealed class LiveTotalModelEvaluator
             if (!resolved.IsSupported)
                 continue;
 
-            double baseline = correction.LeagueAverageFinalGoals * row.TimingRemainingShare;
+            double baseline = row.ExpectedFinalGoals.Value * row.TimingRemainingShare;
             double stateCorrected = baseline * resolved.Factor;
 
             foreach (string scope in scopes)
@@ -106,6 +114,7 @@ public sealed class LiveTotalModelEvaluator
             OutputPath = ResolveOutputPath(),
             RowsRead = rows.Count,
             TestRows = testRows.Count,
+            RowsSkippedMissingExpectedFinalGoals = rowsSkippedMissingExpectedFinalGoals,
             SupportedRows = observations.Count
         };
         result.ScopesEvaluated.AddRange(scopes);
@@ -188,7 +197,7 @@ public sealed class LiveTotalModelEvaluator
         foreach (string required in new[]
         {
             "SeasonId", "MatchId", "StateTrigger", "Minute", "HomeGoals", "AwayGoals",
-            "TimingRemainingShare", "ActualRemainingGoals"
+            "TimingRemainingShare", "ExpectedFinalGoals", "ActualRemainingGoals"
         })
         {
             if (!index.ContainsKey(required))
@@ -207,6 +216,7 @@ public sealed class LiveTotalModelEvaluator
                 !TryGetInt(record, index, "HomeGoals", out int homeGoals) ||
                 !TryGetInt(record, index, "AwayGoals", out int awayGoals) ||
                 !TryGetDouble(record, index, "TimingRemainingShare", out double timingRemainingShare) ||
+                !TryGetOptionalDouble(record, index, "ExpectedFinalGoals", out double? expectedFinalGoals) ||
                 !TryGetDouble(record, index, "ActualRemainingGoals", out double actualRemainingGoals))
                 continue;
 
@@ -219,6 +229,7 @@ public sealed class LiveTotalModelEvaluator
                 HomeGoals = homeGoals,
                 AwayGoals = awayGoals,
                 TimingRemainingShare = timingRemainingShare,
+                ExpectedFinalGoals = expectedFinalGoals,
                 ActualRemainingGoals = actualRemainingGoals
             });
         }
@@ -274,6 +285,21 @@ public sealed class LiveTotalModelEvaluator
         return index.TryGetValue(column, out int position) &&
                position < record.Count &&
                int.TryParse(record[position], NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+    }
+
+    private static bool TryGetOptionalDouble(IReadOnlyList<string> record, IReadOnlyDictionary<string, int> index, string column, out double? value)
+    {
+        value = null;
+        if (!index.TryGetValue(column, out int position) || position >= record.Count)
+            return false;
+        if (string.IsNullOrWhiteSpace(record[position]))
+            return true;
+        if (double.TryParse(record[position], NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+        {
+            value = parsed;
+            return true;
+        }
+        return false;
     }
 
     private static bool TryGetDouble(IReadOnlyList<string> record, IReadOnlyDictionary<string, int> index, string column, out double value)
@@ -360,6 +386,7 @@ public sealed class LiveTotalModelEvaluator
         public int HomeGoals { get; set; }
         public int AwayGoals { get; set; }
         public double TimingRemainingShare { get; set; }
+        public double? ExpectedFinalGoals { get; set; }
         public double ActualRemainingGoals { get; set; }
     }
 

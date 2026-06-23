@@ -54,6 +54,9 @@ public sealed class LiveTotalStateCorrectionFitResult
     public int TrainingRowsUsed { get; set; }
     public int TrainingMatchesUsed { get; set; }
     public double LeagueAverageFinalGoals { get; set; }
+    public double AverageExpectedFinalGoals { get; set; }
+    public string ExpectedFinalGoalsSource { get; set; } = "MarketTotal";
+    public int RowsSkippedMissingExpectedFinalGoals { get; set; }
     public List<int> TrainingSeasonIds { get; } = [];
     public List<LiveTotalStateCorrectionBucket> Buckets { get; } = [];
 }
@@ -64,7 +67,11 @@ public sealed class LiveTotalStateCorrectionFile
     public string League { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; }
     public List<int> TrainingSeasonIds { get; set; } = [];
+    [JsonIgnore]
     public double LeagueAverageFinalGoals { get; set; }
+    public double AverageExpectedFinalGoals { get; set; }
+    public string ExpectedFinalGoalsSource { get; set; } = "MarketTotal";
+    public int RowsSkippedMissingExpectedFinalGoals { get; set; }
     public int MinBucketMatches { get; set; }
     public double MinFactor { get; set; }
     public double MaxFactor { get; set; }
@@ -205,16 +212,22 @@ public sealed class LiveTotalStateCorrectionFitter
         ValidateOptions();
 
         List<InputRow> rows = await ReadRowsAsync(_options.InputPath, cancellationToken);
-        List<InputRow> trainingRows = rows
+        List<InputRow> matchedTrainingRows = rows
             .Where(x => _options.TrainingSeasonIds.Contains(x.SeasonId))
             .ToList();
+        int rowsSkippedMissingExpectedFinalGoals = matchedTrainingRows.Count(x => !x.ExpectedFinalGoals.HasValue || x.ExpectedFinalGoals.Value <= 0.0);
+        List<InputRow> trainingRows = matchedTrainingRows
+            .Where(x => x.ExpectedFinalGoals.HasValue && x.ExpectedFinalGoals.Value > 0.0)
+            .ToList();
 
-        if (trainingRows.Count == 0)
+        if (matchedTrainingRows.Count == 0)
             throw new ArgumentException("No rows matched --training-season-ids.");
+        if (trainingRows.Count == 0)
+            throw new ArgumentException("No training rows have ExpectedFinalGoals. Rebuild the calibration dataset after importing total-market odds.");
 
-        double leagueAverageFinalGoals = trainingRows
+        double averageExpectedFinalGoals = trainingRows
             .GroupBy(x => x.MatchId)
-            .Select(x => x.First().ActualFinalTotalGoals)
+            .Select(x => x.First().ExpectedFinalGoals!.Value)
             .Average();
 
         string league = trainingRows.Select(x => x.LeagueName).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty;
@@ -228,11 +241,14 @@ public sealed class LiveTotalStateCorrectionFitter
             RowsRead = rows.Count,
             TrainingRowsUsed = trainingRows.Count,
             TrainingMatchesUsed = trainingRows.Select(x => x.MatchId).Distinct().Count(),
-            LeagueAverageFinalGoals = leagueAverageFinalGoals
+            LeagueAverageFinalGoals = averageExpectedFinalGoals,
+            AverageExpectedFinalGoals = averageExpectedFinalGoals,
+            ExpectedFinalGoalsSource = "MarketTotal",
+            RowsSkippedMissingExpectedFinalGoals = rowsSkippedMissingExpectedFinalGoals
         };
         result.TrainingSeasonIds.AddRange(_options.TrainingSeasonIds.OrderBy(x => x));
 
-        result.Buckets.AddRange(BuildBuckets(trainingRows, leagueAverageFinalGoals));
+        result.Buckets.AddRange(BuildBuckets(trainingRows));
 
         var modelFile = new LiveTotalStateCorrectionFile
         {
@@ -240,6 +256,9 @@ public sealed class LiveTotalStateCorrectionFitter
             CreatedAtUtc = DateTime.UtcNow,
             TrainingSeasonIds = result.TrainingSeasonIds.ToList(),
             LeagueAverageFinalGoals = result.LeagueAverageFinalGoals,
+            AverageExpectedFinalGoals = result.AverageExpectedFinalGoals,
+            ExpectedFinalGoalsSource = result.ExpectedFinalGoalsSource,
+            RowsSkippedMissingExpectedFinalGoals = result.RowsSkippedMissingExpectedFinalGoals,
             MinBucketMatches = _options.MinBucketMatches,
             MinFactor = _options.MinFactor,
             MaxFactor = _options.MaxFactor,
@@ -256,7 +275,7 @@ public sealed class LiveTotalStateCorrectionFitter
         return result;
     }
 
-    private List<LiveTotalStateCorrectionBucket> BuildBuckets(IReadOnlyCollection<InputRow> trainingRows, double leagueAverageFinalGoals)
+    private List<LiveTotalStateCorrectionBucket> BuildBuckets(IReadOnlyCollection<InputRow> trainingRows)
     {
         return trainingRows
             .Select(x => new { Row = x, MinuteBand = LiveTotalStateCorrectionResolver.MinuteBand(x.StateTrigger, x.Minute) })
@@ -271,7 +290,7 @@ public sealed class LiveTotalStateCorrectionFitter
                 int matches = bucketRows.Select(x => x.MatchId).Distinct().Count();
                 double actual = bucketRows.Average(x => x.ActualRemainingGoals);
                 double avgTiming = bucketRows.Average(x => x.TimingRemainingShare);
-                double baseline = leagueAverageFinalGoals * avgTiming;
+                double baseline = bucketRows.Average(x => x.ExpectedFinalGoals!.Value * x.TimingRemainingShare);
                 double raw = baseline > 0 ? actual / baseline : 1.0;
                 return new LiveTotalStateCorrectionBucket
                 {
@@ -357,7 +376,7 @@ public sealed class LiveTotalStateCorrectionFitter
         var index = headers.Select((name, position) => new { name, position })
             .ToDictionary(x => x.name, x => x.position, StringComparer.OrdinalIgnoreCase);
 
-        foreach (string required in new[] { "LeagueName", "SeasonId", "MatchId", "Minute", "DetailedScoreState", "TimingRemainingShare", "ActualFinalTotalGoals", "ActualRemainingGoals" })
+        foreach (string required in new[] { "LeagueName", "SeasonId", "MatchId", "Minute", "DetailedScoreState", "TimingRemainingShare", "ExpectedFinalGoals", "ActualFinalTotalGoals", "ActualRemainingGoals" })
         {
             if (!index.ContainsKey(required))
                 throw new ArgumentException($"Input CSV is missing required column '{required}'.");
@@ -373,6 +392,7 @@ public sealed class LiveTotalStateCorrectionFitter
                 !TryGetInt(record, index, "MatchId", out int matchId) ||
                 !TryGetInt(record, index, "Minute", out int minute) ||
                 !TryGetDouble(record, index, "TimingRemainingShare", out double timingRemainingShare) ||
+                !TryGetOptionalDouble(record, index, "ExpectedFinalGoals", out double? expectedFinalGoals) ||
                 !TryGetDouble(record, index, "ActualFinalTotalGoals", out double actualFinalTotalGoals) ||
                 !TryGetDouble(record, index, "ActualRemainingGoals", out double actualRemainingGoals))
                 continue;
@@ -392,6 +412,7 @@ public sealed class LiveTotalStateCorrectionFitter
                 Minute = minute,
                 DetailedScoreState = detailedScoreState,
                 TimingRemainingShare = timingRemainingShare,
+                ExpectedFinalGoals = expectedFinalGoals,
                 ActualFinalTotalGoals = actualFinalTotalGoals,
                 ActualRemainingGoals = actualRemainingGoals
             });
@@ -406,6 +427,21 @@ public sealed class LiveTotalStateCorrectionFitter
         return index.TryGetValue(column, out int position) &&
                position < record.Count &&
                int.TryParse(record[position], NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+    }
+
+    private static bool TryGetOptionalDouble(IReadOnlyList<string> record, IReadOnlyDictionary<string, int> index, string column, out double? value)
+    {
+        value = null;
+        if (!index.TryGetValue(column, out int position) || position >= record.Count)
+            return false;
+        if (string.IsNullOrWhiteSpace(record[position]))
+            return true;
+        if (double.TryParse(record[position], NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+        {
+            value = parsed;
+            return true;
+        }
+        return false;
     }
 
     private static bool TryGetDouble(IReadOnlyList<string> record, IReadOnlyDictionary<string, int> index, string column, out double value)
@@ -493,6 +529,7 @@ public sealed class LiveTotalStateCorrectionFitter
         public int Minute { get; set; }
         public string DetailedScoreState { get; set; } = string.Empty;
         public double TimingRemainingShare { get; set; }
+        public double? ExpectedFinalGoals { get; set; }
         public double ActualFinalTotalGoals { get; set; }
         public double ActualRemainingGoals { get; set; }
     }

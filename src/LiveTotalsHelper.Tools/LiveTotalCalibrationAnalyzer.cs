@@ -29,7 +29,8 @@ public sealed class LiveTotalCalibrationBucketResult
     public string DetailedScoreState { get; set; } = string.Empty;
     public int Rows { get; set; }
     public int Matches { get; set; }
-    public double LeagueAverageFinalGoals { get; set; }
+    public double AverageExpectedFinalGoals { get; set; }
+    public double TotalExpectedFinalGoals { get; set; }
     public double TotalFinalGoals { get; set; }
     public double ActualRemainingGoals { get; set; }
     public double ActualRemainingGoalsPerRow { get; set; }
@@ -46,7 +47,7 @@ public sealed class LiveTotalCalibrationTrainTestBucketResult
 
     public int TrainRows { get; set; }
     public int TrainMatches { get; set; }
-    public double TrainLeagueAverageFinalGoals { get; set; }
+    public double TrainAverageExpectedFinalGoals { get; set; }
     public double TrainActualRemainingGoalsPerRow { get; set; }
     public double TrainAverageTimingRemainingShare { get; set; }
     public double TrainBaselineRemainingGoalsPerRow { get; set; }
@@ -54,7 +55,7 @@ public sealed class LiveTotalCalibrationTrainTestBucketResult
 
     public int TestRows { get; set; }
     public int TestMatches { get; set; }
-    public double TestLeagueAverageFinalGoals { get; set; }
+    public double TestAverageExpectedFinalGoals { get; set; }
     public double TestActualRemainingGoalsPerRow { get; set; }
     public double TestAverageTimingRemainingShare { get; set; }
     public double TestBaselineRemainingGoalsPerRow { get; set; }
@@ -89,6 +90,7 @@ public sealed class LiveTotalCalibrationAnalyzer
 
         List<LiveTotalCalibrationInputRow> rows = await ReadRowsAsync(_options.InputPath, cancellationToken);
         var analyzedRows = rows
+            .Where(x => x.ExpectedFinalGoals.HasValue && x.ExpectedFinalGoals.Value > 0.0)
             .Select(x => new RowWithBand(x, ResolveMinuteBand(x.StateTrigger, x.Minute)))
             .Where(x => !string.IsNullOrWhiteSpace(x.MinuteBand))
             .ToList();
@@ -170,7 +172,7 @@ public sealed class LiveTotalCalibrationAnalyzer
 
                 TrainRows = tr?.Rows ?? 0,
                 TrainMatches = tr?.Matches ?? 0,
-                TrainLeagueAverageFinalGoals = tr?.LeagueAverageFinalGoals ?? 0.0,
+                TrainAverageExpectedFinalGoals = tr?.AverageExpectedFinalGoals ?? 0.0,
                 TrainActualRemainingGoalsPerRow = tr?.ActualRemainingGoalsPerRow ?? 0.0,
                 TrainAverageTimingRemainingShare = tr?.AverageTimingRemainingShare ?? 0.0,
                 TrainBaselineRemainingGoalsPerRow = tr?.BaselineRemainingGoalsPerRow ?? 0.0,
@@ -178,7 +180,7 @@ public sealed class LiveTotalCalibrationAnalyzer
 
                 TestRows = te?.Rows ?? 0,
                 TestMatches = te?.Matches ?? 0,
-                TestLeagueAverageFinalGoals = te?.LeagueAverageFinalGoals ?? 0.0,
+                TestAverageExpectedFinalGoals = te?.AverageExpectedFinalGoals ?? 0.0,
                 TestActualRemainingGoalsPerRow = te?.ActualRemainingGoalsPerRow ?? 0.0,
                 TestAverageTimingRemainingShare = te?.AverageTimingRemainingShare ?? 0.0,
                 TestBaselineRemainingGoalsPerRow = te?.BaselineRemainingGoalsPerRow ?? 0.0,
@@ -191,11 +193,12 @@ public sealed class LiveTotalCalibrationAnalyzer
         }
     }
 
-    private static List<LiveTotalCalibrationBucketResult> BuildBucketResults(IReadOnlyList<LiveTotalCalibrationInputRow> allRowsForLeagueAverage, IReadOnlyList<RowWithBand> rowsWithBands)
+    private static List<LiveTotalCalibrationBucketResult> BuildBucketResults(IReadOnlyList<LiveTotalCalibrationInputRow> allRowsForExpectedAverage, IReadOnlyList<RowWithBand> rowsWithBands)
     {
-        double leagueAverageFinalGoals = allRowsForLeagueAverage
+        double averageExpectedFinalGoals = allRowsForExpectedAverage
+            .Where(x => x.ExpectedFinalGoals.HasValue && x.ExpectedFinalGoals.Value > 0.0)
             .GroupBy(x => x.MatchId)
-            .Select(x => x.First().ActualFinalTotalGoals)
+            .Select(x => x.First().ExpectedFinalGoals!.Value)
             .DefaultIfEmpty(0.0)
             .Average();
 
@@ -208,11 +211,12 @@ public sealed class LiveTotalCalibrationAnalyzer
             .ThenBy(x => ScoreStateIndex(x.Key.DetailedScoreState)))
         {
             List<LiveTotalCalibrationInputRow> bucketRows = group.Select(x => x.Row).ToList();
+            double totalExpectedFinalGoals = bucketRows.Sum(x => x.ExpectedFinalGoals!.Value);
             double totalFinalGoals = bucketRows.Sum(x => x.ActualFinalTotalGoals);
             double actualRemainingGoals = bucketRows.Sum(x => x.ActualRemainingGoals);
             double actualRemainingGoalsPerRow = actualRemainingGoals / bucketRows.Count;
             double averageTimingRemainingShare = bucketRows.Average(x => x.TimingRemainingShare);
-            double baselineRemainingGoalsPerRow = leagueAverageFinalGoals * averageTimingRemainingShare;
+            double baselineRemainingGoalsPerRow = bucketRows.Average(x => x.ExpectedFinalGoals!.Value * x.TimingRemainingShare);
             double? correctionFactor = baselineRemainingGoalsPerRow > 0
                 ? actualRemainingGoalsPerRow / baselineRemainingGoalsPerRow
                 : null;
@@ -224,7 +228,8 @@ public sealed class LiveTotalCalibrationAnalyzer
                 DetailedScoreState = group.Key.DetailedScoreState,
                 Rows = bucketRows.Count,
                 Matches = bucketRows.Select(x => x.MatchId).Distinct().Count(),
-                LeagueAverageFinalGoals = leagueAverageFinalGoals,
+                AverageExpectedFinalGoals = averageExpectedFinalGoals,
+                TotalExpectedFinalGoals = totalExpectedFinalGoals,
                 TotalFinalGoals = totalFinalGoals,
                 ActualRemainingGoals = actualRemainingGoals,
                 ActualRemainingGoalsPerRow = actualRemainingGoalsPerRow,
@@ -304,6 +309,7 @@ public sealed class LiveTotalCalibrationAnalyzer
         Require(index, "Minute");
         Require(index, "DetailedScoreState");
         Require(index, "TimingRemainingShare");
+        Require(index, "ExpectedFinalGoals");
         Require(index, "ActualFinalTotalGoals");
         Require(index, "ActualRemainingGoals");
 
@@ -317,6 +323,7 @@ public sealed class LiveTotalCalibrationAnalyzer
                 !TryGetInt(record, index, "MatchId", out int matchId) ||
                 !TryGetInt(record, index, "Minute", out int minute) ||
                 !TryGetDouble(record, index, "TimingRemainingShare", out double timingRemainingShare) ||
+                !TryGetOptionalDouble(record, index, "ExpectedFinalGoals", out double? expectedFinalGoals) ||
                 !TryGetDouble(record, index, "ActualFinalTotalGoals", out double actualFinalTotalGoals) ||
                 !TryGetDouble(record, index, "ActualRemainingGoals", out double actualRemainingGoals))
                 continue;
@@ -335,6 +342,7 @@ public sealed class LiveTotalCalibrationAnalyzer
                 Minute = minute,
                 DetailedScoreState = detailedScoreState,
                 TimingRemainingShare = timingRemainingShare,
+                ExpectedFinalGoals = expectedFinalGoals,
                 ActualFinalTotalGoals = actualFinalTotalGoals,
                 ActualRemainingGoals = actualRemainingGoals
             });
@@ -357,6 +365,21 @@ public sealed class LiveTotalCalibrationAnalyzer
                int.TryParse(record[position], NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
     }
 
+    private static bool TryGetOptionalDouble(IReadOnlyList<string> record, IReadOnlyDictionary<string, int> index, string column, out double? value)
+    {
+        value = null;
+        if (!index.TryGetValue(column, out int position) || position >= record.Count)
+            return false;
+        if (string.IsNullOrWhiteSpace(record[position]))
+            return true;
+        if (double.TryParse(record[position], NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+        {
+            value = parsed;
+            return true;
+        }
+        return false;
+    }
+
     private static bool TryGetDouble(IReadOnlyList<string> record, IReadOnlyDictionary<string, int> index, string column, out double value)
     {
         value = 0;
@@ -371,7 +394,7 @@ public sealed class LiveTotalCalibrationAnalyzer
     private static string ToCsv(IReadOnlyCollection<LiveTotalCalibrationBucketResult> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("StateTrigger,MinuteBand,DetailedScoreState,Rows,Matches,LeagueAverageFinalGoals,TotalFinalGoals,ActualRemainingGoals,ActualRemainingGoalsPerRow,AverageTimingRemainingShare,BaselineRemainingGoalsPerRow,CorrectionFactor");
+        sb.AppendLine("StateTrigger,MinuteBand,DetailedScoreState,Rows,Matches,AverageExpectedFinalGoals,TotalExpectedFinalGoals,TotalFinalGoals,ActualRemainingGoals,ActualRemainingGoalsPerRow,AverageTimingRemainingShare,BaselineRemainingGoalsPerRow,CorrectionFactor");
         foreach (LiveTotalCalibrationBucketResult row in rows)
         {
             sb.AppendLine(string.Join(',',
@@ -380,7 +403,8 @@ public sealed class LiveTotalCalibrationAnalyzer
                 EscapeCsv(row.DetailedScoreState),
                 row.Rows.ToString(CultureInfo.InvariantCulture),
                 row.Matches.ToString(CultureInfo.InvariantCulture),
-                D(row.LeagueAverageFinalGoals),
+                D(row.AverageExpectedFinalGoals),
+                D(row.TotalExpectedFinalGoals),
                 D(row.TotalFinalGoals),
                 D(row.ActualRemainingGoals),
                 D(row.ActualRemainingGoalsPerRow),
@@ -394,7 +418,7 @@ public sealed class LiveTotalCalibrationAnalyzer
     private static string ToTrainTestCsv(IReadOnlyCollection<LiveTotalCalibrationTrainTestBucketResult> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("StateTrigger,MinuteBand,DetailedScoreState,TrainRows,TrainMatches,TrainLeagueAverageFinalGoals,TrainActualRemainingGoalsPerRow,TrainAverageTimingRemainingShare,TrainBaselineRemainingGoalsPerRow,CorrectionFactor,TestRows,TestMatches,TestLeagueAverageFinalGoals,TestActualRemainingGoalsPerRow,TestAverageTimingRemainingShare,TestBaselineRemainingGoalsPerRow,TestCorrectedRemainingGoalsPerRow,TestBaselineSignedErrorPerRow,TestCorrectedSignedErrorPerRow,TestBaselineAbsErrorPerRow,TestCorrectedAbsErrorPerRow");
+        sb.AppendLine("StateTrigger,MinuteBand,DetailedScoreState,TrainRows,TrainMatches,TrainAverageExpectedFinalGoals,TrainActualRemainingGoalsPerRow,TrainAverageTimingRemainingShare,TrainBaselineRemainingGoalsPerRow,CorrectionFactor,TestRows,TestMatches,TestAverageExpectedFinalGoals,TestActualRemainingGoalsPerRow,TestAverageTimingRemainingShare,TestBaselineRemainingGoalsPerRow,TestCorrectedRemainingGoalsPerRow,TestBaselineSignedErrorPerRow,TestCorrectedSignedErrorPerRow,TestBaselineAbsErrorPerRow,TestCorrectedAbsErrorPerRow");
         foreach (LiveTotalCalibrationTrainTestBucketResult row in rows)
         {
             sb.AppendLine(string.Join(',',
@@ -403,14 +427,14 @@ public sealed class LiveTotalCalibrationAnalyzer
                 EscapeCsv(row.DetailedScoreState),
                 row.TrainRows.ToString(CultureInfo.InvariantCulture),
                 row.TrainMatches.ToString(CultureInfo.InvariantCulture),
-                D(row.TrainLeagueAverageFinalGoals),
+                D(row.TrainAverageExpectedFinalGoals),
                 D(row.TrainActualRemainingGoalsPerRow),
                 D(row.TrainAverageTimingRemainingShare),
                 D(row.TrainBaselineRemainingGoalsPerRow),
                 D(row.CorrectionFactor),
                 row.TestRows.ToString(CultureInfo.InvariantCulture),
                 row.TestMatches.ToString(CultureInfo.InvariantCulture),
-                D(row.TestLeagueAverageFinalGoals),
+                D(row.TestAverageExpectedFinalGoals),
                 D(row.TestActualRemainingGoalsPerRow),
                 D(row.TestAverageTimingRemainingShare),
                 D(row.TestBaselineRemainingGoalsPerRow),
@@ -505,6 +529,7 @@ public sealed class LiveTotalCalibrationAnalyzer
         public int Minute { get; set; }
         public string DetailedScoreState { get; set; } = string.Empty;
         public double TimingRemainingShare { get; set; }
+        public double? ExpectedFinalGoals { get; set; }
         public double ActualFinalTotalGoals { get; set; }
         public double ActualRemainingGoals { get; set; }
     }

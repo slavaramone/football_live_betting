@@ -194,6 +194,8 @@ static async Task<int> RunBuildLiveTotalCalibrationDataset(string[] args)
     Console.WriteLine($"  Fixed minute: {result.FixedMinuteStatesWritten}");
     Console.WriteLine($"  After goal: {result.AfterGoalStatesWritten}");
     Console.WriteLine($"  After red card: {result.AfterRedCardStatesWritten}");
+    Console.WriteLine($"Market total matches: {result.FinishedMatchesWithMarketTotal}/{result.FinishedMatches}");
+    Console.WriteLine($"Rows with market expected final goals: {result.RowsWithMarketTotal}/{result.StatesWritten}");
     Console.WriteLine($"Output: {result.OutputPath}");
     foreach (string warning in result.Warnings)
         Console.WriteLine($"Warning: {warning}");
@@ -312,7 +314,8 @@ static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
     Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
     Console.WriteLine($"Rows used: {result.TrainingRowsUsed}");
     Console.WriteLine($"Matches used: {result.TrainingMatchesUsed}");
-    Console.WriteLine($"League average final goals: {result.LeagueAverageFinalGoals:0.###}");
+    Console.WriteLine($"Average expected final goals: {result.AverageExpectedFinalGoals:0.###} ({result.ExpectedFinalGoalsSource})");
+    Console.WriteLine($"Rows skipped without expected final goals: {result.RowsSkippedMissingExpectedFinalGoals}");
 
     Console.WriteLine();
     Console.WriteLine("Bucket factors:");
@@ -433,6 +436,8 @@ static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
     Console.WriteLine($"Model evaluation CSV: {modelResult.OutputPath}");
     Console.WriteLine($"Betting metrics CSV: {bettingResult.OutputPath}");
     Console.WriteLine($"Probability move bucket CSV: {bettingResult.EdgeBucketOutputPath}");
+    Console.WriteLine($"Model rows skipped without expected final goals: {modelResult.RowsSkippedMissingExpectedFinalGoals}");
+    Console.WriteLine($"Betting rows skipped without expected final goals: {bettingResult.RowsSkippedMissingExpectedFinalGoals}");
     Console.WriteLine($"Empirical settlement unsupported rows skipped: {bettingResult.UnsupportedEmpiricalRows}");
 
     Console.WriteLine();
