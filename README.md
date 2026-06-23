@@ -23,3 +23,7 @@ To disable shrink:
 ```bash
 --shrink-matches 0
 ```
+
+## Direction guard patch
+
+State correction now supports `--state-correction-direction up-only|both`. Default is `up-only`, so downward correction factors are gated to `1.0`; upward factors are still applied. Use `both` to disable this guard.

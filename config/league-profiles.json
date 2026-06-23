@@ -58,7 +58,7 @@
       "stateCorrectionMinBucketMatches": 100,
       "stateCorrectionMinFactor": 0.5,
       "stateCorrectionMaxFactor": 2.5,
-      "stateCorrectionShrinkMatches": 300,
+      "stateCorrectionShrinkMatches": 25,
       "baseSeasonIds": [
         2023,
         2024,

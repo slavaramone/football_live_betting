@@ -21,6 +21,7 @@ public sealed class LiveTotalBettingMetricsEvaluationOptions
     public double EdgeBucketStep { get; set; } = 0.02;
     public string DecisionScope { get; set; } = LiveTotalDecisionScope.FullModel;
     public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
+    public string StateCorrectionDirectionGuard { get; set; } = LiveTotalStateCorrectionDirectionGuard.UpOnly;
     public bool CompareScopes { get; set; }
 }
 
@@ -38,6 +39,7 @@ public sealed class LiveTotalBettingMetricsEvaluationResult
     public int StateCorrectionAppliedRows { get; set; }
     public int StateCorrectionGatedRows { get; set; }
     public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
+    public string StateCorrectionDirectionGuard { get; set; } = LiveTotalStateCorrectionDirectionGuard.UpOnly;
     public List<string> ScopesEvaluated { get; } = [];
     public List<LiveTotalBettingMetricSummary> Summaries { get; } = [];
     public List<LiveTotalBettingEdgeBucketSummary> EdgeBuckets { get; } = [];
@@ -140,6 +142,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
             LiveTotalStateCorrectionResolution resolved = LiveTotalStateCorrectionGate.Resolve(
                 correction,
                 _options.StateCorrectionScope,
+                _options.StateCorrectionDirectionGuard,
                 row.StateTrigger,
                 row.Minute,
                 row.HomeGoals,
@@ -204,7 +207,8 @@ public sealed class LiveTotalBettingMetricsEvaluator
             UnsupportedEmpiricalRows = unsupportedEmpiricalRows,
             StateCorrectionAppliedRows = lineRows.Count(x => x.StateCorrectionApplied),
             StateCorrectionGatedRows = lineRows.Count(x => x.StateCorrectionGated),
-            StateCorrectionScope = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope)
+            StateCorrectionScope = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope),
+            StateCorrectionDirectionGuard = LiveTotalStateCorrectionDirectionGuard.Normalize(_options.StateCorrectionDirectionGuard)
         };
         result.ScopesEvaluated.AddRange(scopes);
 
@@ -507,6 +511,7 @@ public sealed class LiveTotalBettingMetricsEvaluator
             throw new ArgumentException("At least one target line is required.");
         _ = LiveTotalDecisionScope.Normalize(_options.DecisionScope);
         _ = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope);
+        _ = LiveTotalStateCorrectionDirectionGuard.Normalize(_options.StateCorrectionDirectionGuard);
     }
 
     private static int TriggerOrder(string stateTrigger)

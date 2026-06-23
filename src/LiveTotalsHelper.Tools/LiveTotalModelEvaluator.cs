@@ -12,6 +12,7 @@ public sealed class LiveTotalModelEvaluationOptions
     public List<int> TestSeasonIds { get; } = [];
     public string DecisionScope { get; set; } = LiveTotalDecisionScope.FullModel;
     public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
+    public string StateCorrectionDirectionGuard { get; set; } = LiveTotalStateCorrectionDirectionGuard.UpOnly;
     public bool CompareScopes { get; set; }
 }
 
@@ -27,6 +28,7 @@ public sealed class LiveTotalModelEvaluationResult
     public int StateCorrectionAppliedRows { get; set; }
     public int StateCorrectionGatedRows { get; set; }
     public string StateCorrectionScope { get; set; } = LiveTotalStateCorrectionScope.FixedMinute;
+    public string StateCorrectionDirectionGuard { get; set; } = LiveTotalStateCorrectionDirectionGuard.UpOnly;
     public List<string> ScopesEvaluated { get; } = [];
     public List<LiveTotalModelEvaluationSummary> Summaries { get; } = [];
 }
@@ -88,6 +90,7 @@ public sealed class LiveTotalModelEvaluator
             LiveTotalStateCorrectionResolution resolved = LiveTotalStateCorrectionGate.Resolve(
                 correction,
                 _options.StateCorrectionScope,
+                _options.StateCorrectionDirectionGuard,
                 row.StateTrigger,
                 row.Minute,
                 row.HomeGoals,
@@ -127,7 +130,8 @@ public sealed class LiveTotalModelEvaluator
             SupportedRows = observations.Count,
             StateCorrectionAppliedRows = observations.Count(x => x.StateCorrectionApplied),
             StateCorrectionGatedRows = observations.Count(x => x.StateCorrectionGated),
-            StateCorrectionScope = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope)
+            StateCorrectionScope = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope),
+            StateCorrectionDirectionGuard = LiveTotalStateCorrectionDirectionGuard.Normalize(_options.StateCorrectionDirectionGuard)
         };
         result.ScopesEvaluated.AddRange(scopes);
 
@@ -186,6 +190,7 @@ public sealed class LiveTotalModelEvaluator
             throw new ArgumentException("Missing required argument --test-season-ids.");
         _ = LiveTotalDecisionScope.Normalize(_options.DecisionScope);
         _ = LiveTotalStateCorrectionScope.Normalize(_options.StateCorrectionScope);
+        _ = LiveTotalStateCorrectionDirectionGuard.Normalize(_options.StateCorrectionDirectionGuard);
     }
 
     private string ResolveOutputPath()

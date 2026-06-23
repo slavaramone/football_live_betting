@@ -370,6 +370,7 @@ static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
 
     string decisionScope = parsed.String("scope", parsed.String("decision-scope", LiveTotalDecisionScope.FullModel));
     string stateCorrectionScope = parsed.String("state-correction-scope", parsed.String("correction-scope", LiveTotalStateCorrectionScope.FixedMinute));
+    string stateCorrectionDirectionGuard = parsed.String("state-correction-direction", parsed.String("correction-direction", LiveTotalStateCorrectionDirectionGuard.UpOnly));
     bool compareScopes = parsed.Bool("compare-scopes", false);
 
     var modelOptions = new LiveTotalModelEvaluationOptions
@@ -379,6 +380,7 @@ static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
         OutputPath = parsed.String("model-output", parsed.String("output", defaultModelOutput)),
         DecisionScope = decisionScope,
         StateCorrectionScope = stateCorrectionScope,
+        StateCorrectionDirectionGuard = stateCorrectionDirectionGuard,
         CompareScopes = compareScopes
     };
     foreach (int seasonId in testSeasonIds)
@@ -408,6 +410,7 @@ static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
         EdgeBucketStep = parsed.Double("edge-bucket-step", 0.02),
         DecisionScope = decisionScope,
         StateCorrectionScope = stateCorrectionScope,
+        StateCorrectionDirectionGuard = stateCorrectionDirectionGuard,
         CompareScopes = compareScopes,
         EmpiricalSettlementMinBucketRows = parsed.Int("settlement-min-bucket-rows", 80),
         EmpiricalSettlementMinBucketMatches = parsed.Int("settlement-min-bucket-matches", 40),
@@ -436,6 +439,7 @@ static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
     Console.WriteLine($"Input: {inputPath}");
     Console.WriteLine($"State correction: {stateCorrectionPath}");
     Console.WriteLine($"State correction scope: {LiveTotalStateCorrectionScope.Normalize(stateCorrectionScope)}");
+    Console.WriteLine($"State correction direction: {LiveTotalStateCorrectionDirectionGuard.Normalize(stateCorrectionDirectionGuard)}");
     Console.WriteLine($"Training seasons: {string.Join(", ", trainingSeasonIds)}");
     Console.WriteLine($"Test seasons: {string.Join(", ", testSeasonIds)}");
     Console.WriteLine($"Scopes: {string.Join(", ", modelResult.ScopesEvaluated)}");
@@ -602,6 +606,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
         ModelPath = modelPath,
         StateCorrectionPath = parsed.String("state-correction", profile?.StateCorrectionPath ?? string.Empty),
         StateCorrectionScope = parsed.String("state-correction-scope", parsed.String("correction-scope", LiveTotalStateCorrectionScope.FixedMinute)),
+        StateCorrectionDirectionGuard = parsed.String("state-correction-direction", parsed.String("correction-direction", LiveTotalStateCorrectionDirectionGuard.UpOnly)),
         EmpiricalSettlementPath = parsed.String("empirical-settlement", profile?.GetEmpiricalSettlementPath() ?? string.Empty),
         StateTrigger = LiveTotalStateTrigger.Normalize(parsed.String("state-trigger", LiveTotalStateTrigger.FixedMinute)),
         StartingLine = parsed.RequiredDouble("starting-line"),
@@ -736,6 +741,7 @@ static async Task<int> RunPriceLiveTotal(string[] args)
     Console.WriteLine($"Remaining share: Weibull {result.WeibullRemainingShare:P1}, Empirical {result.EmpiricalRemainingShare:P1}, Used {result.TimingRemainingShare:P1}");
     Console.WriteLine($"Remaining xG before state correction: {result.RemainingXgBeforeStateCorrection:0.###}");
     Console.WriteLine($"State correction scope: {LiveTotalStateCorrectionScope.Normalize(options.StateCorrectionScope)}");
+    Console.WriteLine($"State correction direction: {LiveTotalStateCorrectionDirectionGuard.Normalize(options.StateCorrectionDirectionGuard)}");
     Console.WriteLine($"State correction: {result.StateCorrectionFactor:0.###} ({result.StateCorrectionSource})");
     Console.WriteLine($"State correction supported for betting: {result.StateCorrectionSupported}");
     Console.WriteLine($"Remaining xG before volume: {result.RemainingXgBeforeVolume:0.###}");
