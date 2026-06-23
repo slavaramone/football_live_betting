@@ -63,6 +63,7 @@ public static class HelpPrinter
         Console.WriteLine("  --late-game-start-minute          Default: 70.");
         Console.WriteLine("  --late-game-factor-multiplier     Extra multiplier for positive late FixedMinute factors. Default: 1.15.");
         Console.WriteLine("  --late-game-max-factor            Max factor after late boost. Default: 2.5.");
+        Console.WriteLine("  --late-game-max-line              Apply late boost only up to this target line. Default: 2.5.");
         Console.WriteLine("  --shrink-matches                  State-correction shrink strength. Profile default: 25; 0 disables.");
         Console.WriteLine("  --model-output                    Model evaluation CSV path for evaluate-live-total-performance.");
         Console.WriteLine("  --betting-output                  Betting metrics CSV path for evaluate-live-total-performance.");

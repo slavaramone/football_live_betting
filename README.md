@@ -17,3 +17,17 @@ Main new output row to inspect:
 ```text
 FixedMinuteLateGame
 ```
+
+
+## Patch: late-game boost only for 2.5 line
+
+Late-game boost is now line-gated. It applies only when all are true:
+
+```text
+stateTrigger = FixedMinute
+minute >= 70
+target line <= 2.5
+correction factor > 1.0
+```
+
+Use `--late-game-max-line 2.5` to keep the current behavior, or lower/raise it for experiments.

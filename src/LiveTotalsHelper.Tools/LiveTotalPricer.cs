@@ -97,6 +97,11 @@ public sealed class LiveTotalLinePrice
     public double CorrectedOverNoPushProbability { get; set; }
     public double OverProbabilityMove { get; set; }
     public double UnderProbabilityMove => -OverProbabilityMove;
+    public double StateCorrectionFactor { get; set; } = 1.0;
+    public bool StateCorrectionSupported { get; set; } = true;
+    public string StateCorrectionSource { get; set; } = string.Empty;
+    public bool StateCorrectionApplied { get; set; }
+    public bool LateGameBoosted { get; set; }
     public double FairOdds { get; set; }
     public double UnderWinProbability => LossProbability;
     public double UnderPushProbability => PushProbability;
@@ -146,7 +151,7 @@ public sealed class LiveTotalPricer
         double startingTotalXg = TotalGoalsPricingCalculator.EstimateTotalGoalsFromLine(_options.StartingLine, startingFairOverProbability);
         double remainingXgBeforeStateCorrection = startingTotalXg * timing.TimingRemainingShare;
 
-        LiveTotalStateCorrectionResolution stateCorrection = await ResolveStateCorrectionAsync(cancellationToken);
+        LiveTotalStateCorrectionResolution stateCorrection = await ResolveStateCorrectionAsync(_options.StartingLine, cancellationToken);
         double remainingXgBeforeVolume = remainingXgBeforeStateCorrection * stateCorrection.Factor;
         double volumeFactor = Math.Clamp(_options.VolumeFactor, 0.20, 2.50);
         double remainingXg = remainingXgBeforeVolume * volumeFactor;
@@ -216,8 +221,12 @@ public sealed class LiveTotalPricer
 
         foreach (double line in _options.TargetLines.Distinct().OrderBy(x => x))
         {
+            LiveTotalStateCorrectionResolution lineStateCorrection = await ResolveStateCorrectionAsync(line, cancellationToken);
+            double lineRemainingXgBeforeVolume = remainingXgBeforeStateCorrection * lineStateCorrection.Factor;
+            double lineRemainingXg = lineRemainingXgBeforeVolume * volumeFactor;
+
             OverSettlementProbabilities baselineProbabilities = CalculateSettlementProbabilities(line, result.CurrentGoals, baselineRemainingXgForMove, empiricalSettlement);
-            OverSettlementProbabilities probabilities = CalculateSettlementProbabilities(line, result.CurrentGoals, remainingXg, empiricalSettlement);
+            OverSettlementProbabilities probabilities = CalculateSettlementProbabilities(line, result.CurrentGoals, lineRemainingXg, empiricalSettlement);
             double baselineOverNoPushProbability = NoPushOverProbability(baselineProbabilities);
             double correctedOverNoPushProbability = NoPushOverProbability(probabilities);
             double overProbabilityMove = correctedOverNoPushProbability - baselineOverNoPushProbability;
@@ -245,7 +254,7 @@ public sealed class LiveTotalPricer
             {
                 overEdge = fairOverOdds > 0 && !double.IsInfinity(fairOverOdds) ? bookOverOdds / fairOverOdds - 1.0 : null;
                 overEv = probabilities.WinProbability * (bookOverOdds - 1.0) - probabilities.LossProbability;
-                overSideDecision = BuildSideDecision(line, overEdge, overProbabilityMove, result.StateCorrectionSupported, result.StateTrigger, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "OVER");
+                overSideDecision = BuildSideDecision(line, overEdge, overProbabilityMove, lineStateCorrection.IsSupported, result.StateTrigger, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "OVER");
             }
 
             double? underEdge = null;
@@ -259,7 +268,7 @@ public sealed class LiveTotalPricer
             {
                 underEdge = fairUnderOdds > 0 && !double.IsInfinity(fairUnderOdds) ? bookUnderOdds / fairUnderOdds - 1.0 : null;
                 underEv = probabilities.LossProbability * (bookUnderOdds - 1.0) - probabilities.WinProbability;
-                underSideDecision = BuildSideDecision(line, underEdge, overProbabilityMove, result.StateCorrectionSupported, result.StateTrigger, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "UNDER");
+                underSideDecision = BuildSideDecision(line, underEdge, overProbabilityMove, lineStateCorrection.IsSupported, result.StateTrigger, result.HasRecentGoal, _options.HomeRedCards + _options.AwayRedCards > 0, "UNDER");
             }
 
             LiveTotalSideDecision selectedDecision = SelectBestDecision(overEdge, overSideDecision, underEdge, underSideDecision);
@@ -273,6 +282,11 @@ public sealed class LiveTotalPricer
                 BaselineOverNoPushProbability = baselineOverNoPushProbability,
                 CorrectedOverNoPushProbability = correctedOverNoPushProbability,
                 OverProbabilityMove = overProbabilityMove,
+                StateCorrectionFactor = lineStateCorrection.Factor,
+                StateCorrectionSupported = lineStateCorrection.IsSupported,
+                StateCorrectionSource = lineStateCorrection.Source,
+                StateCorrectionApplied = LiveTotalStateCorrectionGate.IsApplied(lineStateCorrection),
+                LateGameBoosted = LiveTotalStateCorrectionGate.IsLateGameBoosted(lineStateCorrection),
                 FairOdds = fairOverOdds,
                 FairUnderOdds = fairUnderOdds,
                 BookOverOdds = hasBookOverOdds ? bookOverOdds : null,
@@ -326,7 +340,7 @@ public sealed class LiveTotalPricer
             remainingGoalsMean);
     }
 
-    private async Task<LiveTotalStateCorrectionResolution> ResolveStateCorrectionAsync(CancellationToken cancellationToken)
+    private async Task<LiveTotalStateCorrectionResolution> ResolveStateCorrectionAsync(double? targetLine, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_options.StateCorrectionPath))
         {
@@ -358,7 +372,8 @@ public sealed class LiveTotalPricer
             _options.StateTrigger,
             _options.Minute,
             _options.HomeGoals,
-            _options.AwayGoals);
+            _options.AwayGoals,
+            targetLine);
     }
 
     private LiveTotalSideDecision BuildSideDecision(double line, double? edge, double probabilityMove, bool stateCorrectionSupported, string stateTrigger, bool hasRecentGoal, bool hasRedCard, string side)

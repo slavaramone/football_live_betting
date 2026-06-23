@@ -91,6 +91,7 @@ public sealed class LiveTotalLateGameCorrectionOptions
     public int StartMinute { get; set; } = 70;
     public double FactorMultiplier { get; set; } = 1.15;
     public double MaxFactor { get; set; } = 2.50;
+    public double MaxLine { get; set; } = 2.50;
 
     public static LiveTotalLateGameCorrectionOptions Disabled() => new()
     {
@@ -102,7 +103,8 @@ public sealed class LiveTotalLateGameCorrectionOptions
         Mode = LiveTotalLateGameCorrectionMode.BoostUp,
         StartMinute = 70,
         FactorMultiplier = 1.15,
-        MaxFactor = 2.50
+        MaxFactor = 2.50,
+        MaxLine = 2.50
     };
 
     public LiveTotalLateGameCorrectionOptions Normalized()
@@ -114,13 +116,16 @@ public sealed class LiveTotalLateGameCorrectionOptions
             throw new ArgumentException("--late-game-factor-multiplier must be between 1.0 and 5.0.");
         if (MaxFactor < 1.0 || MaxFactor > 10.0)
             throw new ArgumentException("--late-game-max-factor must be between 1.0 and 10.0.");
+        if (MaxLine <= 0.0 || MaxLine > 20.0)
+            throw new ArgumentException("--late-game-max-line must be greater than 0 and no more than 20.");
 
         return new LiveTotalLateGameCorrectionOptions
         {
             Mode = mode,
             StartMinute = StartMinute,
             FactorMultiplier = FactorMultiplier,
-            MaxFactor = MaxFactor
+            MaxFactor = MaxFactor,
+            MaxLine = MaxLine
         };
     }
 
@@ -130,7 +135,7 @@ public sealed class LiveTotalLateGameCorrectionOptions
         if (normalized.Mode == LiveTotalLateGameCorrectionMode.Off)
             return "off";
 
-        return $"{normalized.Mode}; minute>={normalized.StartMinute}; multiplier={normalized.FactorMultiplier:0.###}; maxFactor={normalized.MaxFactor:0.###}";
+        return $"{normalized.Mode}; minute>={normalized.StartMinute}; line<={normalized.MaxLine:0.###}; multiplier={normalized.FactorMultiplier:0.###}; maxFactor={normalized.MaxFactor:0.###}";
     }
 }
 
@@ -185,6 +190,29 @@ public static class LiveTotalStateCorrectionGate
         int homeGoals,
         int awayGoals)
     {
+        return Resolve(
+            correction,
+            correctionScope,
+            correctionDirectionGuard,
+            lateGameOptions,
+            stateTrigger,
+            minute,
+            homeGoals,
+            awayGoals,
+            targetLine: null);
+    }
+
+    public static LiveTotalStateCorrectionResolution Resolve(
+        LiveTotalStateCorrectionFile correction,
+        string correctionScope,
+        string correctionDirectionGuard,
+        LiveTotalLateGameCorrectionOptions? lateGameOptions,
+        string stateTrigger,
+        int minute,
+        int homeGoals,
+        int awayGoals,
+        double? targetLine)
+    {
         string normalizedScope = LiveTotalStateCorrectionScope.Normalize(correctionScope);
         string normalizedDirectionGuard = LiveTotalStateCorrectionDirectionGuard.Normalize(correctionDirectionGuard);
         LiveTotalLateGameCorrectionOptions normalizedLateGame = (lateGameOptions ?? LiveTotalLateGameCorrectionOptions.Disabled()).Normalized();
@@ -199,7 +227,7 @@ public static class LiveTotalStateCorrectionGate
         if (ShouldDirectionGate(normalizedDirectionGuard, resolved))
             return BuildDirectionGuardedResolution(normalizedDirectionGuard, resolved);
 
-        return ApplyLateGameCorrection(normalizedLateGame, resolved, normalizedTrigger, minute);
+        return ApplyLateGameCorrection(normalizedLateGame, resolved, normalizedTrigger, minute, targetLine);
 
     }
 
@@ -246,12 +274,15 @@ public static class LiveTotalStateCorrectionGate
         LiveTotalLateGameCorrectionOptions lateGameOptions,
         LiveTotalStateCorrectionResolution resolved,
         string stateTrigger,
-        int minute)
+        int minute,
+        double? targetLine)
     {
         if (!resolved.IsSupported ||
             lateGameOptions.Mode != LiveTotalLateGameCorrectionMode.BoostUp ||
             !stateTrigger.Equals(LiveTotalStateTrigger.FixedMinute, StringComparison.OrdinalIgnoreCase) ||
             minute < lateGameOptions.StartMinute ||
+            !targetLine.HasValue ||
+            targetLine.Value > lateGameOptions.MaxLine ||
             resolved.Factor <= 1.0)
             return resolved;
 
@@ -267,7 +298,7 @@ public static class LiveTotalStateCorrectionGate
             MinuteBand = resolved.MinuteBand,
             Factor = boosted,
             IsSupported = resolved.IsSupported,
-            Source = $"late-game boost {resolved.Factor:0.###}->{boosted:0.###}; {resolved.Source}"
+            Source = $"late-game boost line<={lateGameOptions.MaxLine:0.###} targetLine={targetLine.Value:0.###} {resolved.Factor:0.###}->{boosted:0.###}; {resolved.Source}"
         };
     }
 

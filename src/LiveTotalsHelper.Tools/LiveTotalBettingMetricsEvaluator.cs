@@ -144,17 +144,6 @@ public sealed class LiveTotalBettingMetricsEvaluator
             }
 
             double baselineRemaining = row.ExpectedFinalGoals.Value * row.TimingRemainingShare;
-            LiveTotalStateCorrectionResolution resolved = LiveTotalStateCorrectionGate.Resolve(
-                correction,
-                _options.StateCorrectionScope,
-                _options.StateCorrectionDirectionGuard,
-                _options.LateGameCorrection,
-                row.StateTrigger,
-                row.Minute,
-                row.HomeGoals,
-                row.AwayGoals);
-
-            double correctedRemaining = baselineRemaining * resolved.Factor;
             LiveTotalEmpiricalSettlementResolution settlementResolution = LiveTotalEmpiricalSettlementResolver.Resolve(
                 empiricalSettlement,
                 row.StateTrigger,
@@ -172,6 +161,19 @@ public sealed class LiveTotalBettingMetricsEvaluator
                 bool? actualOver = TryActualOver(line, row.ActualFinalTotalGoals);
                 if (!actualOver.HasValue)
                     continue;
+
+                LiveTotalStateCorrectionResolution resolved = LiveTotalStateCorrectionGate.Resolve(
+                    correction,
+                    _options.StateCorrectionScope,
+                    _options.StateCorrectionDirectionGuard,
+                    _options.LateGameCorrection,
+                    row.StateTrigger,
+                    row.Minute,
+                    row.HomeGoals,
+                    row.AwayGoals,
+                    targetLine: line);
+
+                double correctedRemaining = baselineRemaining * resolved.Factor;
 
                 double? baselineP = TryNoPushOverProbability(line, row.CurrentTotalGoals, settlementResolution.Probabilities, baselineRemaining);
                 double? correctedP = TryNoPushOverProbability(line, row.CurrentTotalGoals, settlementResolution.Probabilities, correctedRemaining);

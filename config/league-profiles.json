@@ -63,6 +63,7 @@
       "stateCorrectionLateGameStartMinute": 70,
       "stateCorrectionLateGameFactorMultiplier": 1.15,
       "stateCorrectionLateGameMaxFactor": 2.5,
+      "stateCorrectionLateGameMaxLine": 2.5,
       "baseSeasonIds": [
         2023,
         2024,

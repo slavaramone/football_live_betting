@@ -1360,7 +1360,8 @@ static LiveTotalLateGameCorrectionOptions BuildLateGameCorrectionOptions(ParsedA
         Mode = parsed.String("late-game-correction", parsed.String("late-game-mode", profile?.StateCorrectionLateGameMode ?? LiveTotalLateGameCorrectionMode.BoostUp)),
         StartMinute = parsed.Int("late-game-start-minute", profile?.StateCorrectionLateGameStartMinute ?? 70),
         FactorMultiplier = parsed.Double("late-game-factor-multiplier", profile?.StateCorrectionLateGameFactorMultiplier ?? 1.15),
-        MaxFactor = parsed.Double("late-game-max-factor", profile?.StateCorrectionLateGameMaxFactor ?? 2.50)
+        MaxFactor = parsed.Double("late-game-max-factor", profile?.StateCorrectionLateGameMaxFactor ?? 2.50),
+        MaxLine = parsed.Double("late-game-max-line", profile?.StateCorrectionLateGameMaxLine ?? 2.50)
     };
 
     return options.Normalized();
