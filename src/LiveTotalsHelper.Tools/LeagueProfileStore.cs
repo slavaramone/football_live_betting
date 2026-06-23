@@ -60,6 +60,7 @@ public sealed class LeagueProfile
     public int StateCorrectionMinBucketMatches { get; set; } = 100;
     public double StateCorrectionMinFactor { get; set; } = 0.50;
     public double StateCorrectionMaxFactor { get; set; } = 2.50;
+    public int StateCorrectionShrinkMatches { get; set; } = 300;
 
     // Live pricing/current-season volume defaults.
     public List<int> BaseSeasonIds { get; set; } = [];

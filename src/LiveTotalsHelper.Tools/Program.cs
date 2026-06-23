@@ -291,7 +291,8 @@ static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
         OutputPath = parsed.String("output", defaultOutput),
         MinBucketMatches = parsed.Int("min-bucket-matches", profile?.StateCorrectionMinBucketMatches ?? 100),
         MinFactor = parsed.Double("min-factor", profile?.StateCorrectionMinFactor ?? 0.50),
-        MaxFactor = parsed.Double("max-factor", profile?.StateCorrectionMaxFactor ?? 2.50)
+        MaxFactor = parsed.Double("max-factor", profile?.StateCorrectionMaxFactor ?? 2.50),
+        ShrinkMatches = parsed.Int("shrink-matches", profile?.StateCorrectionShrinkMatches ?? 300)
     };
     if (string.IsNullOrWhiteSpace(options.InputPath))
         throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
@@ -316,12 +317,13 @@ static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
     Console.WriteLine($"Matches used: {result.TrainingMatchesUsed}");
     Console.WriteLine($"Average expected final goals: {result.AverageExpectedFinalGoals:0.###} ({result.ExpectedFinalGoalsSource})");
     Console.WriteLine($"Rows skipped without expected final goals: {result.RowsSkippedMissingExpectedFinalGoals}");
+    Console.WriteLine($"Shrink matches: {result.ShrinkMatches} ({(result.ShrinkMatches <= 0 ? "disabled" : "matches / (matches + shrinkMatches)")})");
 
     Console.WriteLine();
     Console.WriteLine("Bucket factors:");
-    Console.WriteLine("Trigger       Band    ScoreState            Rows  Matches  Raw    Used   Usable");
+    Console.WriteLine("Trigger       Band    ScoreState            Rows  Matches  Raw    ShrW   Used   Usable");
     foreach (LiveTotalStateCorrectionBucket bucket in result.Buckets)
-        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-7} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.RawFactor,5:0.###}  {bucket.Factor,5:0.###}  {bucket.IsUsable}");
+        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-7} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.RawFactor,5:0.###}  {bucket.ShrinkWeight,5:0.###}  {bucket.Factor,5:0.###}  {bucket.IsUsable}");
 
     return 0;
 }

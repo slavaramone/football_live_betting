@@ -43,6 +43,7 @@ public sealed class LiveTotalStateCorrectionFitOptions
     public int MinBucketMatches { get; set; } = 100;
     public double MinFactor { get; set; } = 0.50;
     public double MaxFactor { get; set; } = 2.50;
+    public int ShrinkMatches { get; set; } = 300;
 }
 
 public sealed class LiveTotalStateCorrectionFitResult
@@ -57,6 +58,7 @@ public sealed class LiveTotalStateCorrectionFitResult
     public double AverageExpectedFinalGoals { get; set; }
     public string ExpectedFinalGoalsSource { get; set; } = "MarketTotal";
     public int RowsSkippedMissingExpectedFinalGoals { get; set; }
+    public int ShrinkMatches { get; set; }
     public List<int> TrainingSeasonIds { get; } = [];
     public List<LiveTotalStateCorrectionBucket> Buckets { get; } = [];
 }
@@ -72,6 +74,7 @@ public sealed class LiveTotalStateCorrectionFile
     public double AverageExpectedFinalGoals { get; set; }
     public string ExpectedFinalGoalsSource { get; set; } = "MarketTotal";
     public int RowsSkippedMissingExpectedFinalGoals { get; set; }
+    public int ShrinkMatches { get; set; }
     public int MinBucketMatches { get; set; }
     public double MinFactor { get; set; }
     public double MaxFactor { get; set; }
@@ -89,6 +92,7 @@ public sealed class LiveTotalStateCorrectionBucket
     public double AverageTimingRemainingShare { get; set; }
     public double BaselineRemainingGoalsPerRow { get; set; }
     public double RawFactor { get; set; }
+    public double ShrinkWeight { get; set; } = 1.0;
     public double Factor { get; set; }
     public bool IsUsable { get; set; }
 }
@@ -244,7 +248,8 @@ public sealed class LiveTotalStateCorrectionFitter
             LeagueAverageFinalGoals = averageExpectedFinalGoals,
             AverageExpectedFinalGoals = averageExpectedFinalGoals,
             ExpectedFinalGoalsSource = "MarketTotal",
-            RowsSkippedMissingExpectedFinalGoals = rowsSkippedMissingExpectedFinalGoals
+            RowsSkippedMissingExpectedFinalGoals = rowsSkippedMissingExpectedFinalGoals,
+            ShrinkMatches = _options.ShrinkMatches
         };
         result.TrainingSeasonIds.AddRange(_options.TrainingSeasonIds.OrderBy(x => x));
 
@@ -259,6 +264,7 @@ public sealed class LiveTotalStateCorrectionFitter
             AverageExpectedFinalGoals = result.AverageExpectedFinalGoals,
             ExpectedFinalGoalsSource = result.ExpectedFinalGoalsSource,
             RowsSkippedMissingExpectedFinalGoals = result.RowsSkippedMissingExpectedFinalGoals,
+            ShrinkMatches = _options.ShrinkMatches,
             MinBucketMatches = _options.MinBucketMatches,
             MinFactor = _options.MinFactor,
             MaxFactor = _options.MaxFactor,
@@ -292,6 +298,8 @@ public sealed class LiveTotalStateCorrectionFitter
                 double avgTiming = bucketRows.Average(x => x.TimingRemainingShare);
                 double baseline = bucketRows.Average(x => x.ExpectedFinalGoals!.Value * x.TimingRemainingShare);
                 double raw = baseline > 0 ? actual / baseline : 1.0;
+                double shrinkWeight = CalculateShrinkWeight(matches);
+                double shrunk = 1.0 + ((raw - 1.0) * shrinkWeight);
                 return new LiveTotalStateCorrectionBucket
                 {
                     StateTrigger = group.Key.StateTrigger,
@@ -303,7 +311,8 @@ public sealed class LiveTotalStateCorrectionFitter
                     AverageTimingRemainingShare = avgTiming,
                     BaselineRemainingGoalsPerRow = baseline,
                     RawFactor = raw,
-                    Factor = ClampFactor(raw),
+                    ShrinkWeight = shrinkWeight,
+                    Factor = ClampFactor(shrunk),
                     IsUsable = matches >= _options.MinBucketMatches && baseline > 0
                 };
             })
@@ -322,6 +331,8 @@ public sealed class LiveTotalStateCorrectionFitter
             throw new ArgumentException("--min-bucket-matches must be >= 1.");
         if (_options.MinFactor <= 0 || _options.MaxFactor <= 0 || _options.MinFactor > _options.MaxFactor)
             throw new ArgumentException("--min-factor and --max-factor must be positive and min <= max.");
+        if (_options.ShrinkMatches < 0)
+            throw new ArgumentException("--shrink-matches must be >= 0. Use 0 to disable shrinkage.");
     }
 
     private string ResolveOutputPath()
@@ -332,6 +343,14 @@ public sealed class LiveTotalStateCorrectionFitter
         string directory = Path.GetDirectoryName(_options.InputPath) ?? ".";
         string fileName = Path.GetFileNameWithoutExtension(_options.InputPath);
         return Path.Combine(directory, $"{fileName}-state-correction.json");
+    }
+
+    private double CalculateShrinkWeight(int matches)
+    {
+        if (_options.ShrinkMatches <= 0)
+            return 1.0;
+
+        return matches / (matches + (double)_options.ShrinkMatches);
     }
 
     private double ClampFactor(double factor) => Math.Clamp(factor, _options.MinFactor, _options.MaxFactor);

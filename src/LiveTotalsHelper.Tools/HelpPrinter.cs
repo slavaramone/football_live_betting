@@ -58,6 +58,7 @@ public static class HelpPrinter
         Console.WriteLine("  --input                           Calibration dataset CSV override.");
         Console.WriteLine("  --state-correction                State correction JSON override.");
         Console.WriteLine("  --state-correction-scope          fixed-minute | all | none. Default: fixed-minute.");
+        Console.WriteLine("  --shrink-matches                  State-correction shrink strength. Default: 300; 0 disables.");
         Console.WriteLine("  --model-output                    Model evaluation CSV path for evaluate-live-total-performance.");
         Console.WriteLine("  --betting-output                  Betting metrics CSV path for evaluate-live-total-performance.");
         Console.WriteLine("  --edge-output                     Probability move bucket CSV path.");
