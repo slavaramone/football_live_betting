@@ -1,5 +1,238 @@
 {
   "profiles": [
+	{
+	"key": "npl-new-south-wales",
+	"name": "NPL New South Wales",
+	"league": "NPL New South Wales",
+	"modelPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\weibull-2023-2025.json",
+	"stateCorrectionPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\state-correction-2023-2025.json",
+	"empiricalSettlementPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\empirical-settlement-2023-2025.json",
+	"calibrationDatasetPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\calibration-2023-2025.csv",
+	"calibrationAnalysisPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\calibration-analysis-2023-2025.csv",
+	"modelEvaluationPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\model-evaluation-2023-2025.csv",
+	"trainingSeasonIds": [
+	2023,
+	2024,
+	2025
+	],
+	"validationTrainingSeasonIds": [
+	2023,
+	2024,
+	2025
+	],
+	"validationTestSeasonIds": [
+	2026
+	],
+	"validationModelPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\validation-weibull-2023-2025.json",
+	"validationCalibrationDatasetPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\validation-calibration-2023-2026.csv",
+	"validationStateCorrectionPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\validation-state-correction-2023-2025.json",
+	"validationEmpiricalSettlementPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\validation-empirical-settlement-2023-2025.json",
+	"validationCalibrationAnalysisPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\validation-calibration-analysis-2023-2026.csv",
+	"validationModelEvaluationPath": "C:\\Temp\\football_data\\models\\npl-new-south-wales\\validation-model-evaluation-2026.csv",
+	"maxMinute": 90,
+	"groupByColumn": "ScoreStateBefore",
+	"minGroupGoals": 30,
+	"maxIterations": 100,
+	"tolerance": 1e-09,
+	"blendWeibullWeight": 0.3,
+	"includeUnreliableMatches": false,
+	"includeEventTriggers": true,
+	"snapshotMinutes": [
+	10,
+	15,
+	20,
+	25,
+	30,
+	35,
+	40,
+	45,
+	50,
+	55,
+	60,
+	65,
+	70,
+	75,
+	80,
+	85
+	],
+	"stateCorrectionMinBucketMatches": 100,
+	"stateCorrectionMinFactor": 0.5,
+	"stateCorrectionMaxFactor": 2.5,
+	"stateCorrectionShrinkMatches": 25,
+	"stateCorrectionLateGameMode": "boost-up",
+	"stateCorrectionLateGameStartMinute": 70,
+	"stateCorrectionLateGameFactorMultiplier": 1.15,
+	"stateCorrectionLateGameMaxFactor": 2.5,
+	"stateCorrectionLateGameMaxLine": 2.5,
+	"baseSeasonIds": [
+	2023,
+	2024,
+	2025
+	],
+	"currentSeasonId": 2026,
+	"defaultBeforeRound": null,
+	"useCurrentSeasonVolume": true,
+	"priorStrengthMatches": 100,
+	"defaultEmpiricalWeight": 0.8,
+	"edgeThreshold": 0.1,
+	"useProbabilityMoveFilter": true,
+	"minOverProbabilityMove": 0.1,
+	"minUnderProbabilityMove": -0.12,
+	"underSignalsBettingAllowed": false,
+	"decisionMode": "FullModel",
+	"minLine": 2.5,
+	"allowedLines": [
+	2.5,
+	3.5
+	],
+	"fallbackBettingEnabled": true,
+	"requireGoalTrigger": false,
+	"targetLines": [
+	2.5,
+	3.5
+	],
+	"liveBettingRules": [
+	  {
+		"stateTrigger": "FixedMinute",
+		"side": "Over",
+		"line": 2.5,
+		"minProbabilityMove": 0.05,
+		"minEdge": 0.10,
+		"allowBet": true,
+		"notes": "NPL NSW: Fixed-minute Over 2.5; strongest validated rule."
+	  },
+	  {
+		"stateTrigger": "FixedMinute",
+		"side": "Over",
+		"line": 3.5,
+		"minProbabilityMove": 0.10,
+		"minEdge": 0.12,
+		"allowBet": false,
+		"notes": "NPL NSW: paper-test only; 3.5 improved but weaker than 2.5."
+	  }
+	],
+	"riskLevel": "Validation / paper test",
+	"decisionRulesNotes": "Initial NPL New South Wales profile. Uses current baseline: balanced market-total selector, empirical timing, FixedMinute-only correction in evaluation/price commands, up-only direction guard, shrinkMatches=25, and late-game boost only for target lines <= 2.5. Run validation before enabling live bets.",
+	"notes": "NPL New South Wales initial profile. Training seasons 2023-2025; validation/current season 2026. Betting rules are paper-test only until league-specific edge buckets are checked."
+	},
+	
+	
+     {
+      "key": "norway-1st-division",
+      "name": "Norway 1st Division",
+      "league": "Norway 1st Division",
+      "modelPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\weibull-2023-2025.json",
+      "stateCorrectionPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\state-correction-2023-2025.json",
+      "empiricalSettlementPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\empirical-settlement-2023-2025.json",
+      "calibrationDatasetPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\calibration-2023-2025.csv",
+      "calibrationAnalysisPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\calibration-analysis-2023-2025.csv",
+      "modelEvaluationPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\model-evaluation-2023-2025.csv",
+      "trainingSeasonIds": [
+        2023,
+        2024,
+        2025
+      ],
+      "validationTrainingSeasonIds": [
+        2023,
+        2024,
+        2025
+      ],
+      "validationTestSeasonIds": [
+        2026
+      ],
+      "validationModelPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\validation-weibull-2023-2025.json",
+      "validationCalibrationDatasetPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\validation-calibration-2023-2026.csv",
+      "validationStateCorrectionPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\validation-state-correction-2023-2025.json",
+      "validationEmpiricalSettlementPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\validation-empirical-settlement-2023-2025.json",
+      "validationCalibrationAnalysisPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\validation-calibration-analysis-2023-2026.csv",
+      "validationModelEvaluationPath": "C:\\Temp\\football_data\\models\\norway-1st-division\\validation-model-evaluation-2026.csv",
+      "maxMinute": 90,
+      "groupByColumn": "ScoreStateBefore",
+      "minGroupGoals": 30,
+      "maxIterations": 100,
+      "tolerance": 1e-09,
+      "blendWeibullWeight": 0.3,
+      "includeUnreliableMatches": false,
+      "includeEventTriggers": true,
+      "snapshotMinutes": [
+        10,
+        15,
+        20,
+        25,
+        30,
+        35,
+        40,
+        45,
+        50,
+        55,
+        60,
+        65,
+        70,
+        75,
+        80,
+        85
+      ],
+      "stateCorrectionMinBucketMatches": 100,
+      "stateCorrectionMinFactor": 0.5,
+      "stateCorrectionMaxFactor": 2.5,
+      "stateCorrectionShrinkMatches": 25,
+      "stateCorrectionLateGameMode": "boost-up",
+      "stateCorrectionLateGameStartMinute": 70,
+      "stateCorrectionLateGameFactorMultiplier": 1.15,
+      "stateCorrectionLateGameMaxFactor": 2.5,
+      "stateCorrectionLateGameMaxLine": 2.5,
+      "baseSeasonIds": [
+        2023,
+        2024,
+        2025
+      ],
+      "currentSeasonId": 2026,
+      "defaultBeforeRound": null,
+      "useCurrentSeasonVolume": true,
+      "priorStrengthMatches": 100,
+      "defaultEmpiricalWeight": 0.8,
+      "edgeThreshold": 0.1,
+      "useProbabilityMoveFilter": true,
+      "minOverProbabilityMove": 0.1,
+      "minUnderProbabilityMove": -0.12,
+      "underSignalsBettingAllowed": false,
+      "decisionMode": "FullModel",
+      "minLine": 2.5,
+      "allowedLines": [
+        2.5,
+        3.5
+      ],
+      "fallbackBettingEnabled": true,
+      "requireGoalTrigger": false,
+      "targetLines": [
+        2.5,
+        3.5
+      ],
+		"liveBettingRules": [
+		  {
+			"stateTrigger": "FixedMinute",
+			"side": "Over",
+			"line": 2.5,
+			"minProbabilityMove": 0.05,
+			"minEdge": 0.10,
+			"allowBet": true,
+			"notes": "Norway 1st Division: Fixed-minute Over 2.5 only; requires +5% probability move and +10% edge."
+		  },
+		  {
+			"stateTrigger": "FixedMinute",
+			"side": "Over",
+			"line": 3.5,
+			"minProbabilityMove": 0.05,
+			"minEdge": 0.10,
+			"allowBet": true,
+			"notes": "Norway 1st Division: Fixed-minute Over 3.5 only; requires +5% probability move and +10% edge."
+		  }
+		],
+      "riskLevel": "Validation / paper test",
+      "decisionRulesNotes": "Initial Norway 1st Division profile. Uses the current CSL-derived baseline: balanced market-total selector, empirical timing, FixedMinute-only correction in evaluation/price commands, up-only direction guard, shrinkMatches=25, and late-game boost only for target lines <= 2.5. Validate before real betting.",
+      "notes": "Norway 1st Division initial profile. Training seasons 2023-2025; validation/current season 2026. DB validation showed reliable goal timelines and strong total-market odds coverage, but no team statistics."
+    },
+	
     {
       "key": "china-super-league",
       "name": "China Super League",
