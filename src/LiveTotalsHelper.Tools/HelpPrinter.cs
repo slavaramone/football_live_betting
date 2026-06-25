@@ -21,6 +21,7 @@ public static class HelpPrinter
         Console.WriteLine("  fit-weibull                         Fit goal-timing model from imported DB events.");
         Console.WriteLine("  build-live-total-calibration-dataset Build live-total calibration rows.");
         Console.WriteLine("  analyze-live-total-calibration       Analyze correction factors by trigger/state.");
+        Console.WriteLine("  analyze-after-goal-patterns          Analyze after-goal goal-effect/score patterns.");
         Console.WriteLine("  fit-live-total-state-correction      Fit trigger/state correction factors.");
         Console.WriteLine("  evaluate-live-total-performance      Run model MAE/RMSE and betting probability metrics together.");
         Console.WriteLine();
@@ -51,6 +52,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-weibull --profile china-super-league --validation true");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset --profile china-super-league --validation true");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-live-total-calibration --profile china-super-league --validation true");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-after-goal-patterns --profile npl-queensland --validation true");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-total-state-correction --profile china-super-league --validation true");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-live-total-performance --profile china-super-league --validation true --compare-scopes true --state-correction-scope fixed-minute --late-game-correction boost-up");
     }
@@ -81,5 +83,7 @@ public static class HelpPrinter
         Console.WriteLine("  --target-lines                    Optional comma-separated total lines.");
         Console.WriteLine("  --compare-scopes true             Evaluate FullModel, AfterGoalOnly and SecondHalfAfterGoalOnly in one run.");
         Console.WriteLine("  --scope                           full-model | after-goal-only | 2h-after-goal-only.");
+        Console.WriteLine("  --pattern-min-rows                Min training rows for after-goal pattern prediction. Default: 20.");
+        Console.WriteLine("  --pattern-min-matches             Min training matches for after-goal pattern prediction. Default: 10.");
     }
 }

@@ -32,6 +32,7 @@ try
         "db-validate" => await RunValidateDb(commandArgs),
         "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
         "analyze-live-total-calibration" => await RunAnalyzeLiveTotalCalibration(commandArgs),
+        "analyze-after-goal-patterns" => await RunAnalyzeAfterGoalPatterns(commandArgs),
         "fit-live-total-state-correction" => await RunFitLiveTotalStateCorrection(commandArgs),
         "evaluate-live-total-performance" => await RunEvaluateLiveTotalPerformance(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
@@ -348,6 +349,69 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
     static string P(double value) => value.ToString("P1", CultureInfo.InvariantCulture);
     static string F(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
     static string D(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
+}
+
+
+static async Task<int> RunAnalyzeAfterGoalPatterns(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+
+    var options = new LiveTotalAfterGoalPatternAnalysisOptions
+    {
+        InputPath = parsed.String("input", defaultInput),
+        OutputPath = parsed.String("output", string.Empty),
+        PatternMinRows = parsed.Int("pattern-min-rows", 20),
+        PatternMinMatches = parsed.Int("pattern-min-matches", 10),
+        EmpiricalSettlementMinBucketRows = parsed.Int("settlement-min-bucket-rows", 80),
+        EmpiricalSettlementMinBucketMatches = parsed.Int("settlement-min-bucket-matches", 40),
+        EmpiricalSettlementMaxRemainingGoals = parsed.Int("settlement-max-remaining-goals", 8),
+        EmpiricalSettlementSmoothing = parsed.Double("settlement-smoothing", 0.25)
+    };
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
+
+    if (parsed.Has("training-season-ids"))
+        AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
+    else if (profile is not null)
+        AddProfileSeasonIds(options.TrainingSeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
+
+    if (parsed.Has("test-season-ids"))
+        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
+    else if (profile is not null && validationMode)
+        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
+
+    if (parsed.Has("target-lines"))
+        AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
+    else if (profile?.TargetLines is { Count: > 0 })
+    {
+        options.TargetLines.Clear();
+        foreach (double line in profile.TargetLines)
+            options.TargetLines.Add(line);
+    }
+
+    var analyzer = new LiveTotalAfterGoalPatternAnalyzer(options);
+    LiveTotalAfterGoalPatternAnalysisResult result = await analyzer.AnalyzeAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("After-goal pattern analysis done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"Output: {result.OutputPath}");
+    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
+    Console.WriteLine($"Test seasons: {string.Join(", ", result.TestSeasonIds)}");
+    Console.WriteLine($"Rows read: {result.RowsRead}");
+    Console.WriteLine($"Test rows: {result.TestRows}");
+    Console.WriteLine($"After-goal rows analyzed: {result.AfterGoalRows}");
+    Console.WriteLine($"Rows skipped without expected final goals: {result.RowsSkippedMissingExpectedFinalGoals}");
+    Console.WriteLine($"Unsupported empirical settlement rows skipped: {result.UnsupportedEmpiricalRows}");
+    Console.WriteLine($"Pattern buckets written: {result.Summaries.Count}");
+
+    return 0;
 }
 
 static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
