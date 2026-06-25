@@ -8,8 +8,11 @@ public static class HelpPrinter
         Console.WriteLine();
         Console.WriteLine("Data commands:");
         Console.WriteLine("  download-flashscore                 Download rendered Flashscore calendar, incidents, stats and odds JSON.");
+        Console.WriteLine("  download-flashscore-fixtures        Download nearest visible Flashscore fixture round only.");
+        Console.WriteLine("  parse-flashscore-fixtures           Alias for download-flashscore-fixtures.");
         Console.WriteLine("  download-sofascore                  Download SofaScore calendar, incidents and team statistics JSON.");
         Console.WriteLine("  import-flashscore                   Import saved Flashscore JSON into PostgreSQL and apply migrations.");
+        Console.WriteLine("  import-flashscore-fixtures          Import saved Flashscore fixture calendars only.");
         Console.WriteLine("  validate-db                         Validate imported PostgreSQL data quality.");
         Console.WriteLine("  db-validate                         Alias for validate-db.");
         Console.WriteLine("  price-live-total                    Price live totals with empirical settlement tables.");
@@ -40,6 +43,10 @@ public static class HelpPrinter
 
     private static void PrintModelingExamples()
     {
+        Console.WriteLine("Data examples:");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- download-flashscore-fixtures --profile china-super-league --show-browser");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore-fixtures --profile china-super-league");
+        Console.WriteLine();
         Console.WriteLine("Modeling examples:");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-weibull --profile china-super-league --validation true");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-live-total-calibration-dataset --profile china-super-league --validation true");
@@ -52,6 +59,9 @@ public static class HelpPrinter
     {
         Console.WriteLine("Common modeling arguments:");
         Console.WriteLine("  --profile                         Profile key/name from config/league-profiles.json.");
+        Console.WriteLine("  --url                             Flashscore fixtures/results URL override for download commands.");
+        Console.WriteLine("  --season-id                       Flashscore season id override; profile currentSeasonId is fallback for fixtures.");
+        Console.WriteLine("  --tournament-id                   Flashscore tournament id override; deterministic profile fallback is used for fixtures.");
         Console.WriteLine("  --validation true                 Use validation paths and validation train/test split from the profile.");
         Console.WriteLine("  --training-season-ids             Comma-separated training season ids override.");
         Console.WriteLine("  --test-season-ids                 Comma-separated test season ids override.");

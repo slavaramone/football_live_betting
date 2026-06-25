@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using LiveTotalsHelper.Infrastructure.Flashscore;
 using LiveTotalsHelper.Infrastructure.Persistence;
 using LiveTotalsHelper.Infrastructure.Persistence.Flashscore;
@@ -22,8 +23,11 @@ try
     return command switch
     {
         "download-flashscore" => await RunDownloadFlashscore(commandArgs),
+        "download-flashscore-fixtures" => await RunDownloadFlashscoreFixtures(commandArgs),
+        "parse-flashscore-fixtures" => await RunDownloadFlashscoreFixtures(commandArgs),
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
         "import-flashscore" => await RunImportFlashscore(commandArgs),
+        "import-flashscore-fixtures" => await RunImportFlashscoreFixtures(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
         "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
@@ -79,13 +83,87 @@ static async Task<int> RunDownloadFlashscore(string[] args)
             ? !parsed.Bool("include-playoffs", true)
             : parsed.Bool("skip-playoffs", true),
         Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
-        RenderWaitMs = parsed.Int("render-wait-ms", 3_000),
-        DetailWaitMs = parsed.Int("detail-wait-ms", 3_000),
+        RenderWaitMs = parsed.Int("render-wait-ms", 4_000),
+        DetailWaitMs = parsed.Int("detail-wait-ms", 4_000),
         ShowMoreWaitMs = parsed.Int("show-more-wait-ms", 2_000),
         MaxShowMoreClicks = parsed.Int("max-show-more-clicks", 40),
         DelayMs = parsed.Int("delay-ms", 450),
         DefaultYear = defaultYear
     };
+
+    AddOptionalRounds(options.Rounds, parsed);
+
+    var downloader = new FlashscoreDownloader(new SofaScoreJsonFileStore());
+    FlashscoreDownloadResult result = await downloader.DownloadAsync(options, Console.Out, CancellationToken.None);
+    PrintFlashscoreDownloadResult(result);
+
+    return result.Failures.Count == 0 ? 0 : 1;
+}
+
+static async Task<int> RunDownloadFlashscoreFixtures(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+
+    string seasonYear = parsed.String("season-year", profile?.FlashscoreSeasonYear ?? string.Empty);
+    int seasonId = parsed.Has("season-id")
+        ? parsed.RequiredInt("season-id")
+        : profile?.FlashscoreSeasonId > 0
+            ? profile.FlashscoreSeasonId
+            : profile?.CurrentSeasonId > 0
+                ? profile.CurrentSeasonId
+                : DateTimeOffset.UtcNow.Year;
+
+    if (string.IsNullOrWhiteSpace(seasonYear))
+        seasonYear = seasonId.ToString(CultureInfo.InvariantCulture);
+
+    int defaultYear = parsed.Has("default-year")
+        ? parsed.Int("default-year", DateTimeOffset.UtcNow.Year)
+        : TryParseSeasonYear(seasonYear) ?? seasonId;
+
+    string seasonName = parsed.String("season-name", profile?.FlashscoreSeasonName ?? seasonYear);
+    if (string.IsNullOrWhiteSpace(seasonName))
+        seasonName = seasonYear;
+
+    int tournamentId = parsed.Has("tournament-id")
+        ? parsed.RequiredInt("tournament-id")
+        : profile?.FlashscoreTournamentId > 0
+            ? profile.FlashscoreTournamentId
+            : StablePositiveInt($"flashscore:tournament:{profile?.League ?? parsed.String("league", string.Empty)}");
+
+    var options = new FlashscoreDownloadOptions
+    {
+        Url = parsed.String("url", profile?.FlashscoreFixturesUrl ?? string.Empty),
+        League = parsed.String("league", profile?.League ?? string.Empty),
+        TournamentId = tournamentId,
+        SeasonId = seasonId,
+        SeasonName = seasonName,
+        SeasonYear = seasonYear,
+        CountryName = parsed.String("country", profile?.FlashscoreCountry ?? string.Empty),
+        CountryCode = parsed.String("country-code", profile?.FlashscoreCountryCode ?? string.Empty),
+        OutputRoot = parsed.String("output", "data/flashscore"),
+        Overwrite = parsed.Bool("overwrite", true),
+        DownloadIncidents = false,
+        DownloadStatistics = false,
+        DownloadOdds = false,
+        FixturesOnly = true,
+        NearestRoundOnly = true,
+        SkipPlayoffs = parsed.Has("include-playoffs")
+            ? !parsed.Bool("include-playoffs", true)
+            : parsed.Bool("skip-playoffs", true),
+        Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
+        RenderWaitMs = parsed.Int("render-wait-ms", 3_000),
+        DetailWaitMs = parsed.Int("detail-wait-ms", 3_000),
+        ShowMoreWaitMs = parsed.Int("show-more-wait-ms", 2_000),
+        MaxShowMoreClicks = 0,
+        DelayMs = parsed.Int("delay-ms", 150),
+        DefaultYear = defaultYear
+    };
+
+    if (string.IsNullOrWhiteSpace(options.Url))
+        throw new ArgumentException("Missing required argument --url, or provide --profile with flashscoreFixturesUrl set.");
+    if (string.IsNullOrWhiteSpace(options.League))
+        throw new ArgumentException("Missing required argument --league, or provide --profile with league set.");
 
     AddOptionalRounds(options.Rounds, parsed);
 
@@ -957,7 +1035,7 @@ static async Task<int> RunImportFlashscore(string[] args)
     await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
     var importer = new FlashscoreDbImporter(dbContext);
 
-    FlashscoreImportResult result = await ImportFlashscoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, debugImport, Console.Out, CancellationToken.None);
+    FlashscoreImportResult result = await ImportFlashscoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, calendarOnly: false, debugImport, Console.Out, CancellationToken.None);
 
     Console.WriteLine();
     Console.WriteLine("Import done.");
@@ -988,6 +1066,72 @@ static async Task<int> RunImportFlashscore(string[] args)
     return result.Failures.Count == 0 ? 0 : 1;
 }
 
+static async Task<int> RunImportFlashscoreFixtures(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+
+    string league = parsed.String("league", profile?.League ?? string.Empty);
+    if (string.IsNullOrWhiteSpace(league))
+        throw new ArgumentException("Missing required argument --league, or provide --profile with league set.");
+
+    int seasonId = parsed.Has("season-id")
+        ? parsed.RequiredInt("season-id")
+        : profile?.FlashscoreSeasonId > 0
+            ? profile.FlashscoreSeasonId
+            : profile?.CurrentSeasonId > 0
+                ? profile.CurrentSeasonId
+                : DateTimeOffset.UtcNow.Year;
+
+    int tournamentId = parsed.Has("tournament-id")
+        ? parsed.RequiredInt("tournament-id")
+        : profile?.FlashscoreTournamentId > 0
+            ? profile.FlashscoreTournamentId
+            : StablePositiveInt($"flashscore:tournament:{league}");
+
+    string inputRoot = parsed.String("input", parsed.String("output", "data/flashscore"));
+    bool debugImport = parsed.Bool("debug-import", false);
+
+    var rounds = new List<int>();
+    if (parsed.Has("round") || parsed.Has("rounds") || parsed.Has("from-round") || parsed.Has("round-from") || parsed.Has("to-round"))
+        AddRounds(rounds, parsed);
+
+    IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+
+    await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
+    var importer = new FlashscoreDbImporter(dbContext);
+
+    FlashscoreImportResult result = await ImportFlashscoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, calendarOnly: true, debugImport, Console.Out, CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Fixture import done.");
+    Console.WriteLine($"Rounds imported: {result.RoundsImported}");
+    Console.WriteLine($"Calendars imported: {result.CalendarsImported}");
+    Console.WriteLine($"Warnings: {result.Warnings.Count}");
+    Console.WriteLine($"Failures: {result.Failures.Count}");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
+    }
+
+    if (result.Failures.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Failures:");
+        foreach (string failure in result.Failures)
+            Console.WriteLine($"- {failure}");
+    }
+
+    return result.Failures.Count == 0 ? 0 : 1;
+}
+
 static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
     FlashscoreDbImporter importer,
     string inputRoot,
@@ -995,6 +1139,7 @@ static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
     int tournamentId,
     int seasonId,
     IReadOnlyCollection<int> requestedRounds,
+    bool calendarOnly,
     bool debugImport,
     TextWriter log,
     CancellationToken cancellationToken)
@@ -1032,6 +1177,9 @@ static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
         roundFolders = roundFolders.OrderBy(x => x.Round).ToList();
     }
 
+    if (calendarOnly && requestedRounds.Count == 0)
+        roundFolders = SelectNearestSavedFixtureRoundFolders(roundFolders);
+
     foreach ((int round, string roundFolder) in roundFolders)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1059,6 +1207,9 @@ static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
             result.Failures.Add($"round {round}: calendar import failed:{Environment.NewLine}{FormatImportException(ex)}");
             continue;
         }
+
+        if (calendarOnly)
+            continue;
 
         string eventsFolder = Path.Combine(roundFolder, "events");
         if (!Directory.Exists(eventsFolder))
@@ -1135,6 +1286,70 @@ static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
     return result;
 }
 
+
+
+static List<(int Round, string Folder)> SelectNearestSavedFixtureRoundFolders(List<(int Round, string Folder)> roundFolders)
+{
+    if (roundFolders.Count <= 1)
+        return roundFolders;
+
+    long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+    var candidates = new List<(int Round, string Folder, long EarliestFutureStart, long EarliestKnownStart)>();
+    foreach ((int round, string folder) in roundFolders)
+    {
+        string calendarPath = Path.Combine(folder, "calendar.json");
+        long earliestFutureStart = long.MaxValue;
+        long earliestKnownStart = long.MaxValue;
+
+        if (File.Exists(calendarPath))
+        {
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(File.ReadAllText(calendarPath));
+                if (document.RootElement.TryGetProperty("events", out JsonElement eventsElement) &&
+                    eventsElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement eventElement in eventsElement.EnumerateArray())
+                    {
+                        if (!eventElement.TryGetProperty("startTimestamp", out JsonElement startElement) ||
+                            !startElement.TryGetInt64(out long startTimestamp))
+                            continue;
+
+                        if (startTimestamp < earliestKnownStart)
+                            earliestKnownStart = startTimestamp;
+                        if (startTimestamp >= now - 6 * 60 * 60 && startTimestamp < earliestFutureStart)
+                            earliestFutureStart = startTimestamp;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Bad calendar JSON will be reported during the actual import path.
+            }
+            catch (IOException)
+            {
+                // File read races are non-fatal here; the actual import will report them.
+            }
+        }
+
+        candidates.Add((round, folder, earliestFutureStart, earliestKnownStart));
+    }
+
+    var selected = candidates
+        .Where(x => x.EarliestFutureStart != long.MaxValue)
+        .OrderBy(x => x.EarliestFutureStart)
+        .ThenBy(x => x.Round)
+        .FirstOrDefault();
+
+    if (selected.Folder is null)
+        selected = candidates
+            .OrderBy(x => x.EarliestKnownStart)
+            .ThenBy(x => x.Round)
+            .First();
+
+    return [(selected.Round, selected.Folder)];
+}
 
 static string FormatImportException(Exception exception)
 {
@@ -1466,6 +1681,21 @@ static void AddSeasonIds(List<int> seasonIds, ParsedArgs parsed)
     seasonIds.Sort();
 }
 
+
+static int StablePositiveInt(string value)
+{
+    const uint offset = 2166136261;
+    const uint prime = 16777619;
+
+    uint hash = offset;
+    foreach (char c in value ?? string.Empty)
+    {
+        hash ^= c;
+        hash *= prime;
+    }
+
+    return (int)(hash % 2_000_000_000U) + 1;
+}
 
 static int? TryParseSeasonYear(string value)
 {

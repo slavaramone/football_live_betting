@@ -77,7 +77,12 @@ public sealed class FlashscoreDownloader
             if (options.RenderWaitMs > 0)
                 await Task.Delay(options.RenderWaitMs, cancellationToken);
 
-            int clicks = await ClickShowMoreUntilDoneAsync(page, options, log, cancellationToken);
+            int clicks = 0;
+            if (!options.FixturesOnly && !options.NearestRoundOnly)
+                clicks = await ClickShowMoreUntilDoneAsync(page, options, log, cancellationToken);
+            else
+                await log.WriteLineAsync("Fixture mode: using initially visible nearest round only; Show more is skipped.");
+
             await log.WriteLineAsync($"Show more clicks: {clicks}");
 
             IReadOnlyList<FlashscoreRenderedMatch> renderedMatches = await ExtractMatchesAsync(page, cancellationToken);
@@ -101,6 +106,13 @@ public sealed class FlashscoreDownloader
                 .OrderByDescending(x => x.StartTimestamp ?? 0)
                 .ThenBy(x => x.HomeTeam.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+
+            if ((options.FixturesOnly || options.NearestRoundOnly) && options.Rounds.Count == 0)
+            {
+                events = SelectNearestRound(events);
+                if (events.Count > 0)
+                    await log.WriteLineAsync($"Nearest fixture round selected: round {events[0].Round} ({events.Count} events).");
+            }
 
             result.EventsDiscovered = events.Count;
             if (events.Count == 0)
@@ -223,6 +235,51 @@ public sealed class FlashscoreDownloader
         }
 
         return result;
+    }
+
+
+    private static IReadOnlyList<FlashscoreCalendarEvent> SelectNearestRound(IReadOnlyList<FlashscoreCalendarEvent> events)
+    {
+        if (events.Count == 0)
+            return events;
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        var roundGroups = events
+            .GroupBy(x => x.Round)
+            .Select(group => new
+            {
+                Round = group.Key,
+                Events = group.ToList(),
+                EarliestFutureStart = group
+                    .Select(x => x.StartTimestamp)
+                    .Where(x => x.HasValue && x.Value >= now - 6 * 60 * 60)
+                    .Select(x => x!.Value)
+                    .DefaultIfEmpty(long.MaxValue)
+                    .Min(),
+                EarliestKnownStart = group
+                    .Select(x => x.StartTimestamp)
+                    .Where(x => x.HasValue)
+                    .Select(x => x!.Value)
+                    .DefaultIfEmpty(long.MaxValue)
+                    .Min()
+            })
+            .ToList();
+
+        var selected = roundGroups
+            .Where(x => x.EarliestFutureStart != long.MaxValue)
+            .OrderBy(x => x.EarliestFutureStart)
+            .ThenBy(x => x.Round)
+            .FirstOrDefault()
+            ?? roundGroups
+                .OrderBy(x => x.EarliestKnownStart)
+                .ThenBy(x => x.Round)
+                .First();
+
+        return selected.Events
+            .OrderBy(x => x.StartTimestamp ?? long.MaxValue)
+            .ThenBy(x => x.HomeTeam.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private async Task DownloadIncidentsAsync(

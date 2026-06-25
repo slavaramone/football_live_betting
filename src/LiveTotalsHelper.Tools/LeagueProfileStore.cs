@@ -24,6 +24,15 @@ public sealed class LeagueProfile
     public string Name { get; set; } = string.Empty;
     public string League { get; set; } = string.Empty;
 
+    // Flashscore download/import defaults.
+    public string FlashscoreFixturesUrl { get; set; } = string.Empty;
+    public int FlashscoreTournamentId { get; set; }
+    public int FlashscoreSeasonId { get; set; }
+    public string FlashscoreSeasonName { get; set; } = string.Empty;
+    public string FlashscoreSeasonYear { get; set; } = string.Empty;
+    public string FlashscoreCountry { get; set; } = string.Empty;
+    public string FlashscoreCountryCode { get; set; } = string.Empty;
+
     // Production/live artifacts and seasons.
     public string ModelPath { get; set; } = string.Empty;
     public string StateCorrectionPath { get; set; } = string.Empty;

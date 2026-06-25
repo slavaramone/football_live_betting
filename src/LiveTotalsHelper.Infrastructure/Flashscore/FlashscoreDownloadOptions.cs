@@ -16,10 +16,12 @@ public sealed class FlashscoreDownloadOptions
     public bool DownloadIncidents { get; init; } = true;
     public bool DownloadStatistics { get; init; } = true;
     public bool DownloadOdds { get; init; } = true;
+    public bool FixturesOnly { get; init; }
+    public bool NearestRoundOnly { get; init; }
     public bool SkipPlayoffs { get; init; } = true;
     public bool Headless { get; init; } = true;
-    public int RenderWaitMs { get; init; } = 3_000;
-    public int DetailWaitMs { get; init; } = 3_000;
+    public int RenderWaitMs { get; init; } = 4_000;
+    public int DetailWaitMs { get; init; } = 4_000;
     public int ShowMoreWaitMs { get; init; } = 2_000;
     public int MaxShowMoreClicks { get; init; } = 40;
     public int DelayMs { get; init; } = 450;
