@@ -13,8 +13,24 @@
       "stateCorrectionShrinkMatches": 25,
       "stateCorrectionLateGameMode": "off",
       "liveBettingRules": [
-        { "stateTrigger": "FixedMinute", "side": "Over", "line": 2.5, "minProbabilityMove": 0.05, "minEdge": 0.10, "allowBet": true, "notes": "Strongest rule." },
-        { "stateTrigger": "FixedMinute", "side": "Over", "line": 3.5, "minProbabilityMove": 0.07, "minEdge": 0.12, "allowBet": true, "notes": "Usable but weaker." },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 2.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.10,
+          "allowBet": true,
+          "notes": "Strongest rule."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 3.5,
+          "minProbabilityMove": 0.07,
+          "minEdge": 0.12,
+          "allowBet": true,
+          "notes": "Usable but weaker."
+        },
         {
           "stateTrigger": "AfterGoal",
           "goalEffect": "Equalizer",
@@ -47,8 +63,37 @@
           "minEdge": 0.10,
           "allowBet": false,
           "notes": "Use baseline price only; pattern correction not trusted yet."
-        }      
-      
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "FirstGoal",
+          "side": "Over",
+          "line": 2.5,
+          "minuteFrom": 1,
+          "minuteTo": 20,
+          "minEdge": 0.08,
+          "allowBet": false
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "FirstGoal",
+          "side": "Over",
+          "line": 3.5,
+          "minuteFrom": 1,
+          "minuteTo": 20,
+          "minEdge": 0.10,
+          "allowBet": false
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "Equalizer",
+          "side": "Over",
+          "line": 2.5,
+          "minuteFrom": 51,
+          "minuteTo": 65,
+          "minEdge": 0.08,
+          "allowBet": false
+        }
       ],
       "flashscoreFixturesUrl": "https://www.flashscore.co.ke/football/australia/npl-queensland/fixtures/",
       "flashscoreTournamentId": 100003,
@@ -64,8 +109,59 @@
       "stateCorrectionShrinkMatches": 25,
       "stateCorrectionLateGameMode": "off",
       "liveBettingRules": [
-        { "stateTrigger": "FixedMinute", "side": "Over", "line": 2.5, "minProbabilityMove": 0.05, "minEdge": 0.10, "allowBet": true, "notes": "Avoid 70+ minute signals manually." },
-        { "stateTrigger": "FixedMinute", "side": "Over", "line": 3.5, "minProbabilityMove": 0.05, "minEdge": 0.10, "allowBet": true, "notes": "Validated well for small league." }
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 2.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.10,
+          "allowBet": true,
+          "notes": "Avoid 70+ minute signals manually."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 3.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.10,
+          "allowBet": true,
+          "notes": "Validated well for small league."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "Equalizer",
+          "goalSide": "Away",
+          "side": "Over",
+          "line": 2.5,
+          "minuteFrom": 36,
+          "minuteTo": 50,
+          "minEdge": 0.08,
+          "allowBet": false,
+          "notes": "Paper-test: away equalizer / 1-0 to 1-1 reopens game strongly."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "Equalizer",
+          "goalSide": "Away",
+          "side": "Over",
+          "line": 3.5,
+          "minuteFrom": 36,
+          "minuteTo": 50,
+          "minEdge": 0.10,
+          "allowBet": false,
+          "notes": "Paper-test only; good continuation but small sample."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "ExtendsToTwoGoalLead",
+          "side": "Over",
+          "line": 3.5,
+          "minuteFrom": 21,
+          "minuteTo": 35,
+          "minEdge": 0.10,
+          "allowBet": false,
+          "notes": "Watchlist only: early 2-0 continuation signal."
+        }
       ],
       "flashscoreFixturesUrl": "https://www.flashscore.co.ke/football/australia/npl-victoria/fixtures/",
       "flashscoreTournamentId": 100002,
@@ -134,6 +230,17 @@
           "minEdge": 0.08,
           "allowBet": false,
           "notes": "CSL paper-test: late-mid equalizer reopens Over 2.5."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "ExtendsToTwoGoalLead",
+          "side": "Over",
+          "line": 3.5,
+          "minuteFrom": 21,
+          "minuteTo": 50,
+          "minEdge": 0.10,
+          "allowBet": false,
+          "notes": "CSL watchlist: early 2-goal lead continuation."
         }
       ],
       "flashscoreFixturesUrl": "https://www.flashscore.co.ke/football/china/super-league/fixtures/",
