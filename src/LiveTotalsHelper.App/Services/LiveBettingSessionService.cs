@@ -106,6 +106,7 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         try
         {
             LiveTotalPriceOptions priceOptions = BuildPriceOptions(input, toolProfile, trigger, overOdds, underOdds);
+            await EnsureEmpiricalSettlementAsync(priceOptions, toolProfile, warnings, cancellationToken);
             await ApplySeasonVolumeAsync(priceOptions, toolProfile, input, warnings, cancellationToken);
 
             var pricer = new LiveTotalPricer(priceOptions);
@@ -359,6 +360,47 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             return true;
 
         return LiveTotalStateTrigger.Normalize(ruleTrigger).Equals(requestedTrigger, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task EnsureEmpiricalSettlementAsync(
+        LiveTotalPriceOptions priceOptions,
+        LeagueProfile profile,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(priceOptions.EmpiricalSettlementPath) ||
+            File.Exists(priceOptions.EmpiricalSettlementPath))
+            return;
+
+        if (string.IsNullOrWhiteSpace(profile.CalibrationDatasetPath) ||
+            !File.Exists(profile.CalibrationDatasetPath))
+        {
+            warnings.Add($"Empirical settlement table is missing and calibration CSV was not found: {profile.CalibrationDatasetPath}");
+            return;
+        }
+
+        if (profile.TrainingSeasonIds.Count == 0)
+        {
+            warnings.Add("Empirical settlement table is missing and profile has no trainingSeasonIds.");
+            return;
+        }
+
+        var fitOptions = new LiveTotalEmpiricalSettlementFitOptions
+        {
+            InputPath = profile.CalibrationDatasetPath,
+            OutputPath = priceOptions.EmpiricalSettlementPath,
+            MinBucketRows = 80,
+            MinBucketMatches = 40,
+            MaxRemainingGoals = 8,
+            Smoothing = 0.25
+        };
+
+        foreach (int seasonId in profile.TrainingSeasonIds)
+            fitOptions.TrainingSeasonIds.Add(seasonId);
+
+        var fitter = new LiveTotalEmpiricalSettlementFitter(fitOptions);
+        LiveTotalEmpiricalSettlementFitResult result = await fitter.FitAsync(cancellationToken);
+        warnings.Add($"Built missing empirical settlement table: {result.OutputPath} ({result.Buckets.Count} buckets).");
     }
 
     private async Task ApplySeasonVolumeAsync(
