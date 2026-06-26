@@ -49,6 +49,7 @@ public sealed class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(LeagueFilter));
 
         SelectedProfile = _liveSessionService.FindProfileByLeague(_leagueFilter) ?? Profiles.FirstOrDefault();
+        RefreshMinuteOptions();
         LiveResult = new LiveBettingCheckResult
         {
             Status = "READY - click Load fixtures"
@@ -70,10 +71,10 @@ public sealed class MainWindowViewModel : ObservableObject
     }
     public ObservableCollection<LiveBettingDecisionRow> LiveDecisions { get; } = [];
     public IReadOnlyList<string> StateTriggers { get; } = ["fixed-minute", "after-goal", "after-red-card"];
-    public IReadOnlyList<int> Minutes { get; } = Enumerable.Range(0, 91).ToArray();
+    public ObservableCollection<int> Minutes { get; } = [];
     public IReadOnlyList<int> GoalCounts { get; } = Enumerable.Range(0, 10).ToArray();
     public IReadOnlyList<int> RedCardCounts { get; } = [0, 1, 2, 3];
-    public IReadOnlyList<int> LastGoalMinuteOptions { get; } = [-1, .. Enumerable.Range(0, 91)];
+    public IReadOnlyList<int> LastGoalMinuteOptions { get; } = [-1, .. Enumerable.Range(1, 90)];
     public IReadOnlyList<string> BetSides { get; } = ["OVER", "UNDER"];
     public IReadOnlyList<string> BetModes { get; } = ["Paper", "Real"];
 
@@ -272,6 +273,23 @@ public sealed class MainWindowViewModel : ObservableObject
         SaveCurrentLeagueState();
     }
 
+    public void RefreshMinuteOptions()
+    {
+        int[] availableMinutes = GetAvailableMinutes(LiveInput.StateTrigger);
+        if (!Minutes.SequenceEqual(availableMinutes))
+        {
+            Minutes.Clear();
+            foreach (int minute in availableMinutes)
+                Minutes.Add(minute);
+        }
+
+        if (Minutes.Count > 0 && !Minutes.Contains(LiveInput.Minute))
+        {
+            LiveInput.Minute = Minutes[0];
+            OnPropertyChanged(nameof(LiveInput));
+        }
+    }
+
     private void RestoreState()
     {
         if (string.IsNullOrWhiteSpace(_stateFilePath) || !File.Exists(_stateFilePath))
@@ -403,6 +421,7 @@ public sealed class MainWindowViewModel : ObservableObject
         if (_fixtureInputs.TryGetValue(key, out LiveBettingCheckInput? saved))
         {
             LiveInput = CloneInput(saved);
+            RefreshMinuteOptions();
             return;
         }
 
@@ -410,6 +429,7 @@ public sealed class MainWindowViewModel : ObservableObject
         SyncMatchState(input, SelectedMatch);
         _fixtureInputs[key] = CloneInput(input);
         LiveInput = input;
+        RefreshMinuteOptions();
     }
 
     private bool RestoreFixtureResultForSelectedMatch()
@@ -539,8 +559,17 @@ public sealed class MainWindowViewModel : ObservableObject
         if (!LiveInput.BeforeRound.HasValue && profile.DefaultBeforeRound.HasValue)
             LiveInput.BeforeRound = profile.DefaultBeforeRound;
 
+        RefreshMinuteOptions();
         OnPropertyChanged(nameof(TotalLines));
         OnPropertyChanged(nameof(LiveInput));
+    }
+
+    private static int[] GetAvailableMinutes(string trigger)
+    {
+        if (trigger.Equals("fixed-minute", StringComparison.OrdinalIgnoreCase))
+            return [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85];
+
+        return Enumerable.Range(1, 90).ToArray();
     }
 
     private static readonly JsonSerializerOptions StateJsonOptions = new()

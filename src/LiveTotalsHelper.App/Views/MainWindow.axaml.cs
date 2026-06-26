@@ -13,6 +13,15 @@ public partial class MainWindow : Window
         InitializeComponent();
         MatchesListBox.AddHandler(InputElement.PointerPressedEvent, PreserveCurrentVisibleInputs, RoutingStrategies.Tunnel);
         LeagueBox.AddHandler(InputElement.PointerPressedEvent, PreserveCurrentVisibleInputs, RoutingStrategies.Tunnel);
+        StateTriggerBox.SelectionChanged += (_, _) =>
+        {
+            if (DataContext is MainWindowViewModel vm)
+            {
+                SyncVisibleInputs(vm);
+                vm.RefreshMinuteOptions();
+                vm.CaptureCurrentState();
+            }
+        };
         RegisterStateTextBox(BeforeRoundBox);
         RegisterStateTextBox(StartingOverOdds25Box);
         RegisterStateTextBox(StartingUnderOdds25Box);
@@ -103,8 +112,10 @@ public partial class MainWindow : Window
     private void SyncVisibleInputs(MainWindowViewModel vm)
     {
         vm.LiveInput.StateTrigger = StateTriggerBox.SelectedItem?.ToString() ?? vm.LiveInput.StateTrigger;
+        vm.RefreshMinuteOptions();
 
         vm.LiveInput.Minute = ReadSelectedInt(MinuteBox, vm.LiveInput.Minute);
+        vm.RefreshMinuteOptions();
         vm.LiveInput.HomeGoals = ReadSelectedInt(HomeGoalsBox, vm.LiveInput.HomeGoals);
         vm.LiveInput.AwayGoals = ReadSelectedInt(AwayGoalsBox, vm.LiveInput.AwayGoals);
         vm.LiveInput.HomeRedCards = ReadSelectedInt(HomeRedCardsBox, vm.LiveInput.HomeRedCards);
