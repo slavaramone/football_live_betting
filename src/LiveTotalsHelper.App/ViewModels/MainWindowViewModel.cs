@@ -19,6 +19,10 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _paperLogPath = string.Empty;
     private LiveBettingCheckInput _liveInput = new();
     private readonly Dictionary<string, LiveBettingCheckInput> _fixtureInputs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<MatchSnapshot>> _leagueMatches = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _leagueSelectedFixtureKeys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, LiveBettingCheckResult> _fixtureResults = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<LiveBettingDecisionRow>> _fixtureDecisionRows = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindowViewModel(IMatchRepository matchRepository, ILiveBettingSessionService liveSessionService)
     {
@@ -121,22 +125,18 @@ public sealed class MainWindowViewModel : ObservableObject
         get => _leagueFilter;
         set
         {
+            if (string.Equals(_leagueFilter, value, StringComparison.Ordinal))
+                return;
+
+            SaveCurrentLeagueState();
+
             if (SetProperty(ref _leagueFilter, value))
             {
                 LiveBettingProfile? profile = _liveSessionService.FindProfileByLeague(value);
                 if (profile is not null)
                     SelectedProfile = profile;
 
-                SaveCurrentFixtureInput();
-                _fixtureInputs.Clear();
-                Matches.Clear();
-                SelectedMatch = null;
-                LiveDecisions.Clear();
-
-                LiveResult = new LiveBettingCheckResult
-                {
-                    Status = "READY - click Load fixtures"
-                };
+                RestoreLeagueState(value);
             }
         }
     }
@@ -149,13 +149,16 @@ public sealed class MainWindowViewModel : ObservableObject
             if (ReferenceEquals(_selectedMatch, value))
                 return;
 
-            SaveCurrentFixtureInput();
+            SaveCurrentFixtureState();
 
             _selectedMatch = value;
             OnPropertyChanged(nameof(SelectedMatch));
             OnPropertyChanged(nameof(SelectedMatchTitle));
 
             LoadFixtureInputForSelectedMatch();
+
+            if (RestoreFixtureResultForSelectedMatch())
+                return;
 
             // Do not auto-price here. Auto-pricing can freeze UI if model files/DB volume are slow.
             LiveResult = new LiveBettingCheckResult
@@ -178,8 +181,15 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public void LoadFixtures()
     {
+        string? previousSelectedKey = _selectedMatch is null ? null : GetFixtureInputKey(_selectedMatch);
+        SaveCurrentLeagueState();
+
         ReloadMatches();
-        SelectedMatch = Matches.FirstOrDefault();
+        MatchSnapshot? nextSelection = !string.IsNullOrWhiteSpace(previousSelectedKey)
+            ? Matches.FirstOrDefault(x => GetFixtureInputKey(x).Equals(previousSelectedKey, StringComparison.OrdinalIgnoreCase))
+            : null;
+        SelectedMatch = nextSelection ?? Matches.FirstOrDefault();
+        SaveCurrentLeagueState();
 
         LiveResult = new LiveBettingCheckResult
         {
@@ -194,6 +204,8 @@ public sealed class MainWindowViewModel : ObservableObject
         LiveDecisions.Clear();
         foreach (LiveBettingDecisionRow decision in LiveResult.Decisions)
             LiveDecisions.Add(decision);
+
+        SaveCurrentFixtureState();
     }
 
     public async Task AppendPaperLogAsync()
@@ -216,6 +228,64 @@ public sealed class MainWindowViewModel : ObservableObject
         _fixtureInputs[GetFixtureInputKey(_selectedMatch)] = CloneInput(LiveInput);
     }
 
+    private void SaveCurrentFixtureState()
+    {
+        if (_selectedMatch is null)
+            return;
+
+        string key = GetFixtureInputKey(_selectedMatch);
+        _fixtureInputs[key] = CloneInput(LiveInput);
+        _leagueSelectedFixtureKeys[LeagueFilter] = key;
+
+        if (!LiveResult.Status.Equals("PRICING...", StringComparison.OrdinalIgnoreCase))
+            _fixtureResults[key] = LiveResult;
+        _fixtureDecisionRows[key] = LiveDecisions.ToList();
+    }
+
+    private void SaveCurrentLeagueState()
+    {
+        if (string.IsNullOrWhiteSpace(_leagueFilter))
+            return;
+
+        SaveCurrentFixtureState();
+        _leagueMatches[_leagueFilter] = Matches.ToList();
+    }
+
+    private void RestoreLeagueState(string league)
+    {
+        Matches.Clear();
+        LiveDecisions.Clear();
+        _selectedMatch = null;
+        OnPropertyChanged(nameof(SelectedMatch));
+        OnPropertyChanged(nameof(SelectedMatchTitle));
+
+        if (_leagueMatches.TryGetValue(league, out List<MatchSnapshot>? savedMatches))
+        {
+            foreach (MatchSnapshot match in savedMatches)
+                Matches.Add(match);
+        }
+
+        MatchSnapshot? selected = null;
+        if (_leagueSelectedFixtureKeys.TryGetValue(league, out string? selectedKey))
+        {
+            selected = Matches.FirstOrDefault(x =>
+                GetFixtureInputKey(x).Equals(selectedKey, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (selected is not null)
+        {
+            SelectedMatch = selected;
+            return;
+        }
+
+        LiveResult = new LiveBettingCheckResult
+        {
+            Status = Matches.Count == 0
+                ? "READY - click Load fixtures"
+                : $"READY - {Matches.Count} fixtures restored"
+        };
+    }
+
     private void LoadFixtureInputForSelectedMatch()
     {
         if (SelectedMatch is null)
@@ -232,6 +302,26 @@ public sealed class MainWindowViewModel : ObservableObject
         SyncMatchState(input, SelectedMatch);
         _fixtureInputs[key] = CloneInput(input);
         LiveInput = input;
+    }
+
+    private bool RestoreFixtureResultForSelectedMatch()
+    {
+        if (SelectedMatch is null)
+            return false;
+
+        string key = GetFixtureInputKey(SelectedMatch);
+        if (!_fixtureResults.TryGetValue(key, out LiveBettingCheckResult? savedResult))
+            return false;
+
+        LiveResult = savedResult;
+        LiveDecisions.Clear();
+        if (_fixtureDecisionRows.TryGetValue(key, out List<LiveBettingDecisionRow>? rows))
+        {
+            foreach (LiveBettingDecisionRow row in rows)
+                LiveDecisions.Add(row);
+        }
+
+        return true;
     }
 
     private static void SyncMatchState(LiveBettingCheckInput input, MatchSnapshot match)
@@ -302,6 +392,7 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             foreach (MatchSnapshot match in _matchRepository.GetLiveMatches(LeagueFilter))
                 Matches.Add(match);
+            _leagueMatches[LeagueFilter] = Matches.ToList();
         }
         catch (Exception ex)
         {
