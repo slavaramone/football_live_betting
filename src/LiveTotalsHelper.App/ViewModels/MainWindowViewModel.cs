@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using LiveTotalsHelper.Core.Models;
@@ -21,6 +22,18 @@ public sealed class MainWindowViewModel : ObservableObject
     private LiveBettingProfile? _selectedProfile;
     private string _paperLogPath = string.Empty;
     private LiveBettingCheckInput _liveInput = new();
+    private string _beforeRoundText = string.Empty;
+    private string _startingOverOdds25Text = string.Empty;
+    private string _startingUnderOdds25Text = string.Empty;
+    private string _startingOverOdds35Text = string.Empty;
+    private string _startingUnderOdds35Text = string.Empty;
+    private string _liveOverOdds25Text = string.Empty;
+    private string _liveUnderOdds25Text = string.Empty;
+    private string _liveOverOdds35Text = string.Empty;
+    private string _liveUnderOdds35Text = string.Empty;
+    private string _selectedBetOddsText = string.Empty;
+    private string _stakeText = string.Empty;
+    private string _betNotesText = string.Empty;
     private readonly Dictionary<string, LiveBettingCheckInput> _fixtureInputs = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<MatchSnapshot>> _leagueMatches = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _leagueSelectedFixtureKeys = new(StringComparer.OrdinalIgnoreCase);
@@ -50,6 +63,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
         SelectedProfile = _liveSessionService.FindProfileByLeague(_leagueFilter) ?? Profiles.FirstOrDefault();
         RefreshMinuteOptions();
+        UpdateDraftFromLiveInput();
         LiveResult = new LiveBettingCheckResult
         {
             Status = "READY - click Load fixtures"
@@ -126,6 +140,66 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         get => _paperLogPath;
         private set => SetProperty(ref _paperLogPath, value);
+    }
+    public string BeforeRoundText
+    {
+        get => _beforeRoundText;
+        set => SetProperty(ref _beforeRoundText, value);
+    }
+    public string StartingOverOdds25Text
+    {
+        get => _startingOverOdds25Text;
+        set => SetProperty(ref _startingOverOdds25Text, value);
+    }
+    public string StartingUnderOdds25Text
+    {
+        get => _startingUnderOdds25Text;
+        set => SetProperty(ref _startingUnderOdds25Text, value);
+    }
+    public string StartingOverOdds35Text
+    {
+        get => _startingOverOdds35Text;
+        set => SetProperty(ref _startingOverOdds35Text, value);
+    }
+    public string StartingUnderOdds35Text
+    {
+        get => _startingUnderOdds35Text;
+        set => SetProperty(ref _startingUnderOdds35Text, value);
+    }
+    public string LiveOverOdds25Text
+    {
+        get => _liveOverOdds25Text;
+        set => SetProperty(ref _liveOverOdds25Text, value);
+    }
+    public string LiveUnderOdds25Text
+    {
+        get => _liveUnderOdds25Text;
+        set => SetProperty(ref _liveUnderOdds25Text, value);
+    }
+    public string LiveOverOdds35Text
+    {
+        get => _liveOverOdds35Text;
+        set => SetProperty(ref _liveOverOdds35Text, value);
+    }
+    public string LiveUnderOdds35Text
+    {
+        get => _liveUnderOdds35Text;
+        set => SetProperty(ref _liveUnderOdds35Text, value);
+    }
+    public string SelectedBetOddsText
+    {
+        get => _selectedBetOddsText;
+        set => SetProperty(ref _selectedBetOddsText, value);
+    }
+    public string StakeText
+    {
+        get => _stakeText;
+        set => SetProperty(ref _stakeText, value);
+    }
+    public string BetNotesText
+    {
+        get => _betNotesText;
+        set => SetProperty(ref _betNotesText, value);
     }
 
     public string LeagueFilter
@@ -208,6 +282,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public async Task BuildLiveCheckAsync()
     {
+        ApplyDraftToLiveInput();
         LiveResult = new LiveBettingCheckResult { Status = "PRICING..." };
         LiveResult = await _liveSessionService.BuildCheckAsync(LiveInput);
         LiveDecisions.Clear();
@@ -239,24 +314,7 @@ public sealed class MainWindowViewModel : ObservableObject
         try
         {
             SaveCurrentLeagueState();
-
-            string? directory = Path.GetDirectoryName(Path.GetFullPath(_stateFilePath));
-            if (!string.IsNullOrWhiteSpace(directory))
-                Directory.CreateDirectory(directory);
-
-            var state = new AppStateDto
-            {
-                SavedAtUtc = DateTimeOffset.UtcNow,
-                LeagueFilter = LeagueFilter,
-                PaperLogPath = PaperLogPath,
-                FixtureInputs = new Dictionary<string, LiveBettingCheckInput>(_fixtureInputs, StringComparer.OrdinalIgnoreCase),
-                LeagueMatches = _leagueMatches.ToDictionary(x => x.Key, x => x.Value.ToList(), StringComparer.OrdinalIgnoreCase),
-                LeagueSelectedFixtureKeys = new Dictionary<string, string>(_leagueSelectedFixtureKeys, StringComparer.OrdinalIgnoreCase),
-                FixtureResults = new Dictionary<string, LiveBettingCheckResult>(_fixtureResults, StringComparer.OrdinalIgnoreCase),
-                FixtureDecisionRows = _fixtureDecisionRows.ToDictionary(x => x.Key, x => x.Value.ToList(), StringComparer.OrdinalIgnoreCase)
-            };
-
-            File.WriteAllText(_stateFilePath, JsonSerializer.Serialize(state, StateJsonOptions));
+            WriteStateFile();
         }
         catch (Exception ex)
         {
@@ -271,6 +329,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public void CaptureCurrentState()
     {
         SaveCurrentLeagueState();
+        TryWriteStateFile();
     }
 
     public void RefreshMinuteOptions()
@@ -346,11 +405,51 @@ public sealed class MainWindowViewModel : ObservableObject
         }
     }
 
+    private void TryWriteStateFile()
+    {
+        if (string.IsNullOrWhiteSpace(_stateFilePath))
+            return;
+
+        try
+        {
+            WriteStateFile();
+        }
+        catch
+        {
+            // Interactive state capture should never interrupt betting input.
+        }
+    }
+
+    private void WriteStateFile()
+    {
+        if (string.IsNullOrWhiteSpace(_stateFilePath))
+            return;
+
+        string? directory = Path.GetDirectoryName(Path.GetFullPath(_stateFilePath));
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
+
+        var state = new AppStateDto
+        {
+            SavedAtUtc = DateTimeOffset.UtcNow,
+            LeagueFilter = LeagueFilter,
+            PaperLogPath = PaperLogPath,
+            FixtureInputs = new Dictionary<string, LiveBettingCheckInput>(_fixtureInputs, StringComparer.OrdinalIgnoreCase),
+            LeagueMatches = _leagueMatches.ToDictionary(x => x.Key, x => x.Value.ToList(), StringComparer.OrdinalIgnoreCase),
+            LeagueSelectedFixtureKeys = new Dictionary<string, string>(_leagueSelectedFixtureKeys, StringComparer.OrdinalIgnoreCase),
+            FixtureResults = new Dictionary<string, LiveBettingCheckResult>(_fixtureResults, StringComparer.OrdinalIgnoreCase),
+            FixtureDecisionRows = _fixtureDecisionRows.ToDictionary(x => x.Key, x => x.Value.ToList(), StringComparer.OrdinalIgnoreCase)
+        };
+
+        File.WriteAllText(_stateFilePath, JsonSerializer.Serialize(state, StateJsonOptions));
+    }
+
     private void SaveCurrentFixtureInput()
     {
         if (_selectedMatch is null)
             return;
 
+        ApplyDraftToLiveInput();
         _fixtureInputs[GetFixtureInputKey(_selectedMatch)] = CloneInput(LiveInput);
     }
 
@@ -359,6 +458,7 @@ public sealed class MainWindowViewModel : ObservableObject
         if (_selectedMatch is null)
             return;
 
+        ApplyDraftToLiveInput();
         string key = GetFixtureInputKey(_selectedMatch);
         _fixtureInputs[key] = CloneInput(LiveInput);
         _leagueSelectedFixtureKeys[LeagueFilter] = key;
@@ -395,7 +495,10 @@ public sealed class MainWindowViewModel : ObservableObject
         if (_leagueSelectedFixtureKeys.TryGetValue(league, out string? selectedKey))
         {
             selected = Matches.FirstOrDefault(x =>
-                GetFixtureInputKey(x).Equals(selectedKey, StringComparison.OrdinalIgnoreCase));
+                    GetFixtureInputKey(x).Equals(selectedKey, StringComparison.OrdinalIgnoreCase))
+                ?? Matches.FirstOrDefault(x =>
+                    GetLegacyFixtureInputKey(x).Equals(selectedKey, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(ResolveSavedFixtureStateKey(x), selectedKey, StringComparison.OrdinalIgnoreCase));
         }
 
         if (selected is not null)
@@ -418,18 +521,20 @@ public sealed class MainWindowViewModel : ObservableObject
             return;
 
         string key = GetFixtureInputKey(SelectedMatch);
-        if (_fixtureInputs.TryGetValue(key, out LiveBettingCheckInput? saved))
+        string? savedKey = ResolveSavedFixtureStateKey(SelectedMatch);
+        if (savedKey is not null && _fixtureInputs.TryGetValue(savedKey, out LiveBettingCheckInput? saved))
         {
             LiveInput = CloneInput(saved);
             RefreshMinuteOptions();
+            UpdateDraftFromLiveInput();
             return;
         }
 
-        LiveBettingCheckInput input = CloneInput(LiveInput);
-        SyncMatchState(input, SelectedMatch);
+        LiveBettingCheckInput input = CreateInputForMatch(SelectedMatch);
         _fixtureInputs[key] = CloneInput(input);
         LiveInput = input;
         RefreshMinuteOptions();
+        UpdateDraftFromLiveInput();
     }
 
     private bool RestoreFixtureResultForSelectedMatch()
@@ -437,8 +542,8 @@ public sealed class MainWindowViewModel : ObservableObject
         if (SelectedMatch is null)
             return false;
 
-        string key = GetFixtureInputKey(SelectedMatch);
-        if (!_fixtureResults.TryGetValue(key, out LiveBettingCheckResult? savedResult))
+        string? key = ResolveSavedFixtureStateKey(SelectedMatch);
+        if (key is null || !_fixtureResults.TryGetValue(key, out LiveBettingCheckResult? savedResult))
             return false;
 
         LiveResult = savedResult;
@@ -462,12 +567,63 @@ public sealed class MainWindowViewModel : ObservableObject
         input.AwayRedCards = match.AwayRedCards;
     }
 
+    private LiveBettingCheckInput CreateInputForMatch(MatchSnapshot match)
+    {
+        var input = new LiveBettingCheckInput
+        {
+            ProfileKey = SelectedProfile?.Key ?? LiveInput.ProfileKey,
+            BeforeRound = SelectedProfile?.DefaultBeforeRound ?? LiveInput.BeforeRound,
+            TargetLinesText = LiveInput.TargetLinesText,
+            SelectedBetLine = LiveInput.SelectedBetLine,
+            SelectedBetLineText = LiveInput.SelectedBetLine.ToString("0.##", CultureInfo.InvariantCulture),
+            SelectedBetSide = LiveInput.SelectedBetSide,
+            Stake = LiveInput.Stake,
+            BetMode = LiveInput.BetMode
+        };
+
+        SyncMatchState(input, match);
+        return input;
+    }
+
     private static string GetFixtureInputKey(MatchSnapshot match)
+    {
+        if (!string.IsNullOrWhiteSpace(match.MatchId))
+            return $"{match.League}|{match.MatchId}";
+
+        return $"{match.League}|{match.HomeTeam}|{match.AwayTeam}";
+    }
+
+    private static string GetLegacyFixtureInputKey(MatchSnapshot match)
     {
         if (!string.IsNullOrWhiteSpace(match.MatchId))
             return match.MatchId;
 
         return $"{match.League}|{match.HomeTeam}|{match.AwayTeam}";
+    }
+
+    private string? ResolveSavedFixtureStateKey(MatchSnapshot match)
+    {
+        string key = GetFixtureInputKey(match);
+        if (_fixtureInputs.ContainsKey(key))
+            return key;
+
+        string legacyKey = GetLegacyFixtureInputKey(match);
+        if (_fixtureInputs.TryGetValue(legacyKey, out LiveBettingCheckInput? legacyInput) &&
+            IsSavedInputCompatible(match, legacyInput))
+            return legacyKey;
+
+        return null;
+    }
+
+    private bool IsSavedInputCompatible(MatchSnapshot match, LiveBettingCheckInput input)
+    {
+        bool matchNameOk = string.IsNullOrWhiteSpace(input.MatchName) ||
+            input.MatchName.Equals(match.MatchName, StringComparison.OrdinalIgnoreCase);
+        bool profileOk = SelectedProfile is null ||
+            string.IsNullOrWhiteSpace(input.ProfileKey) ||
+            input.ProfileKey.Equals(SelectedProfile.Key, StringComparison.OrdinalIgnoreCase);
+
+        return matchNameOk && profileOk;
     }
 
     private static LiveBettingCheckInput CloneInput(LiveBettingCheckInput source)
@@ -562,6 +718,103 @@ public sealed class MainWindowViewModel : ObservableObject
         RefreshMinuteOptions();
         OnPropertyChanged(nameof(TotalLines));
         OnPropertyChanged(nameof(LiveInput));
+    }
+
+    private void ApplyDraftToLiveInput()
+    {
+        LiveInput.BeforeRound = ReadNullableInt(BeforeRoundText, LiveInput.BeforeRound);
+        BeforeRoundText = LiveInput.BeforeRound?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+
+        LiveInput.StartingOverOdds25 = ReadDouble(StartingOverOdds25Text, LiveInput.StartingOverOdds25);
+        LiveInput.StartingUnderOdds25 = ReadDouble(StartingUnderOdds25Text, LiveInput.StartingUnderOdds25);
+        LiveInput.StartingOverOdds35 = ReadDouble(StartingOverOdds35Text, LiveInput.StartingOverOdds35);
+        LiveInput.StartingUnderOdds35 = ReadDouble(StartingUnderOdds35Text, LiveInput.StartingUnderOdds35);
+        ApplyStartingAnchor(LiveInput);
+
+        LiveInput.LiveOverOdds25 = ReadDouble(LiveOverOdds25Text, LiveInput.LiveOverOdds25);
+        LiveInput.LiveUnderOdds25 = ReadDouble(LiveUnderOdds25Text, LiveInput.LiveUnderOdds25);
+        LiveInput.LiveOverOdds35 = ReadDouble(LiveOverOdds35Text, LiveInput.LiveOverOdds35);
+        LiveInput.LiveUnderOdds35 = ReadDouble(LiveUnderOdds35Text, LiveInput.LiveUnderOdds35);
+        LiveInput.LiveOddsLine = 2.5;
+        LiveInput.LiveOverOdds = LiveInput.LiveOverOdds25;
+        LiveInput.LiveUnderOdds = LiveInput.LiveUnderOdds25;
+        LiveInput.LiveOverOddsText = BuildOddsText((2.5, LiveInput.LiveOverOdds25), (3.5, LiveInput.LiveOverOdds35));
+        LiveInput.LiveUnderOddsText = BuildOddsText((2.5, LiveInput.LiveUnderOdds25), (3.5, LiveInput.LiveUnderOdds35));
+
+        LiveInput.SelectedBetLineText = LiveInput.SelectedBetLine.ToString("0.##", CultureInfo.InvariantCulture);
+        LiveInput.SelectedBetOdds = ReadDouble(SelectedBetOddsText, LiveInput.SelectedBetOdds);
+        LiveInput.Stake = ReadDouble(StakeText, LiveInput.Stake);
+        LiveInput.BetNotes = BetNotesText;
+
+        UpdateDraftFromLiveInput();
+        OnPropertyChanged(nameof(LiveInput));
+    }
+
+    private void UpdateDraftFromLiveInput()
+    {
+        BeforeRoundText = LiveInput.BeforeRound?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        StartingOverOdds25Text = FormatDouble(LiveInput.StartingOverOdds25);
+        StartingUnderOdds25Text = FormatDouble(LiveInput.StartingUnderOdds25);
+        StartingOverOdds35Text = FormatDouble(LiveInput.StartingOverOdds35);
+        StartingUnderOdds35Text = FormatDouble(LiveInput.StartingUnderOdds35);
+        LiveOverOdds25Text = FormatDouble(LiveInput.LiveOverOdds25);
+        LiveUnderOdds25Text = FormatDouble(LiveInput.LiveUnderOdds25);
+        LiveOverOdds35Text = FormatDouble(LiveInput.LiveOverOdds35);
+        LiveUnderOdds35Text = FormatDouble(LiveInput.LiveUnderOdds35);
+        SelectedBetOddsText = FormatDouble(LiveInput.SelectedBetOdds);
+        StakeText = FormatDouble(LiveInput.Stake);
+        BetNotesText = LiveInput.BetNotes;
+    }
+
+    private static void ApplyStartingAnchor(LiveBettingCheckInput input)
+    {
+        if (input.StartingOverOdds25 > 1.0 && input.StartingUnderOdds25 > 1.0)
+        {
+            input.StartingLine = 2.5;
+            input.StartingOverOdds = input.StartingOverOdds25;
+            input.StartingUnderOdds = input.StartingUnderOdds25;
+            return;
+        }
+
+        if (input.StartingOverOdds35 > 1.0 && input.StartingUnderOdds35 > 1.0)
+        {
+            input.StartingLine = 3.5;
+            input.StartingOverOdds = input.StartingOverOdds35;
+            input.StartingUnderOdds = input.StartingUnderOdds35;
+        }
+    }
+
+    private static string BuildOddsText(params (double Line, double Odds)[] odds)
+    {
+        return string.Join(",",
+            odds
+                .Where(x => x.Line > 0 && x.Odds > 1.0)
+                .Select(x => $"{x.Line.ToString("0.##", CultureInfo.InvariantCulture)}={x.Odds.ToString("0.######", CultureInfo.InvariantCulture)}"));
+    }
+
+    private static double ReadDouble(string text, double fallback)
+    {
+        return double.TryParse(Normalize(text), NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
+            ? value
+            : fallback;
+    }
+
+    private static int? ReadNullableInt(string text, int? fallback)
+    {
+        string normalized = Normalize(text);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return null;
+
+        return int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value)
+            ? value
+            : fallback;
+    }
+
+    private static string FormatDouble(double value) => value.ToString("0.######", CultureInfo.InvariantCulture);
+
+    private static string Normalize(string? text)
+    {
+        return (text ?? string.Empty).Trim().Replace(',', '.');
     }
 
     private static int[] GetAvailableMinutes(string trigger)

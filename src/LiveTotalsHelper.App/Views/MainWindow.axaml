@@ -120,7 +120,7 @@
               <StackPanel><TextBlock Text="HR" Classes="label" /><ComboBox x:Name="HomeRedCardsBox" Classes="input" ItemsSource="{Binding RedCardCounts}" SelectedItem="{Binding LiveInput.HomeRedCards}" /></StackPanel>
               <StackPanel><TextBlock Text="AR" Classes="label" /><ComboBox x:Name="AwayRedCardsBox" Classes="input" ItemsSource="{Binding RedCardCounts}" SelectedItem="{Binding LiveInput.AwayRedCards}" /></StackPanel>
               <StackPanel><TextBlock Text="LastG" Classes="label" /><ComboBox x:Name="LastGoalMinuteBox" Classes="input" ItemsSource="{Binding LastGoalMinuteOptions}" SelectedItem="{Binding LiveInput.LastGoalMinute}" /></StackPanel>
-              <StackPanel><TextBlock Text="Round" Classes="label" /><TextBox x:Name="BeforeRoundBox" Classes="input" Text="{Binding LiveInput.BeforeRound, Mode=OneWay}" Watermark="opt" /></StackPanel>
+              <StackPanel><TextBlock Text="Round" Classes="label" /><TextBox Classes="input" Text="{Binding BeforeRoundText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Watermark="opt" /></StackPanel>
             </WrapPanel>
           </StackPanel>
 
@@ -133,12 +133,12 @@
                 <TextBlock Grid.Row="0" Grid.Column="2" Text="Under" Classes="label" />
                 <TextBlock Grid.Row="0" Grid.Column="3" Text="Targets" Classes="label" />
                 <TextBlock Grid.Row="1" Grid.Column="0" Text="2.5" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBox x:Name="StartingOverOdds25Box" Grid.Row="1" Grid.Column="1" Classes="input" Text="{Binding LiveInput.StartingOverOdds25, Mode=OneWay}" />
-                <TextBox x:Name="StartingUnderOdds25Box" Grid.Row="1" Grid.Column="2" Classes="input" Text="{Binding LiveInput.StartingUnderOdds25, Mode=OneWay}" />
+                <TextBox Grid.Row="1" Grid.Column="1" Classes="input" Text="{Binding StartingOverOdds25Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox Grid.Row="1" Grid.Column="2" Classes="input" Text="{Binding StartingUnderOdds25Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                 <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding LiveInput.TargetLinesText}" FontSize="12" VerticalAlignment="Center" />
                 <TextBlock Grid.Row="2" Grid.Column="0" Text="3.5" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBox x:Name="StartingOverOdds35Box" Grid.Row="2" Grid.Column="1" Classes="input" Text="{Binding LiveInput.StartingOverOdds35, Mode=OneWay}" />
-                <TextBox x:Name="StartingUnderOdds35Box" Grid.Row="2" Grid.Column="2" Classes="input" Text="{Binding LiveInput.StartingUnderOdds35, Mode=OneWay}" />
+                <TextBox Grid.Row="2" Grid.Column="1" Classes="input" Text="{Binding StartingOverOdds35Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox Grid.Row="2" Grid.Column="2" Classes="input" Text="{Binding StartingUnderOdds35Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
               </Grid>
             </StackPanel>
 
@@ -149,11 +149,11 @@
                 <TextBlock Grid.Row="0" Grid.Column="1" Text="Over" Classes="label" />
                 <TextBlock Grid.Row="0" Grid.Column="2" Text="Under" Classes="label" />
                 <TextBlock Grid.Row="1" Grid.Column="0" Text="2.5" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBox x:Name="LiveOverOdds25Box" Grid.Row="1" Grid.Column="1" Classes="input" Text="{Binding LiveInput.LiveOverOdds25, Mode=OneWay}" />
-                <TextBox x:Name="LiveUnderOdds25Box" Grid.Row="1" Grid.Column="2" Classes="input" Text="{Binding LiveInput.LiveUnderOdds25, Mode=OneWay}" />
+                <TextBox Grid.Row="1" Grid.Column="1" Classes="input" Text="{Binding LiveOverOdds25Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox Grid.Row="1" Grid.Column="2" Classes="input" Text="{Binding LiveUnderOdds25Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                 <TextBlock Grid.Row="2" Grid.Column="0" Text="3.5" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBox x:Name="LiveOverOdds35Box" Grid.Row="2" Grid.Column="1" Classes="input" Text="{Binding LiveInput.LiveOverOdds35, Mode=OneWay}" />
-                <TextBox x:Name="LiveUnderOdds35Box" Grid.Row="2" Grid.Column="2" Classes="input" Text="{Binding LiveInput.LiveUnderOdds35, Mode=OneWay}" />
+                <TextBox Grid.Row="2" Grid.Column="1" Classes="input" Text="{Binding LiveOverOdds35Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox Grid.Row="2" Grid.Column="2" Classes="input" Text="{Binding LiveUnderOdds35Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
               </Grid>
             </StackPanel>
           </Grid>
@@ -228,15 +228,15 @@
                 <TextBlock Text="Side" Classes="label" />
                 <ComboBox x:Name="SelectedBetSideBox" Width="80" Height="28" FontSize="12" ItemsSource="{Binding BetSides}" SelectedItem="{Binding LiveInput.SelectedBetSide}" />
               </StackPanel>
-              <StackPanel><TextBlock Text="Odds" Classes="label" /><TextBox x:Name="SelectedBetOddsBox" Classes="input" Text="{Binding LiveInput.SelectedBetOdds, Mode=OneWay}" /></StackPanel>
-              <StackPanel><TextBlock Text="Stake" Classes="label" /><TextBox x:Name="StakeBox" Classes="input" Text="{Binding LiveInput.Stake, Mode=OneWay}" /></StackPanel>
+              <StackPanel><TextBlock Text="Odds" Classes="label" /><TextBox Classes="input" Text="{Binding SelectedBetOddsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              <StackPanel><TextBlock Text="Stake" Classes="label" /><TextBox Classes="input" Text="{Binding StakeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
               <StackPanel>
                 <TextBlock Text="Mode" Classes="label" />
                 <ComboBox x:Name="BetModeBox" Width="78" Height="28" FontSize="12" ItemsSource="{Binding BetModes}" SelectedItem="{Binding LiveInput.BetMode}" />
               </StackPanel>
             </WrapPanel>
             <TextBlock Text="Notes" Classes="label" Margin="0,4,0,0" />
-            <TextBox x:Name="BetNotesBox" Text="{Binding LiveInput.BetNotes, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" Height="54" FontSize="12" />
+            <TextBox Text="{Binding BetNotesText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" Height="54" FontSize="12" />
             <TextBlock Text="Log file" Classes="label" Margin="0,6,0,0" />
             <TextBlock Text="{Binding PaperLogPath}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
           </StackPanel>
