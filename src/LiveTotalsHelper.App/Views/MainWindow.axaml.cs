@@ -10,6 +10,14 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Closing += (_, _) =>
+        {
+            if (DataContext is MainWindowViewModel vm)
+            {
+                SyncVisibleInputs(vm);
+                vm.SaveState();
+            }
+        };
     }
 
     private void LoadFixtures_Click(object? sender, RoutedEventArgs e)

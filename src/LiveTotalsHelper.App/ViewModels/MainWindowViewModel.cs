@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using LiveTotalsHelper.Core.Models;
 using LiveTotalsHelper.Core.Services;
 
@@ -8,6 +10,7 @@ public sealed class MainWindowViewModel : ObservableObject
 {
     private readonly IMatchRepository _matchRepository;
     private readonly ILiveBettingSessionService _liveSessionService;
+    private readonly string _stateFilePath;
     private string _leagueFilter = string.Empty;
     private MatchSnapshot? _selectedMatch;
     private ModelSummary _summary = new();
@@ -23,11 +26,13 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly Dictionary<string, string> _leagueSelectedFixtureKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, LiveBettingCheckResult> _fixtureResults = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<LiveBettingDecisionRow>> _fixtureDecisionRows = new(StringComparer.OrdinalIgnoreCase);
+    private bool _isRestoringState;
 
-    public MainWindowViewModel(IMatchRepository matchRepository, ILiveBettingSessionService liveSessionService)
+    public MainWindowViewModel(IMatchRepository matchRepository, ILiveBettingSessionService liveSessionService, string stateFilePath = "")
     {
         _matchRepository = matchRepository;
         _liveSessionService = liveSessionService;
+        _stateFilePath = stateFilePath;
 
         foreach (LiveBettingProfile profile in _liveSessionService.GetProfiles())
         {
@@ -48,6 +53,8 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             Status = "READY - click Load fixtures"
         };
+
+        RestoreState();
     }
 
     public ObservableCollection<string> Leagues { get; } = [];
@@ -128,7 +135,8 @@ public sealed class MainWindowViewModel : ObservableObject
             if (string.Equals(_leagueFilter, value, StringComparison.Ordinal))
                 return;
 
-            SaveCurrentLeagueState();
+            if (!_isRestoringState)
+                SaveCurrentLeagueState();
 
             if (SetProperty(ref _leagueFilter, value))
             {
@@ -212,12 +220,107 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         await BuildLiveCheckAsync();
         PaperLogPath = _liveSessionService.AppendPaperLog(LiveInput, LiveResult);
+        SaveState();
     }
 
     public async Task LogBetAsync()
     {
         await BuildLiveCheckAsync();
         PaperLogPath = _liveSessionService.LogBet(LiveInput, LiveResult);
+        SaveState();
+    }
+
+    public void SaveState()
+    {
+        if (string.IsNullOrWhiteSpace(_stateFilePath))
+            return;
+
+        try
+        {
+            SaveCurrentLeagueState();
+
+            string? directory = Path.GetDirectoryName(Path.GetFullPath(_stateFilePath));
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            var state = new AppStateDto
+            {
+                SavedAtUtc = DateTimeOffset.UtcNow,
+                LeagueFilter = LeagueFilter,
+                PaperLogPath = PaperLogPath,
+                FixtureInputs = new Dictionary<string, LiveBettingCheckInput>(_fixtureInputs, StringComparer.OrdinalIgnoreCase),
+                LeagueMatches = _leagueMatches.ToDictionary(x => x.Key, x => x.Value.ToList(), StringComparer.OrdinalIgnoreCase),
+                LeagueSelectedFixtureKeys = new Dictionary<string, string>(_leagueSelectedFixtureKeys, StringComparer.OrdinalIgnoreCase),
+                FixtureResults = new Dictionary<string, LiveBettingCheckResult>(_fixtureResults, StringComparer.OrdinalIgnoreCase),
+                FixtureDecisionRows = _fixtureDecisionRows.ToDictionary(x => x.Key, x => x.Value.ToList(), StringComparer.OrdinalIgnoreCase)
+            };
+
+            File.WriteAllText(_stateFilePath, JsonSerializer.Serialize(state, StateJsonOptions));
+        }
+        catch (Exception ex)
+        {
+            LiveResult = new LiveBettingCheckResult
+            {
+                Status = "STATE SAVE ERROR",
+                Warnings = ex.Message
+            };
+        }
+    }
+
+    private void RestoreState()
+    {
+        if (string.IsNullOrWhiteSpace(_stateFilePath) || !File.Exists(_stateFilePath))
+            return;
+
+        try
+        {
+            AppStateDto? state = JsonSerializer.Deserialize<AppStateDto>(File.ReadAllText(_stateFilePath), StateJsonOptions);
+            if (state is null)
+                return;
+
+            _isRestoringState = true;
+
+            _fixtureInputs.Clear();
+            foreach ((string key, LiveBettingCheckInput input) in state.FixtureInputs)
+                _fixtureInputs[key] = input;
+
+            _leagueMatches.Clear();
+            foreach ((string league, List<MatchSnapshot> matches) in state.LeagueMatches)
+                _leagueMatches[league] = matches;
+
+            _leagueSelectedFixtureKeys.Clear();
+            foreach ((string league, string key) in state.LeagueSelectedFixtureKeys)
+                _leagueSelectedFixtureKeys[league] = key;
+
+            _fixtureResults.Clear();
+            foreach ((string key, LiveBettingCheckResult result) in state.FixtureResults)
+                _fixtureResults[key] = result;
+
+            _fixtureDecisionRows.Clear();
+            foreach ((string key, List<LiveBettingDecisionRow> rows) in state.FixtureDecisionRows)
+                _fixtureDecisionRows[key] = rows;
+
+            PaperLogPath = state.PaperLogPath;
+
+            string leagueToRestore = Leagues.Any(x => x.Equals(state.LeagueFilter, StringComparison.OrdinalIgnoreCase))
+                ? state.LeagueFilter
+                : _leagueFilter;
+
+            LeagueFilter = leagueToRestore;
+            RestoreLeagueState(leagueToRestore);
+        }
+        catch (Exception ex)
+        {
+            LiveResult = new LiveBettingCheckResult
+            {
+                Status = "STATE RESTORE ERROR",
+                Warnings = ex.Message
+            };
+        }
+        finally
+        {
+            _isRestoringState = false;
+        }
     }
 
     private void SaveCurrentFixtureInput()
@@ -433,5 +536,24 @@ public sealed class MainWindowViewModel : ObservableObject
 
         OnPropertyChanged(nameof(TotalLines));
         OnPropertyChanged(nameof(LiveInput));
+    }
+
+    private static readonly JsonSerializerOptions StateJsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private sealed class AppStateDto
+    {
+        public DateTimeOffset SavedAtUtc { get; set; }
+        public string LeagueFilter { get; set; } = string.Empty;
+        public string PaperLogPath { get; set; } = string.Empty;
+        public Dictionary<string, LiveBettingCheckInput> FixtureInputs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, List<MatchSnapshot>> LeagueMatches { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> LeagueSelectedFixtureKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, LiveBettingCheckResult> FixtureResults { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, List<LiveBettingDecisionRow>> FixtureDecisionRows { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 }
