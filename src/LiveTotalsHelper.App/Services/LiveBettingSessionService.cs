@@ -98,6 +98,8 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
 
         Dictionary<double, double> overOdds = ParseOddsMap(input.LiveOverOddsText, warnings, "Over");
         Dictionary<double, double> underOdds = ParseOddsMap(input.LiveUnderOddsText, warnings, "Under");
+        AddStructuredOdds(overOdds, input.LiveOddsLine, input.LiveOverOdds);
+        AddStructuredOdds(underOdds, input.LiveOddsLine, input.LiveUnderOdds);
         foreach (string warning in ValidateMonotonicOdds(overOdds, underOdds))
             warnings.Add(warning);
 
@@ -213,7 +215,11 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             writer.WriteLine("BetLoggedAt,Mode,Profile,Match,Trigger,Minute,Score,Line,Side,BookOdds,Stake,ModelProbability,FairOdds,Edge,BaseOverProbability,CorrectedOverProbability,ProbabilityMove,Decision,DecisionReason,DecisionRules,RemainingXg,Notes");
         }
 
-        double.TryParse(input.SelectedBetLineText, NumberStyles.Float, CultureInfo.InvariantCulture, out double selectedLine);
+        double selectedLine = input.SelectedBetLine > 0
+            ? input.SelectedBetLine
+            : double.TryParse(NormalizeNumberText(input.SelectedBetLineText), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedLine)
+                ? parsedLine
+                : 0.0;
         string selectedSide = (input.SelectedBetSide ?? string.Empty).Trim().ToUpperInvariant();
 
         LiveBettingDecisionRow? row = result.Decisions.FirstOrDefault(x =>
@@ -249,14 +255,20 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
 
     private static LiveBettingProfile ToLiveProfile(LeagueProfile profile)
     {
-        bool isLatvia = profile.Key.Contains("latvia", StringComparison.OrdinalIgnoreCase);
+        bool hasExplicitFixedMinuteRules = profile.LiveBettingRules.Any(x =>
+            RuleTriggerMatches(x.StateTrigger, LiveTotalStateTrigger.FixedMinute));
+        bool hasAllowedFixedMinuteRules = profile.LiveBettingRules.Any(x =>
+            x.AllowBet && RuleTriggerMatches(x.StateTrigger, LiveTotalStateTrigger.FixedMinute));
+        bool hasAllowedAfterGoalRules = profile.LiveBettingRules.Any(x =>
+            x.AllowBet && RuleTriggerMatches(x.StateTrigger, LiveTotalStateTrigger.AfterGoal));
+
         return new LiveBettingProfile
         {
             Key = profile.Key,
             DisplayName = string.IsNullOrWhiteSpace(profile.Name) ? profile.League : profile.Name,
             RiskLevel = profile.RiskLevel,
-            AllowFixedMinuteBetting = true,
-            AllowAfterGoalBetting = !isLatvia,
+            AllowFixedMinuteBetting = !hasExplicitFixedMinuteRules || hasAllowedFixedMinuteRules,
+            AllowAfterGoalBetting = hasAllowedAfterGoalRules,
             AllowAfterRedCardBetting = false,
             UseCurrentSeasonVolume = profile.UseCurrentSeasonVolume,
             DefaultBeforeRound = profile.DefaultBeforeRound,
@@ -266,6 +278,7 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             MinMinute = profile.MinMinute,
             RequireGoalTrigger = profile.RequireGoalTrigger,
             MinLine = profile.MinLine,
+            TargetLines = profile.TargetLines,
             AllowedLines = profile.AllowedLines,
             FallbackBettingEnabled = profile.FallbackBettingEnabled,
             LiveBettingRulesCount = profile.LiveBettingRules.Count,
@@ -284,6 +297,9 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         {
             ModelPath = profile.ModelPath,
             StateCorrectionPath = profile.StateCorrectionPath,
+            StateCorrectionScope = LiveTotalStateCorrectionScope.FixedMinute,
+            StateCorrectionDirectionGuard = LiveTotalStateCorrectionDirectionGuard.UpOnly,
+            LateGameCorrection = BuildProfileLateGameCorrection(profile),
             EmpiricalSettlementPath = profile.GetEmpiricalSettlementPath(),
             StateTrigger = trigger,
             StartingLine = input.StartingLine,
@@ -321,6 +337,28 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             options.LiveUnderOddsByLine[line] = odds;
 
         return options;
+    }
+
+    private static LiveTotalLateGameCorrectionOptions BuildProfileLateGameCorrection(LeagueProfile profile)
+    {
+        return new LiveTotalLateGameCorrectionOptions
+        {
+            Mode = profile.StateCorrectionLateGameMode,
+            StartMinute = profile.StateCorrectionLateGameStartMinute,
+            FactorMultiplier = profile.StateCorrectionLateGameFactorMultiplier,
+            MaxFactor = profile.StateCorrectionLateGameMaxFactor,
+            MaxLine = profile.StateCorrectionLateGameMaxLine
+        }.Normalized();
+    }
+
+    private static bool RuleTriggerMatches(string ruleTrigger, string requestedTrigger)
+    {
+        if (string.IsNullOrWhiteSpace(ruleTrigger) ||
+            ruleTrigger.Equals("All", StringComparison.OrdinalIgnoreCase) ||
+            ruleTrigger.Equals("Any", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return LiveTotalStateTrigger.Normalize(ruleTrigger).Equals(requestedTrigger, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task ApplySeasonVolumeAsync(
@@ -519,8 +557,8 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         {
             string[] parts = rawPart.Split('=', StringSplitOptions.TrimEntries);
             if (parts.Length != 2 ||
-                !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double line) ||
-                !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double odds))
+                !double.TryParse(NormalizeNumberText(parts[0]), NumberStyles.Float, CultureInfo.InvariantCulture, out double line) ||
+                !double.TryParse(NormalizeNumberText(parts[1]), NumberStyles.Float, CultureInfo.InvariantCulture, out double odds))
             {
                 warnings.Add($"Could not parse {side} odds item '{rawPart}'. Use format 2.5=1.90.");
                 continue;
@@ -530,6 +568,14 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         }
 
         return result;
+    }
+
+    private static void AddStructuredOdds(Dictionary<double, double> target, double line, double odds)
+    {
+        if (line <= 0 || odds <= 1.0)
+            return;
+
+        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
     }
 
     private static IEnumerable<double> ParseLines(string text, IEnumerable<double> fallback)
@@ -545,6 +591,11 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         }
 
         return values.Count > 0 ? values.Distinct().OrderBy(x => x) : fallback.Distinct().OrderBy(x => x);
+    }
+
+    private static string NormalizeNumberText(string value)
+    {
+        return (value ?? string.Empty).Trim().Replace(',', '.');
     }
 
     private static IEnumerable<string> ValidateMonotonicOdds(IReadOnlyDictionary<double, double> overOdds, IReadOnlyDictionary<double, double> underOdds)

@@ -92,7 +92,7 @@ public sealed class LeagueProfile
     public double MinUnderProbabilityMove { get; set; } = -0.12;
     public bool UnderSignalsBettingAllowed { get; set; }
     public List<LiveTotalProfileBettingRule> LiveBettingRules { get; set; } = [];
-    // Decision/rules gate used by price-live-total and Avalonia.
+    // Decision/rules gate used by Avalonia live pricing and model evaluation.
     public string DecisionMode { get; set; } = LiveTotalDecisionMode.FullModel;
     public int? MinMinute { get; set; }
     public bool RequireGoalTrigger { get; set; }

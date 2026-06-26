@@ -15,7 +15,6 @@ public static class HelpPrinter
         Console.WriteLine("  import-flashscore-fixtures          Import saved Flashscore fixture calendars only.");
         Console.WriteLine("  validate-db                         Validate imported PostgreSQL data quality.");
         Console.WriteLine("  db-validate                         Alias for validate-db.");
-        Console.WriteLine("  price-live-total                    Price live totals with empirical settlement tables.");
         Console.WriteLine();
         Console.WriteLine("Modeling commands:");
         Console.WriteLine("  fit-weibull                         Fit goal-timing model from imported DB events.");

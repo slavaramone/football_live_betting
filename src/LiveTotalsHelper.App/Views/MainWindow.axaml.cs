@@ -49,27 +49,53 @@ public partial class MainWindow : Window
     {
         vm.LiveInput.StateTrigger = StateTriggerBox.SelectedItem?.ToString() ?? vm.LiveInput.StateTrigger;
 
-        vm.LiveInput.Minute = ReadInt(MinuteBox, vm.LiveInput.Minute);
-        vm.LiveInput.HomeGoals = ReadInt(HomeGoalsBox, vm.LiveInput.HomeGoals);
-        vm.LiveInput.AwayGoals = ReadInt(AwayGoalsBox, vm.LiveInput.AwayGoals);
-        vm.LiveInput.HomeRedCards = ReadInt(HomeRedCardsBox, vm.LiveInput.HomeRedCards);
-        vm.LiveInput.AwayRedCards = ReadInt(AwayRedCardsBox, vm.LiveInput.AwayRedCards);
-        vm.LiveInput.LastGoalMinute = ReadInt(LastGoalMinuteBox, vm.LiveInput.LastGoalMinute);
+        vm.LiveInput.Minute = ReadSelectedInt(MinuteBox, vm.LiveInput.Minute);
+        vm.LiveInput.HomeGoals = ReadSelectedInt(HomeGoalsBox, vm.LiveInput.HomeGoals);
+        vm.LiveInput.AwayGoals = ReadSelectedInt(AwayGoalsBox, vm.LiveInput.AwayGoals);
+        vm.LiveInput.HomeRedCards = ReadSelectedInt(HomeRedCardsBox, vm.LiveInput.HomeRedCards);
+        vm.LiveInput.AwayRedCards = ReadSelectedInt(AwayRedCardsBox, vm.LiveInput.AwayRedCards);
+        vm.LiveInput.LastGoalMinute = ReadSelectedInt(LastGoalMinuteBox, vm.LiveInput.LastGoalMinute);
         vm.LiveInput.BeforeRound = ReadNullableInt(BeforeRoundBox, vm.LiveInput.BeforeRound);
 
-        vm.LiveInput.StartingLine = ReadDouble(StartingLineBox, vm.LiveInput.StartingLine);
+        vm.LiveInput.StartingLine = ReadSelectedDouble(StartingLineBox, vm.LiveInput.StartingLine);
         vm.LiveInput.StartingOverOdds = ReadDouble(StartingOverOddsBox, vm.LiveInput.StartingOverOdds);
         vm.LiveInput.StartingUnderOdds = ReadDouble(StartingUnderOddsBox, vm.LiveInput.StartingUnderOdds);
-        vm.LiveInput.TargetLinesText = TargetLinesBox.Text ?? string.Empty;
-        vm.LiveInput.LiveOverOddsText = LiveOverOddsBox.Text ?? string.Empty;
-        vm.LiveInput.LiveUnderOddsText = LiveUnderOddsBox.Text ?? string.Empty;
+        vm.LiveInput.LiveOddsLine = ReadSelectedDouble(LiveOddsLineBox, vm.LiveInput.LiveOddsLine);
+        vm.LiveInput.LiveOverOdds = ReadDouble(LiveOverOddsBox, vm.LiveInput.LiveOverOdds);
+        vm.LiveInput.LiveUnderOdds = ReadDouble(LiveUnderOddsBox, vm.LiveInput.LiveUnderOdds);
+        string liveLine = vm.LiveInput.LiveOddsLine.ToString("0.##", CultureInfo.InvariantCulture);
+        vm.LiveInput.LiveOverOddsText = $"{liveLine}={vm.LiveInput.LiveOverOdds.ToString("0.######", CultureInfo.InvariantCulture)}";
+        vm.LiveInput.LiveUnderOddsText = $"{liveLine}={vm.LiveInput.LiveUnderOdds.ToString("0.######", CultureInfo.InvariantCulture)}";
 
-        vm.LiveInput.SelectedBetLineText = SelectedBetLineBox.Text ?? vm.LiveInput.SelectedBetLineText;
+        vm.LiveInput.SelectedBetLine = ReadSelectedDouble(SelectedBetLineBox, vm.LiveInput.SelectedBetLine);
+        vm.LiveInput.SelectedBetLineText = vm.LiveInput.SelectedBetLine.ToString("0.##", CultureInfo.InvariantCulture);
         vm.LiveInput.SelectedBetSide = SelectedBetSideBox.SelectedItem?.ToString() ?? vm.LiveInput.SelectedBetSide;
         vm.LiveInput.SelectedBetOdds = ReadDouble(SelectedBetOddsBox, vm.LiveInput.SelectedBetOdds);
         vm.LiveInput.Stake = ReadDouble(StakeBox, vm.LiveInput.Stake);
         vm.LiveInput.BetMode = BetModeBox.SelectedItem?.ToString() ?? vm.LiveInput.BetMode;
         vm.LiveInput.BetNotes = BetNotesBox.Text ?? string.Empty;
+    }
+
+    private static int ReadSelectedInt(ComboBox box, int fallback)
+    {
+        return box.SelectedItem switch
+        {
+            int value => value,
+            string text when int.TryParse(Normalize(text), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value) => value,
+            _ => fallback
+        };
+    }
+
+    private static double ReadSelectedDouble(ComboBox box, double fallback)
+    {
+        return box.SelectedItem switch
+        {
+            double value => value,
+            decimal value => (double)value,
+            int value => value,
+            string text when double.TryParse(Normalize(text), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) => value,
+            _ => fallback
+        };
     }
 
     private static int ReadInt(TextBox box, int fallback)

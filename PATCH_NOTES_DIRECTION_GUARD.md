@@ -8,7 +8,7 @@ Changes:
 - Upward correction factors remain active.
 - `--state-correction-direction both` disables the direction guard and uses both upward and downward factors.
 - Existing `StateCorrectionGatedRows` counters now include correction-scope gated rows and direction-guarded rows.
-- `price-live-total` uses the same direction guard as evaluation.
+- Avalonia live pricing uses the same direction guard as evaluation.
 - Profile default `stateCorrectionShrinkMatches` changed to `25`.
 
 Commands:

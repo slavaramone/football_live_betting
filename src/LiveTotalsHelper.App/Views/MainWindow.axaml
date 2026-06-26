@@ -36,6 +36,12 @@
       <Setter Property="Margin" Value="0,1,6,0" />
       <Setter Property="FontSize" Value="12" />
     </Style>
+    <Style Selector="ComboBox.input">
+      <Setter Property="Width" Value="68" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="Margin" Value="0,1,6,0" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
     <Style Selector="TextBox.wide-input">
       <Setter Property="Width" Value="265" />
       <Setter Property="Height" Value="28" />
@@ -108,12 +114,12 @@
                 <TextBlock Text="Trigger" Classes="label" />
                 <ComboBox x:Name="StateTriggerBox" Width="126" Height="28" FontSize="12" ItemsSource="{Binding StateTriggers}" SelectedItem="{Binding LiveInput.StateTrigger}" />
               </StackPanel>
-              <StackPanel><TextBlock Text="Min" Classes="label" /><TextBox x:Name="MinuteBox" Classes="input" Text="{Binding LiveInput.Minute, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-              <StackPanel><TextBlock Text="HG" Classes="label" /><TextBox x:Name="HomeGoalsBox" Classes="input" Text="{Binding LiveInput.HomeGoals, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-              <StackPanel><TextBlock Text="AG" Classes="label" /><TextBox x:Name="AwayGoalsBox" Classes="input" Text="{Binding LiveInput.AwayGoals, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-              <StackPanel><TextBlock Text="HR" Classes="label" /><TextBox x:Name="HomeRedCardsBox" Classes="input" Text="{Binding LiveInput.HomeRedCards, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-              <StackPanel><TextBlock Text="AR" Classes="label" /><TextBox x:Name="AwayRedCardsBox" Classes="input" Text="{Binding LiveInput.AwayRedCards, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-              <StackPanel><TextBlock Text="LastG" Classes="label" /><TextBox x:Name="LastGoalMinuteBox" Classes="input" Text="{Binding LiveInput.LastGoalMinute, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              <StackPanel><TextBlock Text="Min" Classes="label" /><ComboBox x:Name="MinuteBox" Classes="input" ItemsSource="{Binding Minutes}" SelectedItem="{Binding LiveInput.Minute}" /></StackPanel>
+              <StackPanel><TextBlock Text="HG" Classes="label" /><ComboBox x:Name="HomeGoalsBox" Classes="input" ItemsSource="{Binding GoalCounts}" SelectedItem="{Binding LiveInput.HomeGoals}" /></StackPanel>
+              <StackPanel><TextBlock Text="AG" Classes="label" /><ComboBox x:Name="AwayGoalsBox" Classes="input" ItemsSource="{Binding GoalCounts}" SelectedItem="{Binding LiveInput.AwayGoals}" /></StackPanel>
+              <StackPanel><TextBlock Text="HR" Classes="label" /><ComboBox x:Name="HomeRedCardsBox" Classes="input" ItemsSource="{Binding RedCardCounts}" SelectedItem="{Binding LiveInput.HomeRedCards}" /></StackPanel>
+              <StackPanel><TextBlock Text="AR" Classes="label" /><ComboBox x:Name="AwayRedCardsBox" Classes="input" ItemsSource="{Binding RedCardCounts}" SelectedItem="{Binding LiveInput.AwayRedCards}" /></StackPanel>
+              <StackPanel><TextBlock Text="LastG" Classes="label" /><ComboBox x:Name="LastGoalMinuteBox" Classes="input" ItemsSource="{Binding LastGoalMinuteOptions}" SelectedItem="{Binding LiveInput.LastGoalMinute}" /></StackPanel>
               <StackPanel><TextBlock Text="Round" Classes="label" /><TextBox x:Name="BeforeRoundBox" Classes="input" Text="{Binding LiveInput.BeforeRound, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Watermark="opt" /></StackPanel>
             </WrapPanel>
           </StackPanel>
@@ -122,18 +128,19 @@
             <StackPanel Grid.Column="0">
               <TextBlock Text="Starting total" Classes="section-title" />
               <WrapPanel>
-                <StackPanel><TextBlock Text="Line" Classes="label" /><TextBox x:Name="StartingLineBox" Classes="input" Text="{Binding LiveInput.StartingLine, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel><TextBlock Text="Line" Classes="label" /><ComboBox x:Name="StartingLineBox" Classes="input" ItemsSource="{Binding TotalLines}" SelectedItem="{Binding LiveInput.StartingLine}" /></StackPanel>
                 <StackPanel><TextBlock Text="Over" Classes="label" /><TextBox x:Name="StartingOverOddsBox" Classes="input" Text="{Binding LiveInput.StartingOverOdds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
                 <StackPanel><TextBlock Text="Under" Classes="label" /><TextBox x:Name="StartingUnderOddsBox" Classes="input" Text="{Binding LiveInput.StartingUnderOdds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel><TextBlock Text="Lines" Classes="label" /><TextBox x:Name="TargetLinesBox" Classes="wide-input" Width="320" Text="{Binding LiveInput.TargetLinesText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel><TextBlock Text="Targets" Classes="label" /><TextBlock Text="{Binding LiveInput.TargetLinesText}" Width="110" Height="28" Margin="0,6,6,0" FontSize="12" /></StackPanel>
               </WrapPanel>
             </StackPanel>
 
             <StackPanel Grid.Column="1">
               <TextBlock Text="Live odds" Classes="section-title" />
               <WrapPanel>
-                <StackPanel><TextBlock Text="Over odds" Classes="label" /><TextBox x:Name="LiveOverOddsBox" Classes="wide-input" Width="320" Text="{Binding LiveInput.LiveOverOddsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel><TextBlock Text="Under odds" Classes="label" /><TextBox x:Name="LiveUnderOddsBox" Classes="wide-input" Width="320" Text="{Binding LiveInput.LiveUnderOddsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel><TextBlock Text="Line" Classes="label" /><ComboBox x:Name="LiveOddsLineBox" Classes="input" ItemsSource="{Binding TotalLines}" SelectedItem="{Binding LiveInput.LiveOddsLine}" /></StackPanel>
+                <StackPanel><TextBlock Text="Over" Classes="label" /><TextBox x:Name="LiveOverOddsBox" Classes="input" Text="{Binding LiveInput.LiveOverOdds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+                <StackPanel><TextBlock Text="Under" Classes="label" /><TextBox x:Name="LiveUnderOddsBox" Classes="input" Text="{Binding LiveInput.LiveUnderOdds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
               </WrapPanel>
             </StackPanel>
           </Grid>
@@ -203,7 +210,7 @@
           <StackPanel>
             <TextBlock Text="Log selected bet" Classes="section-title" />
             <WrapPanel>
-              <StackPanel><TextBlock Text="Line" Classes="label" /><TextBox x:Name="SelectedBetLineBox" Classes="input" Text="{Binding LiveInput.SelectedBetLineText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
+              <StackPanel><TextBlock Text="Line" Classes="label" /><ComboBox x:Name="SelectedBetLineBox" Classes="input" ItemsSource="{Binding TotalLines}" SelectedItem="{Binding LiveInput.SelectedBetLine}" /></StackPanel>
               <StackPanel>
                 <TextBlock Text="Side" Classes="label" />
                 <ComboBox x:Name="SelectedBetSideBox" Width="80" Height="28" FontSize="12" ItemsSource="{Binding BetSides}" SelectedItem="{Binding LiveInput.SelectedBetSide}" />

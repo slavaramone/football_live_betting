@@ -16,6 +16,7 @@ public sealed class LiveBettingProfile
     public int? MinMinute { get; init; }
     public bool RequireGoalTrigger { get; init; }
     public double? MinLine { get; init; }
+    public IReadOnlyList<double> TargetLines { get; init; } = [];
     public IReadOnlyList<double> AllowedLines { get; init; } = [];
     public bool FallbackBettingEnabled { get; init; } = true;
     public int LiveBettingRulesCount { get; init; }

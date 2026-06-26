@@ -180,7 +180,7 @@ public sealed class DbValidationRunner
         List<MatchEntity> finished = matches.Where(IsFinished).ToList();
         var goalEventsByMatch = events.Where(IsGoal).GroupBy(x => x.MatchId).ToDictionary(x => x.Key, x => x.Count());
         int finishedWithScore = finished.Count(x => x.HomeScoreCurrent.HasValue && x.AwayScoreCurrent.HasValue);
-        double avgGoals = finishedWithScore == 0 ? 0 : finished.Where(x => x.HomeScoreCurrent.HasValue && x.AwayScoreCurrent.HasValue).Average(x => (x.HomeScoreCurrent.Value + x.AwayScoreCurrent.Value));
+        double avgGoals = finishedWithScore == 0 ? 0 : finished.Where(x => x.HomeScoreCurrent.HasValue && x.AwayScoreCurrent.HasValue).Average(x => x.HomeScoreCurrent.GetValueOrDefault() + x.AwayScoreCurrent.GetValueOrDefault());
         double avgGoalEvents = finished.Count == 0 ? 0 : finished.Average(x => goalEventsByMatch.GetValueOrDefault(x.Id));
         int nilNil = finished.Count(x => (x.HomeScoreCurrent ?? -1) == 0 && (x.AwayScoreCurrent ?? -1) == 0);
         int homeWins = finished.Count(x => x.HomeScoreCurrent.HasValue && x.AwayScoreCurrent.HasValue && x.HomeScoreCurrent.Value > x.AwayScoreCurrent.Value);
@@ -202,7 +202,7 @@ public sealed class DbValidationRunner
 
         foreach (var bucket in finished
             .Where(x => x.HomeScoreCurrent.HasValue && x.AwayScoreCurrent.HasValue)
-            .GroupBy(x => TotalGoalsBucket(x.HomeScoreCurrent.Value + x.AwayScoreCurrent.Value))
+            .GroupBy(x => TotalGoalsBucket(x.HomeScoreCurrent.GetValueOrDefault() + x.AwayScoreCurrent.GetValueOrDefault()))
             .OrderBy(x => x.Key))
         {
             check.Examples.Add($"Total goals {bucket.Key}: {bucket.Count()} ({Percent(bucket.Count(), finishedWithScore)})");

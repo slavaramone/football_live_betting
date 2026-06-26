@@ -13,7 +13,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private ModelSummary _summary = new();
     private LiveBettingCheckResult _liveResult = new()
     {
-        Status = "READY - select fixture and click Price live total"
+        Status = "READY - select fixture and click Price"
     };
     private LiveBettingProfile? _selectedProfile;
     private string _paperLogPath = string.Empty;
@@ -49,6 +49,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public ObservableCollection<string> Leagues { get; } = [];
     public ObservableCollection<LiveBettingProfile> Profiles { get; } = [];
     public ObservableCollection<MatchSnapshot> Matches { get; } = [];
+    public ObservableCollection<double> TotalLines { get; } = [];
     public OddsInput Odds { get; } = new();
 
     public LiveBettingCheckInput LiveInput
@@ -58,12 +59,16 @@ public sealed class MainWindowViewModel : ObservableObject
     }
     public ObservableCollection<LiveBettingDecisionRow> LiveDecisions { get; } = [];
     public IReadOnlyList<string> StateTriggers { get; } = ["fixed-minute", "after-goal", "after-red-card"];
+    public IReadOnlyList<int> Minutes { get; } = Enumerable.Range(0, 91).ToArray();
+    public IReadOnlyList<int> GoalCounts { get; } = Enumerable.Range(0, 10).ToArray();
+    public IReadOnlyList<int> RedCardCounts { get; } = [0, 1, 2, 3];
+    public IReadOnlyList<int> LastGoalMinuteOptions { get; } = [-1, .. Enumerable.Range(0, 91)];
     public IReadOnlyList<string> BetSides { get; } = ["OVER", "UNDER"];
     public IReadOnlyList<string> BetModes { get; } = ["Paper", "Real"];
 
     public string AppTitle => "Live O/U Paper Betting Helper";
     public string ConnectionStatus => "Manual live session";
-    public string Notes { get; set; } = "Select league and DB fixture. Pricing is run only when you click Price live total.";
+    public string Notes { get; set; } = "Select league and DB fixture. Pricing is run only when you click Price.";
 
     public LiveBettingProfile? SelectedProfile
     {
@@ -73,6 +78,7 @@ public sealed class MainWindowViewModel : ObservableObject
             if (SetProperty(ref _selectedProfile, value) && value is not null)
             {
                 LiveInput.ProfileKey = value.Key;
+                ApplyProfileDefaults(value);
                 OnPropertyChanged(nameof(ProfileNotes));
                 OnPropertyChanged(nameof(DecisionRulesText));
             }
@@ -155,8 +161,8 @@ public sealed class MainWindowViewModel : ObservableObject
             LiveResult = new LiveBettingCheckResult
             {
                 Status = value is null
-                    ? "READY - select fixture and click Price live total"
-                    : "READY - fixture input restored; click Price live total"
+                    ? "READY - select fixture and click Price"
+                    : "READY - fixture input restored; click Price"
             };
             LiveDecisions.Clear();
         }
@@ -264,9 +270,13 @@ public sealed class MainWindowViewModel : ObservableObject
             StartingLine = source.StartingLine,
             StartingOverOdds = source.StartingOverOdds,
             StartingUnderOdds = source.StartingUnderOdds,
+            LiveOddsLine = source.LiveOddsLine,
+            LiveOverOdds = source.LiveOverOdds,
+            LiveUnderOdds = source.LiveUnderOdds,
             LiveOverOddsText = source.LiveOverOddsText,
             LiveUnderOddsText = source.LiveUnderOddsText,
             TargetLinesText = source.TargetLinesText,
+            SelectedBetLine = source.SelectedBetLine,
             SelectedBetLineText = source.SelectedBetLineText,
             SelectedBetSide = source.SelectedBetSide,
             SelectedBetOdds = source.SelectedBetOdds,
@@ -293,5 +303,36 @@ public sealed class MainWindowViewModel : ObservableObject
                 Warnings = ex.Message
             };
         }
+    }
+
+    private void ApplyProfileDefaults(LiveBettingProfile profile)
+    {
+        TotalLines.Clear();
+
+        IEnumerable<double> sourceLines = profile.TargetLines.Count > 0
+            ? profile.TargetLines
+            : profile.AllowedLines.Count > 0
+                ? profile.AllowedLines
+                : [2.5, 3.5];
+
+        foreach (double line in sourceLines.Distinct().OrderBy(x => x))
+            TotalLines.Add(line);
+
+        if (TotalLines.Count == 0)
+            TotalLines.Add(2.5);
+
+        LiveInput.TargetLinesText = string.Join(",", TotalLines.Select(x => x.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)));
+        if (!TotalLines.Any(x => Math.Abs(x - LiveInput.StartingLine) < 0.001))
+            LiveInput.StartingLine = TotalLines[0];
+        if (!TotalLines.Any(x => Math.Abs(x - LiveInput.LiveOddsLine) < 0.001))
+            LiveInput.LiveOddsLine = TotalLines[0];
+        if (!TotalLines.Any(x => Math.Abs(x - LiveInput.SelectedBetLine) < 0.001))
+            LiveInput.SelectedBetLine = TotalLines[0];
+        LiveInput.SelectedBetLineText = LiveInput.SelectedBetLine.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+        if (!LiveInput.BeforeRound.HasValue && profile.DefaultBeforeRound.HasValue)
+            LiveInput.BeforeRound = profile.DefaultBeforeRound;
+
+        OnPropertyChanged(nameof(TotalLines));
+        OnPropertyChanged(nameof(LiveInput));
     }
 }
