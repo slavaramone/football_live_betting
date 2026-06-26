@@ -267,6 +267,11 @@ public sealed class MainWindowViewModel : ObservableObject
         }
     }
 
+    public void CaptureCurrentState()
+    {
+        SaveCurrentLeagueState();
+    }
+
     private void RestoreState()
     {
         if (string.IsNullOrWhiteSpace(_stateFilePath) || !File.Exists(_stateFilePath))

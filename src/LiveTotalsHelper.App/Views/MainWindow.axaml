@@ -64,7 +64,7 @@
     <Border Grid.Row="0" Grid.ColumnSpan="2" Classes="panel" Padding="8,6">
       <Grid ColumnDefinitions="Auto,190,Auto,*,Auto" ColumnSpacing="8">
         <TextBlock Text="League" Classes="label" VerticalAlignment="Center" />
-        <ComboBox Grid.Column="1" ItemsSource="{Binding Leagues}" SelectedItem="{Binding LeagueFilter}" Height="28" />
+        <ComboBox x:Name="LeagueBox" Grid.Column="1" ItemsSource="{Binding Leagues}" SelectedItem="{Binding LeagueFilter}" Height="28" />
         <Button Grid.Column="2" Classes="compact" Content="Load fixtures" Click="LoadFixtures_Click" />
         <TextBlock Grid.Column="3" Text="{Binding ProfileNotes}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
         <TextBlock Grid.Column="4" Text="{Binding LiveStatus}" FontWeight="Bold" Foreground="{StaticResource AccentGreenBrush}" VerticalAlignment="Center" />
@@ -74,7 +74,7 @@
     <Border Grid.Row="1" Grid.Column="0" Classes="panel" Margin="0,0,8,0">
       <Grid RowDefinitions="Auto,*">
         <TextBlock Grid.Row="0" Text="Fixtures from DB" Classes="section-title" />
-        <ListBox Grid.Row="1" ItemsSource="{Binding Matches}" SelectedItem="{Binding SelectedMatch}" Background="Transparent" BorderThickness="0">
+        <ListBox x:Name="MatchesListBox" Grid.Row="1" ItemsSource="{Binding Matches}" SelectedItem="{Binding SelectedMatch}" Background="Transparent" BorderThickness="0">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="models:MatchSnapshot">
               <Border BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="0,0,0,1" Padding="4">

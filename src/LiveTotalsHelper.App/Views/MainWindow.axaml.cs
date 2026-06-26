@@ -1,5 +1,6 @@
 using System.Globalization;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using LiveTotalsHelper.App.ViewModels;
 
@@ -10,6 +11,20 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        MatchesListBox.AddHandler(InputElement.PointerPressedEvent, PreserveCurrentVisibleInputs, RoutingStrategies.Tunnel);
+        LeagueBox.AddHandler(InputElement.PointerPressedEvent, PreserveCurrentVisibleInputs, RoutingStrategies.Tunnel);
+        RegisterStateTextBox(BeforeRoundBox);
+        RegisterStateTextBox(StartingOverOdds25Box);
+        RegisterStateTextBox(StartingUnderOdds25Box);
+        RegisterStateTextBox(StartingOverOdds35Box);
+        RegisterStateTextBox(StartingUnderOdds35Box);
+        RegisterStateTextBox(LiveOverOdds25Box);
+        RegisterStateTextBox(LiveUnderOdds25Box);
+        RegisterStateTextBox(LiveOverOdds35Box);
+        RegisterStateTextBox(LiveUnderOdds35Box);
+        RegisterStateTextBox(SelectedBetOddsBox);
+        RegisterStateTextBox(StakeBox);
+        RegisterStateTextBox(BetNotesBox);
         Closing += (_, _) =>
         {
             if (DataContext is MainWindowViewModel vm)
@@ -23,7 +38,10 @@ public partial class MainWindow : Window
     private void LoadFixtures_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is MainWindowViewModel vm)
+        {
+            SyncVisibleInputsAndCapture(vm);
             vm.LoadFixtures();
+        }
     }
 
     private async void BuildCheck_Click(object? sender, RoutedEventArgs e)
@@ -51,6 +69,35 @@ public partial class MainWindow : Window
             SyncVisibleInputs(vm);
             await vm.LogBetAsync();
         }
+    }
+
+    private void PreserveCurrentVisibleInputs(object? sender, PointerPressedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel vm)
+            SyncVisibleInputsAndCapture(vm);
+    }
+
+    private void RegisterStateTextBox(TextBox box)
+    {
+        box.LostFocus += (_, _) =>
+        {
+            if (DataContext is MainWindowViewModel vm)
+                SyncVisibleInputsAndCapture(vm);
+        };
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter)
+                return;
+
+            if (DataContext is MainWindowViewModel vm)
+                SyncVisibleInputsAndCapture(vm);
+        };
+    }
+
+    private void SyncVisibleInputsAndCapture(MainWindowViewModel vm)
+    {
+        SyncVisibleInputs(vm);
+        vm.CaptureCurrentState();
     }
 
     private void SyncVisibleInputs(MainWindowViewModel vm)
