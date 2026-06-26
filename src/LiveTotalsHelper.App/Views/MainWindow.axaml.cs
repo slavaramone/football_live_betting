@@ -151,16 +151,21 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(text))
             return null;
 
-        return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value)
-            ? value
-            : fallback;
+        if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+            return value;
+
+        box.Text = fallback?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        return fallback;
     }
 
     private static double ReadDouble(TextBox box, double fallback)
     {
-        return double.TryParse(Normalize(box.Text), NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
-            ? value
-            : fallback;
+        string text = Normalize(box.Text);
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value))
+            return value;
+
+        box.Text = fallback.ToString("0.######", CultureInfo.InvariantCulture);
+        return fallback;
     }
 
     private static string Normalize(string? text)
