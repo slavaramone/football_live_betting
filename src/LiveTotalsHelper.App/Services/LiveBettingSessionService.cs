@@ -100,6 +100,10 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         Dictionary<double, double> underOdds = ParseOddsMap(input.LiveUnderOddsText, warnings, "Under");
         AddStructuredOdds(overOdds, input.LiveOddsLine, input.LiveOverOdds);
         AddStructuredOdds(underOdds, input.LiveOddsLine, input.LiveUnderOdds);
+        AddStructuredOdds(overOdds, 2.5, input.LiveOverOdds25);
+        AddStructuredOdds(underOdds, 2.5, input.LiveUnderOdds25);
+        AddStructuredOdds(overOdds, 3.5, input.LiveOverOdds35);
+        AddStructuredOdds(underOdds, 3.5, input.LiveUnderOdds35);
         foreach (string warning in ValidateMonotonicOdds(overOdds, underOdds))
             warnings.Add(warning);
 

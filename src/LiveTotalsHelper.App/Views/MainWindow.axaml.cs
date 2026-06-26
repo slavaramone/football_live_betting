@@ -57,15 +57,21 @@ public partial class MainWindow : Window
         vm.LiveInput.LastGoalMinute = ReadSelectedInt(LastGoalMinuteBox, vm.LiveInput.LastGoalMinute);
         vm.LiveInput.BeforeRound = ReadNullableInt(BeforeRoundBox, vm.LiveInput.BeforeRound);
 
-        vm.LiveInput.StartingLine = ReadSelectedDouble(StartingLineBox, vm.LiveInput.StartingLine);
-        vm.LiveInput.StartingOverOdds = ReadDouble(StartingOverOddsBox, vm.LiveInput.StartingOverOdds);
-        vm.LiveInput.StartingUnderOdds = ReadDouble(StartingUnderOddsBox, vm.LiveInput.StartingUnderOdds);
-        vm.LiveInput.LiveOddsLine = ReadSelectedDouble(LiveOddsLineBox, vm.LiveInput.LiveOddsLine);
-        vm.LiveInput.LiveOverOdds = ReadDouble(LiveOverOddsBox, vm.LiveInput.LiveOverOdds);
-        vm.LiveInput.LiveUnderOdds = ReadDouble(LiveUnderOddsBox, vm.LiveInput.LiveUnderOdds);
-        string liveLine = vm.LiveInput.LiveOddsLine.ToString("0.##", CultureInfo.InvariantCulture);
-        vm.LiveInput.LiveOverOddsText = $"{liveLine}={vm.LiveInput.LiveOverOdds.ToString("0.######", CultureInfo.InvariantCulture)}";
-        vm.LiveInput.LiveUnderOddsText = $"{liveLine}={vm.LiveInput.LiveUnderOdds.ToString("0.######", CultureInfo.InvariantCulture)}";
+        vm.LiveInput.StartingOverOdds25 = ReadDouble(StartingOverOdds25Box, vm.LiveInput.StartingOverOdds25);
+        vm.LiveInput.StartingUnderOdds25 = ReadDouble(StartingUnderOdds25Box, vm.LiveInput.StartingUnderOdds25);
+        vm.LiveInput.StartingOverOdds35 = ReadDouble(StartingOverOdds35Box, vm.LiveInput.StartingOverOdds35);
+        vm.LiveInput.StartingUnderOdds35 = ReadDouble(StartingUnderOdds35Box, vm.LiveInput.StartingUnderOdds35);
+        ApplyStartingAnchor(vm);
+
+        vm.LiveInput.LiveOverOdds25 = ReadDouble(LiveOverOdds25Box, vm.LiveInput.LiveOverOdds25);
+        vm.LiveInput.LiveUnderOdds25 = ReadDouble(LiveUnderOdds25Box, vm.LiveInput.LiveUnderOdds25);
+        vm.LiveInput.LiveOverOdds35 = ReadDouble(LiveOverOdds35Box, vm.LiveInput.LiveOverOdds35);
+        vm.LiveInput.LiveUnderOdds35 = ReadDouble(LiveUnderOdds35Box, vm.LiveInput.LiveUnderOdds35);
+        vm.LiveInput.LiveOddsLine = 2.5;
+        vm.LiveInput.LiveOverOdds = vm.LiveInput.LiveOverOdds25;
+        vm.LiveInput.LiveUnderOdds = vm.LiveInput.LiveUnderOdds25;
+        vm.LiveInput.LiveOverOddsText = BuildOddsText((2.5, vm.LiveInput.LiveOverOdds25), (3.5, vm.LiveInput.LiveOverOdds35));
+        vm.LiveInput.LiveUnderOddsText = BuildOddsText((2.5, vm.LiveInput.LiveUnderOdds25), (3.5, vm.LiveInput.LiveUnderOdds35));
 
         vm.LiveInput.SelectedBetLine = ReadSelectedDouble(SelectedBetLineBox, vm.LiveInput.SelectedBetLine);
         vm.LiveInput.SelectedBetLineText = vm.LiveInput.SelectedBetLine.ToString("0.##", CultureInfo.InvariantCulture);
@@ -74,6 +80,32 @@ public partial class MainWindow : Window
         vm.LiveInput.Stake = ReadDouble(StakeBox, vm.LiveInput.Stake);
         vm.LiveInput.BetMode = BetModeBox.SelectedItem?.ToString() ?? vm.LiveInput.BetMode;
         vm.LiveInput.BetNotes = BetNotesBox.Text ?? string.Empty;
+    }
+
+    private static void ApplyStartingAnchor(MainWindowViewModel vm)
+    {
+        if (vm.LiveInput.StartingOverOdds25 > 1.0 && vm.LiveInput.StartingUnderOdds25 > 1.0)
+        {
+            vm.LiveInput.StartingLine = 2.5;
+            vm.LiveInput.StartingOverOdds = vm.LiveInput.StartingOverOdds25;
+            vm.LiveInput.StartingUnderOdds = vm.LiveInput.StartingUnderOdds25;
+            return;
+        }
+
+        if (vm.LiveInput.StartingOverOdds35 > 1.0 && vm.LiveInput.StartingUnderOdds35 > 1.0)
+        {
+            vm.LiveInput.StartingLine = 3.5;
+            vm.LiveInput.StartingOverOdds = vm.LiveInput.StartingOverOdds35;
+            vm.LiveInput.StartingUnderOdds = vm.LiveInput.StartingUnderOdds35;
+        }
+    }
+
+    private static string BuildOddsText(params (double Line, double Odds)[] odds)
+    {
+        return string.Join(",",
+            odds
+                .Where(x => x.Line > 0 && x.Odds > 1.0)
+                .Select(x => $"{x.Line.ToString("0.##", CultureInfo.InvariantCulture)}={x.Odds.ToString("0.######", CultureInfo.InvariantCulture)}"));
     }
 
     private static int ReadSelectedInt(ComboBox box, int fallback)

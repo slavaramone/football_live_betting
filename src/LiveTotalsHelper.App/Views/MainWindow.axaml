@@ -127,21 +127,34 @@
           <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="14">
             <StackPanel Grid.Column="0">
               <TextBlock Text="Starting total" Classes="section-title" />
-              <WrapPanel>
-                <StackPanel><TextBlock Text="Line" Classes="label" /><ComboBox x:Name="StartingLineBox" Classes="input" ItemsSource="{Binding TotalLines}" SelectedItem="{Binding LiveInput.StartingLine}" /></StackPanel>
-                <StackPanel><TextBlock Text="Over" Classes="label" /><TextBox x:Name="StartingOverOddsBox" Classes="input" Text="{Binding LiveInput.StartingOverOdds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel><TextBlock Text="Under" Classes="label" /><TextBox x:Name="StartingUnderOddsBox" Classes="input" Text="{Binding LiveInput.StartingUnderOdds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel><TextBlock Text="Targets" Classes="label" /><TextBlock Text="{Binding LiveInput.TargetLinesText}" Width="110" Height="28" Margin="0,6,6,0" FontSize="12" /></StackPanel>
-              </WrapPanel>
+              <Grid ColumnDefinitions="52,76,76,90" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="3">
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Line" Classes="label" />
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="Over" Classes="label" />
+                <TextBlock Grid.Row="0" Grid.Column="2" Text="Under" Classes="label" />
+                <TextBlock Grid.Row="0" Grid.Column="3" Text="Targets" Classes="label" />
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="2.5" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBox x:Name="StartingOverOdds25Box" Grid.Row="1" Grid.Column="1" Classes="input" Text="{Binding LiveInput.StartingOverOdds25, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox x:Name="StartingUnderOdds25Box" Grid.Row="1" Grid.Column="2" Classes="input" Text="{Binding LiveInput.StartingUnderOdds25, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding LiveInput.TargetLinesText}" FontSize="12" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="3.5" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBox x:Name="StartingOverOdds35Box" Grid.Row="2" Grid.Column="1" Classes="input" Text="{Binding LiveInput.StartingOverOdds35, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox x:Name="StartingUnderOdds35Box" Grid.Row="2" Grid.Column="2" Classes="input" Text="{Binding LiveInput.StartingUnderOdds35, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+              </Grid>
             </StackPanel>
 
             <StackPanel Grid.Column="1">
               <TextBlock Text="Live odds" Classes="section-title" />
-              <WrapPanel>
-                <StackPanel><TextBlock Text="Line" Classes="label" /><ComboBox x:Name="LiveOddsLineBox" Classes="input" ItemsSource="{Binding TotalLines}" SelectedItem="{Binding LiveInput.LiveOddsLine}" /></StackPanel>
-                <StackPanel><TextBlock Text="Over" Classes="label" /><TextBox x:Name="LiveOverOddsBox" Classes="input" Text="{Binding LiveInput.LiveOverOdds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-                <StackPanel><TextBlock Text="Under" Classes="label" /><TextBox x:Name="LiveUnderOddsBox" Classes="input" Text="{Binding LiveInput.LiveUnderOdds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" /></StackPanel>
-              </WrapPanel>
+              <Grid ColumnDefinitions="52,76,76" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="3">
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Line" Classes="label" />
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="Over" Classes="label" />
+                <TextBlock Grid.Row="0" Grid.Column="2" Text="Under" Classes="label" />
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="2.5" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBox x:Name="LiveOverOdds25Box" Grid.Row="1" Grid.Column="1" Classes="input" Text="{Binding LiveInput.LiveOverOdds25, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox x:Name="LiveUnderOdds25Box" Grid.Row="1" Grid.Column="2" Classes="input" Text="{Binding LiveInput.LiveUnderOdds25, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="3.5" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBox x:Name="LiveOverOdds35Box" Grid.Row="2" Grid.Column="1" Classes="input" Text="{Binding LiveInput.LiveOverOdds35, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox x:Name="LiveUnderOdds35Box" Grid.Row="2" Grid.Column="2" Classes="input" Text="{Binding LiveInput.LiveUnderOdds35, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+              </Grid>
             </StackPanel>
           </Grid>
         </Grid>
