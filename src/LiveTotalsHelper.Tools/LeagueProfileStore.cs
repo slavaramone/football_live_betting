@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LiveTotalsHelper.Core.MonteCarlo;
 
 namespace LiveTotalsHelper.Tools;
 
@@ -7,6 +8,7 @@ public sealed class LeagueProfilesConfig
     public List<int> DefaultSnapshotMinutes { get; set; } = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85];
     public List<double> DefaultTargetLines { get; set; } = [2.5, 3.5];
     public List<double> DefaultAllowedLines { get; set; } = [2.5, 3.5];
+    public MonteCarloConfig MonteCarlo { get; set; } = new();
     public List<LeagueProfile> Profiles { get; set; } = [];
 }
 
@@ -54,6 +56,7 @@ public sealed class LeagueProfile
     public string DecisionRulesNotes { get; set; } = "Old live-total model removed; waiting for redesigned model.";
     public string RiskLevel { get; set; } = "Model disabled";
     public string Notes { get; set; } = string.Empty;
+    public MonteCarloConfig MonteCarlo { get; set; } = new();
 }
 
 public sealed class LeagueProfileStore
@@ -160,6 +163,7 @@ public sealed class LeagueProfileStore
                 profile.TargetLines = config.DefaultTargetLines.Count > 0 ? config.DefaultTargetLines.ToList() : [2.5, 3.5];
             if (profile.AllowedLines.Count == 0)
                 profile.AllowedLines = config.DefaultAllowedLines.Count > 0 ? config.DefaultAllowedLines.ToList() : profile.TargetLines.ToList();
+            profile.MonteCarlo = profile.MonteCarlo.WithDefaultsFrom(config.MonteCarlo);
             if (string.IsNullOrWhiteSpace(profile.Notes))
                 profile.Notes = "Old live-total model removed; this profile is retained for downloading/importing and the future Avalonia model shell.";
         }

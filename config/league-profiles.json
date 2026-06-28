@@ -3,6 +3,21 @@
   "defaultSnapshotMinutes": [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85],
   "defaultTargetLines": [2.5, 3.5],
   "defaultAllowedLines": [2.5, 3.5],
+  "monteCarlo": {
+    "enabled": false,
+    "simulationCount": 20000,
+    "stepMinutes": 0.25,
+    "randomSeed": 12345,
+    "maxRemainingGoalsTracked": 6,
+    "defaultEffectiveEnd1H": 47.0,
+    "defaultEffectiveEnd2H": 96.0,
+    "secondHalfBaseAddedMinutes": 5.0,
+    "addedMinutesPerGoal": 0.4,
+    "addedMinutesPerRedCard": 1.0,
+    "minSecondHalfAddedMinutes": 4.0,
+    "maxSecondHalfAddedMinutes": 10.0,
+    "stoppageResidualMinutes": 1.5
+  },
   "profiles": [
 	{
 	"key": "npl-new-south-wales",

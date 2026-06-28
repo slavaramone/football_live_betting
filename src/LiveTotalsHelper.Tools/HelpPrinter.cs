@@ -15,6 +15,7 @@ public static class HelpPrinter
         Console.WriteLine("  import-flashscore-fixtures          Import saved Flashscore fixture calendars only.");
         Console.WriteLine("  validate-db                         Validate imported PostgreSQL data quality.");
         Console.WriteLine("  db-validate                         Alias for validate-db.");
+        Console.WriteLine("  debug-effective-end                 Estimate effective match end/remaining time for a live state.");
         Console.WriteLine();
         Console.WriteLine("Profile file:");
         Console.WriteLine("  Default: config/league-profiles.json");
@@ -40,6 +41,10 @@ public static class HelpPrinter
         Console.WriteLine("  --include-playoffs true           Include Flashscore Play Offs/Relegation sections.");
         Console.WriteLine("  --render-wait-ms                  Initial Flashscore page wait. Default: 3000.");
         Console.WriteLine("  --detail-wait-ms                  Flashscore detail page wait. Default: 1000.");
+        Console.WriteLine("  --minute                          Live minute for debug-effective-end.");
+        Console.WriteLine("  --score                           Current score as home-away, for example 2-0.");
+        Console.WriteLine("  --hr / --ar                       Home/away red-card counts for debug-effective-end.");
+        Console.WriteLine("  --out / --output                  Optional JSON output path for debug commands.");
     }
 
     public static int UnknownCommand(string command)

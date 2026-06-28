@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using LiveTotalsHelper.Core.MonteCarlo;
 using LiveTotalsHelper.Infrastructure.Flashscore;
 using LiveTotalsHelper.Infrastructure.Persistence;
 using LiveTotalsHelper.Infrastructure.Persistence.Flashscore;
@@ -30,6 +31,7 @@ try
         "import-flashscore-fixtures" => await RunImportFlashscoreFixtures(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
+        "debug-effective-end" => await RunDebugEffectiveEnd(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -199,6 +201,74 @@ static async Task<int> RunDownloadSofaScore(string[] args)
     PrintDownloadResult(result);
 
     return result.Failures.Count == 0 ? 0 : 1;
+}
+
+
+static async Task<int> RunDebugEffectiveEnd(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    LeagueProfile? profile = await LoadProfileByKeyOrLeagueAsync(parsed);
+    string leagueKey = profile?.Key ?? parsed.String("league", parsed.String("profile", string.Empty));
+
+    (int homeGoals, int awayGoals) = ParseScore(parsed.String("score", "0-0"));
+    var request = new LiveMonteCarloRequest
+    {
+        LeagueKey = leagueKey,
+        CurrentMinute = parsed.RequiredDouble("minute"),
+        HomeGoals = homeGoals,
+        AwayGoals = awayGoals,
+        HomeRedCards = parsed.Int("hr", parsed.Int("home-red-cards", 0)),
+        AwayRedCards = parsed.Int("ar", parsed.Int("away-red-cards", 0)),
+        LastGoalMinute = parsed.Has("last-goal-minute")
+            ? parsed.Double("last-goal-minute", 0.0)
+            : null
+    };
+
+    MonteCarloConfig config = profile?.MonteCarlo ?? new MonteCarloConfig();
+
+    var estimator = new EffectiveEndMinuteEstimator();
+    EffectiveEndMinuteEstimate estimate = estimator.Estimate(request, config);
+
+    Console.WriteLine("Effective end debug");
+    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(leagueKey) ? "<default>" : leagueKey)}");
+    Console.WriteLine($"Minute: {request.CurrentMinute.ToString("0.##", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Score: {request.HomeGoals}-{request.AwayGoals}");
+    Console.WriteLine($"Red cards: {request.HomeRedCards}-{request.AwayRedCards}");
+    Console.WriteLine($"Period: {estimate.Period}");
+    Console.WriteLine($"Estimated effective end: {estimate.EffectiveEndMinute.ToString("0.##", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Remaining effective minutes: {estimate.RemainingEffectiveMinutes.ToString("0.##", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Reason: {estimate.Reason}");
+
+    string outputPath = parsed.String("out", parsed.String("output", string.Empty));
+    if (!string.IsNullOrWhiteSpace(outputPath))
+    {
+        string fullPath = Path.GetFullPath(outputPath);
+        string? directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
+
+        var payload = new
+        {
+            league = leagueKey,
+            minute = request.CurrentMinute,
+            score = $"{request.HomeGoals}-{request.AwayGoals}",
+            homeRedCards = request.HomeRedCards,
+            awayRedCards = request.AwayRedCards,
+            lastGoalMinute = request.LastGoalMinute,
+            estimate
+        };
+
+        await File.WriteAllTextAsync(
+            fullPath,
+            JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }),
+            Encoding.UTF8,
+            CancellationToken.None);
+
+        Console.WriteLine($"Output written: {fullPath}");
+    }
+
+    return 0;
 }
 
 static async Task<int> RunValidateDb(string[] args)
@@ -599,6 +669,36 @@ static string FormatImportException(Exception exception)
     }
 
     return string.Join(Environment.NewLine, lines);
+}
+
+
+static async Task<LeagueProfile?> LoadProfileByKeyOrLeagueAsync(ParsedArgs parsed)
+{
+    string profileKey = parsed.String("profile", string.Empty);
+    string leagueKey = parsed.String("league", string.Empty);
+    string lookup = !string.IsNullOrWhiteSpace(profileKey) ? profileKey : leagueKey;
+    if (string.IsNullOrWhiteSpace(lookup))
+        return null;
+
+    string profilesFile = parsed.String("profiles-file", "config/league-profiles.json");
+    LeagueProfileStore profileStore = await LeagueProfileStore.LoadAsync(profilesFile, CancellationToken.None);
+    return profileStore.FindRequired(lookup);
+}
+
+static (int HomeGoals, int AwayGoals) ParseScore(string raw)
+{
+    if (string.IsNullOrWhiteSpace(raw))
+        return (0, 0);
+
+    string[] parts = raw.Trim().Split(new[] { '-', ':' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+    if (parts.Length != 2 ||
+        !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int homeGoals) ||
+        !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int awayGoals) ||
+        homeGoals < 0 ||
+        awayGoals < 0)
+        throw new ArgumentException("Argument --score must use non-negative '<home>-<away>' format, for example --score 2-0.");
+
+    return (homeGoals, awayGoals);
 }
 
 static async Task<LeagueProfile?> LoadOptionalProfileAsync(ParsedArgs parsed)
