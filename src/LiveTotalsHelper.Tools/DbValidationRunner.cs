@@ -252,7 +252,7 @@ public sealed class DbValidationRunner
         {
             Name = "Goal timing summary",
             Severity = DbValidationSeverity.Info,
-            Message = "Goal timing shape used by Weibull/empirical timing model. Score snapshots are reconstructed, score jumps are expanded, and unreliable timelines are excluded from the model-useful distribution."
+            Message = "Goal timing and score reconstruction quality. Score snapshots are reconstructed, score jumps are expanded, and unreliable timelines are excluded from the data-quality distribution."
         };
 
         if (allGoals.Count == 0)

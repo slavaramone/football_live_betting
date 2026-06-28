@@ -15,7 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\LiveTotalsHelper.Core\LiveTotalsHelper.Core.csproj" />
-    <ProjectReference Include="..\LiveTotalsHelper.Modeling\LiveTotalsHelper.Modeling.csproj" />
     <ProjectReference Include="..\LiveTotalsHelper.Infrastructure\LiveTotalsHelper.Infrastructure.csproj" />
     <ProjectReference Include="..\LiveTotalsHelper.Tools\LiveTotalsHelper.Tools.csproj" />
   </ItemGroup>

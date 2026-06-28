@@ -6,8 +6,8 @@ using LiveTotalsHelper.Infrastructure.Persistence;
 using LiveTotalsHelper.Infrastructure.Persistence.Flashscore;
 using LiveTotalsHelper.Infrastructure.SofaScore;
 using LiveTotalsHelper.Tools;
-using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 try
 {
@@ -30,13 +30,6 @@ try
         "import-flashscore-fixtures" => await RunImportFlashscoreFixtures(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
-        "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
-        "analyze-live-total-calibration" => await RunAnalyzeLiveTotalCalibration(commandArgs),
-        "analyze-after-goal-patterns" => await RunAnalyzeAfterGoalPatterns(commandArgs),
-        "analyze-after-goal-continuation" => await RunAnalyzeAfterGoalContinuation(commandArgs),
-        "fit-live-total-state-correction" => await RunFitLiveTotalStateCorrection(commandArgs),
-        "evaluate-live-total-performance" => await RunEvaluateLiveTotalPerformance(commandArgs),
-        "fit-weibull" => await RunFitWeibull(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -84,8 +77,8 @@ static async Task<int> RunDownloadFlashscore(string[] args)
             ? !parsed.Bool("include-playoffs", true)
             : parsed.Bool("skip-playoffs", true),
         Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
-        RenderWaitMs = parsed.Int("render-wait-ms", 4_000),
-        DetailWaitMs = parsed.Int("detail-wait-ms", 4_000),
+        RenderWaitMs = parsed.Int("render-wait-ms", 3_000),
+        DetailWaitMs = parsed.Int("detail-wait-ms", 1_000),
         ShowMoreWaitMs = parsed.Int("show-more-wait-ms", 2_000),
         MaxShowMoreClicks = parsed.Int("max-show-more-clicks", 40),
         DelayMs = parsed.Int("delay-ms", 450),
@@ -122,6 +115,7 @@ static async Task<int> RunDownloadFlashscoreFixtures(string[] args)
         ? parsed.Int("default-year", DateTimeOffset.UtcNow.Year)
         : TryParseSeasonYear(seasonYear) ?? seasonId;
 
+    string league = parsed.String("league", profile?.League ?? string.Empty);
     string seasonName = parsed.String("season-name", profile?.FlashscoreSeasonName ?? seasonYear);
     if (string.IsNullOrWhiteSpace(seasonName))
         seasonName = seasonYear;
@@ -130,12 +124,12 @@ static async Task<int> RunDownloadFlashscoreFixtures(string[] args)
         ? parsed.RequiredInt("tournament-id")
         : profile?.FlashscoreTournamentId > 0
             ? profile.FlashscoreTournamentId
-            : StablePositiveInt($"flashscore:tournament:{profile?.League ?? parsed.String("league", string.Empty)}");
+            : StablePositiveInt($"flashscore:tournament:{league}");
 
     var options = new FlashscoreDownloadOptions
     {
         Url = parsed.String("url", profile?.FlashscoreFixturesUrl ?? string.Empty),
-        League = parsed.String("league", profile?.League ?? string.Empty),
+        League = league,
         TournamentId = tournamentId,
         SeasonId = seasonId,
         SeasonName = seasonName,
@@ -154,7 +148,7 @@ static async Task<int> RunDownloadFlashscoreFixtures(string[] args)
             : parsed.Bool("skip-playoffs", true),
         Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
         RenderWaitMs = parsed.Int("render-wait-ms", 3_000),
-        DetailWaitMs = parsed.Int("detail-wait-ms", 3_000),
+        DetailWaitMs = parsed.Int("detail-wait-ms", 1_000),
         ShowMoreWaitMs = parsed.Int("show-more-wait-ms", 2_000),
         MaxShowMoreClicks = 0,
         DelayMs = parsed.Int("delay-ms", 150),
@@ -207,587 +201,6 @@ static async Task<int> RunDownloadSofaScore(string[] args)
     return result.Failures.Count == 0 ? 0 : 1;
 }
 
-
-
-static async Task<int> RunBuildLiveTotalCalibrationDataset(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
-    bool validationMode = parsed.Bool("validation", false);
-
-    string modelPath = parsed.Has("model")
-        ? parsed.RequiredString("model")
-        : GetRequiredProfilePath(profile, validationMode ? p => p.ValidationModelPath : p => p.ModelPath, "model", validationMode);
-
-    string defaultOutput = validationMode
-        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
-        : profile?.CalibrationDatasetPath ?? string.Empty;
-
-    var options = new LiveTotalCalibrationDatasetOptions
-    {
-        League = parsed.String("league", profile?.League ?? string.Empty),
-        ModelPath = modelPath,
-        OutputPath = parsed.String("output", defaultOutput),
-        EmpiricalWeight = parsed.Double("empirical-weight", profile?.DefaultEmpiricalWeight ?? 0.80),
-        IncludeUnreliableMatches = parsed.Bool("include-unreliable", profile?.IncludeUnreliableMatches ?? false),
-        IncludeEventTriggers = parsed.Bool("include-event-triggers", profile?.IncludeEventTriggers ?? true),
-        MaxExamples = parsed.Int("max-examples", 20)
-    };
-
-    AddSeasonIds(options.SeasonIds, parsed);
-    if (options.SeasonIds.Count == 0 && profile is not null)
-        AddProfileSeasonIds(options.SeasonIds, validationMode
-            ? profile.ValidationTrainingSeasonIds.Concat(profile.ValidationTestSeasonIds)
-            : profile.TrainingSeasonIds);
-
-    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
-        AddRounds(options.Rounds, parsed);
-
-    if (parsed.Has("minutes"))
-        AddOptionalIntList(options.SnapshotMinutes, parsed, "minutes", clearExisting: true);
-    else if (profile?.SnapshotMinutes is { Count: > 0 })
-    {
-        options.SnapshotMinutes.Clear();
-        foreach (int minute in profile.SnapshotMinutes)
-            options.SnapshotMinutes.Add(minute);
-    }
-
-    IConfiguration configuration = new ConfigurationBuilder()
-        .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-        .Build();
-
-    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
-    var builder = new LiveTotalCalibrationDatasetBuilder(dbContext, options);
-    LiveTotalCalibrationDatasetResult result = await builder.BuildAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("Live total calibration dataset build done.");
-    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(options.League) ? "all" : options.League)}");
-    Console.WriteLine($"Seasons included: {(result.SeasonsIncluded.Count == 0 ? "none" : string.Join(", ", result.SeasonsIncluded))}");
-    Console.WriteLine($"Matches checked: {result.MatchesChecked}");
-    Console.WriteLine($"Finished matches: {result.FinishedMatches}");
-    Console.WriteLine($"Reliable finished matches: {result.ReliableFinishedMatches}");
-    Console.WriteLine($"Unreliable finished matches: {result.UnreliableFinishedMatches}");
-    Console.WriteLine($"States written: {result.StatesWritten}");
-    Console.WriteLine($"  Fixed minute: {result.FixedMinuteStatesWritten}");
-    Console.WriteLine($"  After goal: {result.AfterGoalStatesWritten}");
-    Console.WriteLine($"  After red card: {result.AfterRedCardStatesWritten}");
-    Console.WriteLine($"Market total matches: {result.FinishedMatchesWithMarketTotal}/{result.FinishedMatches}");
-    Console.WriteLine($"Rows with market expected final goals: {result.RowsWithMarketTotal}/{result.StatesWritten}");
-    Console.WriteLine($"Output: {result.OutputPath}");
-    foreach (string warning in result.Warnings)
-        Console.WriteLine($"Warning: {warning}");
-
-    return 0;
-}
-
-static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
-    bool validationMode = parsed.Bool("validation", false);
-
-    string defaultInput = validationMode
-        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
-        : profile?.CalibrationDatasetPath ?? string.Empty;
-    string defaultOutput = validationMode
-        ? profile?.ValidationCalibrationAnalysisPath ?? string.Empty
-        : profile?.CalibrationAnalysisPath ?? string.Empty;
-
-    var options = new LiveTotalCalibrationAnalysisOptions
-    {
-        InputPath = parsed.String("input", defaultInput),
-        OutputPath = parsed.String("output", defaultOutput)
-    };
-    if (string.IsNullOrWhiteSpace(options.InputPath))
-        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
-
-    AddOptionalIntList(options.TrainingSeasonIds, parsed, "training-season-ids", clearExisting: true);
-    AddOptionalIntList(options.TestSeasonIds, parsed, "test-season-ids", clearExisting: true);
-    if (validationMode && profile is not null)
-    {
-        if (options.TrainingSeasonIds.Count == 0)
-            AddProfileSeasonIds(options.TrainingSeasonIds, profile.ValidationTrainingSeasonIds);
-        if (options.TestSeasonIds.Count == 0)
-            AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
-    }
-
-    var analyzer = new LiveTotalCalibrationAnalyzer(options);
-    LiveTotalCalibrationAnalysisResult result = await analyzer.AnalyzeAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("Live total calibration analysis done.");
-    Console.WriteLine($"Input: {result.InputPath}");
-    Console.WriteLine($"Rows read: {result.RowsRead}");
-    Console.WriteLine($"Rows analyzed: {result.RowsAnalyzed}");
-    Console.WriteLine($"Output: {result.OutputPath}");
-
-    if (result.HasTrainTestSplit)
-    {
-        Console.WriteLine($"Train/test buckets written: {result.TrainTestBuckets.Count}");
-        Console.WriteLine();
-        Console.WriteLine("Trigger       MinuteBand  ScoreState            TrRows  TeRows  Factor  TestActual  TestBase  TestCorrected  BaseAbsErr  CorrAbsErr");
-        foreach (LiveTotalCalibrationTrainTestBucketResult bucket in result.TrainTestBuckets)
-        {
-            Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.TrainRows,6} {bucket.TestRows,6}  {F(bucket.CorrectionFactor),6}  {bucket.TestActualRemainingGoalsPerRow,10:0.###}  {bucket.TestBaselineRemainingGoalsPerRow,8:0.###}  {D(bucket.TestCorrectedRemainingGoalsPerRow),13}  {D(bucket.TestBaselineAbsErrorPerRow),10}  {D(bucket.TestCorrectedAbsErrorPerRow),10}");
-        }
-
-        return 0;
-    }
-
-    Console.WriteLine($"Buckets written: {result.Buckets.Count}");
-    Console.WriteLine();
-    Console.WriteLine("Trigger       MinuteBand  ScoreState            Rows  Matches  ActualRem/Row  BaseRem/Row  TimingShare  Factor");
-    foreach (LiveTotalCalibrationBucketResult bucket in result.Buckets)
-    {
-        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-11} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.ActualRemainingGoalsPerRow,13:0.###}  {bucket.BaselineRemainingGoalsPerRow,11:0.###}  {P(bucket.AverageTimingRemainingShare),11}  {F(bucket.CorrectionFactor),7}");
-    }
-
-    return 0;
-
-    static string P(double value) => value.ToString("P1", CultureInfo.InvariantCulture);
-    static string F(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
-    static string D(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
-}
-
-
-static async Task<int> RunAnalyzeAfterGoalPatterns(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
-    bool validationMode = parsed.Bool("validation", false);
-
-    string defaultInput = validationMode
-        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
-        : profile?.CalibrationDatasetPath ?? string.Empty;
-
-    var options = new LiveTotalAfterGoalPatternAnalysisOptions
-    {
-        InputPath = parsed.String("input", defaultInput),
-        OutputPath = parsed.String("output", string.Empty),
-        PatternMinRows = parsed.Int("pattern-min-rows", 20),
-        PatternMinMatches = parsed.Int("pattern-min-matches", 10),
-        EmpiricalSettlementMinBucketRows = parsed.Int("settlement-min-bucket-rows", 80),
-        EmpiricalSettlementMinBucketMatches = parsed.Int("settlement-min-bucket-matches", 40),
-        EmpiricalSettlementMaxRemainingGoals = parsed.Int("settlement-max-remaining-goals", 8),
-        EmpiricalSettlementSmoothing = parsed.Double("settlement-smoothing", 0.25)
-    };
-    if (string.IsNullOrWhiteSpace(options.InputPath))
-        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
-
-    if (parsed.Has("training-season-ids"))
-        AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
-    else if (profile is not null)
-        AddProfileSeasonIds(options.TrainingSeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
-
-    if (parsed.Has("test-season-ids"))
-        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
-    else if (profile is not null && validationMode)
-        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
-
-    if (parsed.Has("target-lines"))
-        AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
-    else if (profile?.TargetLines is { Count: > 0 })
-    {
-        options.TargetLines.Clear();
-        foreach (double line in profile.TargetLines)
-            options.TargetLines.Add(line);
-    }
-
-    var analyzer = new LiveTotalAfterGoalPatternAnalyzer(options);
-    LiveTotalAfterGoalPatternAnalysisResult result = await analyzer.AnalyzeAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("After-goal pattern analysis done.");
-    Console.WriteLine($"Input: {result.InputPath}");
-    Console.WriteLine($"Output: {result.OutputPath}");
-    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
-    Console.WriteLine($"Test seasons: {string.Join(", ", result.TestSeasonIds)}");
-    Console.WriteLine($"Rows read: {result.RowsRead}");
-    Console.WriteLine($"Test rows: {result.TestRows}");
-    Console.WriteLine($"After-goal rows analyzed: {result.AfterGoalRows}");
-    Console.WriteLine($"Rows skipped without expected final goals: {result.RowsSkippedMissingExpectedFinalGoals}");
-    Console.WriteLine($"Unsupported empirical settlement rows skipped: {result.UnsupportedEmpiricalRows}");
-    Console.WriteLine($"Pattern buckets written: {result.Summaries.Count}");
-
-    return 0;
-}
-
-
-static async Task<int> RunAnalyzeAfterGoalContinuation(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
-    bool validationMode = parsed.Bool("validation", false);
-
-    string defaultInput = validationMode
-        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
-        : profile?.CalibrationDatasetPath ?? string.Empty;
-
-    var options = new LiveTotalAfterGoalContinuationAnalysisOptions
-    {
-        League = parsed.String("league", profile?.League ?? string.Empty),
-        InputPath = parsed.String("input", defaultInput),
-        OutputPath = parsed.String("output", string.Empty),
-        SummaryOutputPath = parsed.String("summary-output", string.Empty),
-        MinSummaryRows = parsed.Int("min-summary-rows", 5)
-    };
-    if (string.IsNullOrWhiteSpace(options.InputPath))
-        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
-
-    if (parsed.Has("test-season-ids"))
-        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
-    else if (profile is not null && validationMode)
-        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
-
-    if (parsed.Has("target-lines"))
-        AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
-    else if (profile?.TargetLines is { Count: > 0 })
-    {
-        options.TargetLines.Clear();
-        foreach (double line in profile.TargetLines)
-            options.TargetLines.Add(line);
-    }
-
-    if (parsed.Has("windows"))
-    {
-        options.Windows.Clear();
-        AddRequiredIntList(options.Windows, parsed, "windows");
-    }
-
-    var analyzer = new LiveTotalAfterGoalContinuationAnalyzer(options);
-    LiveTotalAfterGoalContinuationAnalysisResult result = await analyzer.AnalyzeAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("After-goal continuation analysis done.");
-    Console.WriteLine($"Input: {result.InputPath}");
-    Console.WriteLine($"Rows output: {result.OutputPath}");
-    Console.WriteLine($"Summary output: {result.SummaryOutputPath}");
-    Console.WriteLine($"Test seasons: {(result.TestSeasonIds.Count == 0 ? "all" : string.Join(", ", result.TestSeasonIds))}");
-    Console.WriteLine($"Rows read: {result.RowsRead}");
-    Console.WriteLine($"Test rows: {result.TestRows}");
-    Console.WriteLine($"After-goal rows: {result.AfterGoalRows}");
-    Console.WriteLine($"Continuation rows written: {result.ContinuationRows}");
-    Console.WriteLine($"Summary rows written: {result.SummaryRows}");
-
-    return 0;
-}
-
-static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
-    bool validationMode = parsed.Bool("validation", false);
-
-    string defaultInput = validationMode
-        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
-        : profile?.CalibrationDatasetPath ?? string.Empty;
-    string defaultOutput = validationMode
-        ? profile?.ValidationStateCorrectionPath ?? string.Empty
-        : profile?.StateCorrectionPath ?? string.Empty;
-
-    var options = new LiveTotalStateCorrectionFitOptions
-    {
-        InputPath = parsed.String("input", defaultInput),
-        OutputPath = parsed.String("output", defaultOutput),
-        MinBucketMatches = parsed.Int("min-bucket-matches", profile?.StateCorrectionMinBucketMatches ?? 100),
-        MinFactor = parsed.Double("min-factor", profile?.StateCorrectionMinFactor ?? 0.50),
-        MaxFactor = parsed.Double("max-factor", profile?.StateCorrectionMaxFactor ?? 2.50),
-        ShrinkMatches = parsed.Int("shrink-matches", profile?.StateCorrectionShrinkMatches ?? 300)
-    };
-    if (string.IsNullOrWhiteSpace(options.InputPath))
-        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
-
-    if (parsed.Has("training-season-ids"))
-        AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
-    else if (profile is not null)
-        AddProfileSeasonIds(options.TrainingSeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
-    if (options.TrainingSeasonIds.Count == 0)
-        throw new ArgumentException("Missing required argument --training-season-ids, or provide --profile with training season ids.");
-
-    var fitter = new LiveTotalStateCorrectionFitter(options);
-    LiveTotalStateCorrectionFitResult result = await fitter.FitAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("Live total state correction fit done.");
-    Console.WriteLine($"Input: {result.InputPath}");
-    Console.WriteLine($"Output: {result.OutputPath}");
-    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? "unknown" : result.League)}");
-    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
-    Console.WriteLine($"Rows used: {result.TrainingRowsUsed}");
-    Console.WriteLine($"Matches used: {result.TrainingMatchesUsed}");
-    Console.WriteLine($"Average expected final goals: {result.AverageExpectedFinalGoals:0.###} ({result.ExpectedFinalGoalsSource})");
-    Console.WriteLine($"Rows skipped without expected final goals: {result.RowsSkippedMissingExpectedFinalGoals}");
-    Console.WriteLine($"Shrink matches: {result.ShrinkMatches} ({(result.ShrinkMatches <= 0 ? "disabled" : "matches / (matches + shrinkMatches)")})");
-
-    Console.WriteLine();
-    Console.WriteLine("Bucket factors:");
-    Console.WriteLine("Trigger       Band    ScoreState            Rows  Matches  Raw    ShrW   Used   Usable");
-    foreach (LiveTotalStateCorrectionBucket bucket in result.Buckets)
-        Console.WriteLine($"{bucket.StateTrigger,-13} {bucket.MinuteBand,-7} {bucket.DetailedScoreState,-20} {bucket.Rows,5}  {bucket.Matches,7}  {bucket.RawFactor,5:0.###}  {bucket.ShrinkWeight,5:0.###}  {bucket.Factor,5:0.###}  {bucket.IsUsable}");
-
-    return 0;
-}
-
-
-static async Task<int> RunEvaluateLiveTotalPerformance(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
-    bool validationMode = parsed.Bool("validation", false);
-
-    string defaultInput = validationMode
-        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
-        : profile?.CalibrationDatasetPath ?? string.Empty;
-    string defaultStateCorrection = validationMode
-        ? profile?.ValidationStateCorrectionPath ?? string.Empty
-        : profile?.StateCorrectionPath ?? string.Empty;
-    string defaultModelOutput = validationMode
-        ? profile?.ValidationModelEvaluationPath ?? string.Empty
-        : profile?.ModelEvaluationPath ?? string.Empty;
-
-    string inputPath = parsed.String("input", defaultInput);
-    string stateCorrectionPath = parsed.String("state-correction", defaultStateCorrection);
-    if (string.IsNullOrWhiteSpace(inputPath))
-        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
-    if (string.IsNullOrWhiteSpace(stateCorrectionPath))
-        throw new ArgumentException("Missing required argument --state-correction, or provide --profile with a state correction path.");
-
-    var testSeasonIds = new List<int>();
-    if (parsed.Has("test-season-ids"))
-        AddRequiredIntList(testSeasonIds, parsed, "test-season-ids");
-    else if (profile is not null && validationMode)
-        AddProfileSeasonIds(testSeasonIds, profile.ValidationTestSeasonIds);
-    if (testSeasonIds.Count == 0)
-        throw new ArgumentException("Missing required argument --test-season-ids, or use --validation true with a profile validation split.");
-
-    var trainingSeasonIds = new List<int>();
-    if (parsed.Has("training-season-ids"))
-        AddRequiredIntList(trainingSeasonIds, parsed, "training-season-ids");
-    else if (profile is not null)
-        AddProfileSeasonIds(trainingSeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
-    if (trainingSeasonIds.Count == 0)
-        throw new ArgumentException("Missing required argument --training-season-ids, or provide --profile with training season ids.");
-
-    string decisionScope = parsed.String("scope", parsed.String("decision-scope", LiveTotalDecisionScope.FullModel));
-    string stateCorrectionScope = parsed.String("state-correction-scope", parsed.String("correction-scope", LiveTotalStateCorrectionScope.FixedMinute));
-    string stateCorrectionDirectionGuard = parsed.String("state-correction-direction", parsed.String("correction-direction", LiveTotalStateCorrectionDirectionGuard.UpOnly));
-    LiveTotalLateGameCorrectionOptions lateGameCorrection = BuildLateGameCorrectionOptions(parsed, profile);
-    bool compareScopes = parsed.Bool("compare-scopes", false);
-
-    var modelOptions = new LiveTotalModelEvaluationOptions
-    {
-        InputPath = inputPath,
-        StateCorrectionPath = stateCorrectionPath,
-        OutputPath = parsed.String("model-output", parsed.String("output", defaultModelOutput)),
-        DecisionScope = decisionScope,
-        StateCorrectionScope = stateCorrectionScope,
-        StateCorrectionDirectionGuard = stateCorrectionDirectionGuard,
-        LateGameCorrection = lateGameCorrection,
-        CompareScopes = compareScopes
-    };
-    foreach (int seasonId in testSeasonIds)
-        modelOptions.TestSeasonIds.Add(seasonId);
-
-    var modelEvaluator = new LiveTotalModelEvaluator(modelOptions);
-    LiveTotalModelEvaluationResult modelResult = await modelEvaluator.EvaluateAsync(CancellationToken.None);
-
-    string defaultBettingOutput;
-    if (!string.IsNullOrWhiteSpace(inputPath))
-    {
-        string directory = Path.GetDirectoryName(inputPath) ?? ".";
-        string fileName = Path.GetFileNameWithoutExtension(inputPath);
-        defaultBettingOutput = Path.Combine(directory, $"{fileName}-betting-metrics.csv");
-    }
-    else
-    {
-        defaultBettingOutput = string.Empty;
-    }
-
-    var bettingOptions = new LiveTotalBettingMetricsEvaluationOptions
-    {
-        InputPath = inputPath,
-        StateCorrectionPath = stateCorrectionPath,
-        OutputPath = parsed.String("betting-output", defaultBettingOutput),
-        EdgeBucketOutputPath = parsed.String("edge-output", string.Empty),
-        EdgeBucketStep = parsed.Double("edge-bucket-step", 0.02),
-        DecisionScope = decisionScope,
-        StateCorrectionScope = stateCorrectionScope,
-        StateCorrectionDirectionGuard = stateCorrectionDirectionGuard,
-        LateGameCorrection = lateGameCorrection,
-        CompareScopes = compareScopes,
-        EmpiricalSettlementMinBucketRows = parsed.Int("settlement-min-bucket-rows", 80),
-        EmpiricalSettlementMinBucketMatches = parsed.Int("settlement-min-bucket-matches", 40),
-        EmpiricalSettlementMaxRemainingGoals = parsed.Int("settlement-max-remaining-goals", 8),
-        EmpiricalSettlementSmoothing = parsed.Double("settlement-smoothing", 0.25)
-    };
-    foreach (int seasonId in testSeasonIds)
-        bettingOptions.TestSeasonIds.Add(seasonId);
-    foreach (int seasonId in trainingSeasonIds)
-        bettingOptions.TrainingSeasonIds.Add(seasonId);
-
-    if (parsed.Has("target-lines"))
-        AddOptionalDoubleList(bettingOptions.TargetLines, parsed, "target-lines", clearExisting: true);
-    else if (profile?.TargetLines is { Count: > 0 })
-    {
-        bettingOptions.TargetLines.Clear();
-        foreach (double line in profile.TargetLines)
-            bettingOptions.TargetLines.Add(line);
-    }
-
-    var bettingEvaluator = new LiveTotalBettingMetricsEvaluator(bettingOptions);
-    LiveTotalBettingMetricsEvaluationResult bettingResult = await bettingEvaluator.EvaluateAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("Live total performance evaluation done.");
-    Console.WriteLine($"Input: {inputPath}");
-    Console.WriteLine($"State correction: {stateCorrectionPath}");
-    Console.WriteLine($"State correction scope: {LiveTotalStateCorrectionScope.Normalize(stateCorrectionScope)}");
-    Console.WriteLine($"State correction direction: {LiveTotalStateCorrectionDirectionGuard.Normalize(stateCorrectionDirectionGuard)}");
-    Console.WriteLine($"Late-game correction: {lateGameCorrection.Summary()}");
-    Console.WriteLine($"Training seasons: {string.Join(", ", trainingSeasonIds)}");
-    Console.WriteLine($"Test seasons: {string.Join(", ", testSeasonIds)}");
-    Console.WriteLine($"Scopes: {string.Join(", ", modelResult.ScopesEvaluated)}");
-    Console.WriteLine($"Model evaluation CSV: {modelResult.OutputPath}");
-    Console.WriteLine($"Betting metrics CSV: {bettingResult.OutputPath}");
-    Console.WriteLine($"Probability move bucket CSV: {bettingResult.EdgeBucketOutputPath}");
-    Console.WriteLine($"Model rows skipped without expected final goals: {modelResult.RowsSkippedMissingExpectedFinalGoals}");
-    Console.WriteLine($"Betting rows skipped without expected final goals: {bettingResult.RowsSkippedMissingExpectedFinalGoals}");
-    Console.WriteLine($"Empirical settlement unsupported rows skipped: {bettingResult.UnsupportedEmpiricalRows}");
-    Console.WriteLine($"Model state-correction applied rows: {modelResult.StateCorrectionAppliedRows}; gated rows: {modelResult.StateCorrectionGatedRows}; late boosted rows: {modelResult.LateGameBoostedRows}");
-    Console.WriteLine($"Betting state-correction applied rows: {bettingResult.StateCorrectionAppliedRows}; gated rows: {bettingResult.StateCorrectionGatedRows}; late boosted rows: {bettingResult.LateGameBoostedRows}");
-
-    Console.WriteLine();
-    Console.WriteLine("Model metrics:");
-    Console.WriteLine("Scope                    Trigger              Rows  Matches  BaseMAE  CorrMAE  BaseBias  CorrBias  Applied  Gated  Late");
-    foreach (LiveTotalModelEvaluationSummary summary in modelResult.Summaries.Where(x => x.StateTrigger == "All" || x.StateTrigger == LiveTotalStateTrigger.FixedMinute || x.StateTrigger == "FixedMinuteLateGame" || x.StateTrigger == LiveTotalStateTrigger.AfterGoal))
-        Console.WriteLine($"{summary.Scope,-24} {summary.StateTrigger,-20} {summary.Rows,5}  {summary.Matches,7}  {summary.BaselineMae,7:0.###}  {summary.StateCorrectedMae,7:0.###}  {summary.BaselineBias,8:0.###}  {summary.StateCorrectedBias,8:0.###}  {summary.StateCorrectionAppliedRows,7}  {summary.StateCorrectionGatedRows,5}  {summary.LateGameBoostedRows,4}");
-
-    Console.WriteLine();
-    Console.WriteLine("Betting metrics:");
-    Console.WriteLine("Scope                    Trigger              Line  Rows   BaseBr  CorrBr  BrImp%  BaseLL  CorrLL  LLImp%  BaseAcc  CorrAcc  AccDiff  Applied  Gated  Late");
-    foreach (LiveTotalBettingMetricSummary row in bettingResult.Summaries.Where(x => x.StateTrigger == "All" || x.StateTrigger == LiveTotalStateTrigger.FixedMinute || x.StateTrigger == "FixedMinuteLateGame" || x.StateTrigger == LiveTotalStateTrigger.AfterGoal))
-        Console.WriteLine($"{row.Scope,-24} {row.StateTrigger,-20} {row.Line,4:0.##} {row.Rows,5}  {row.BaselineBrier,6:0.###}  {row.CorrectedBrier,6:0.###}  {row.BrierImprovementPct,6:0.#}  {row.BaselineLogLoss,6:0.###}  {row.CorrectedLogLoss,6:0.###}  {row.LogLossImprovementPct,6:0.#}  {row.BaselineDirectionAccuracy,7:P1}  {row.CorrectedDirectionAccuracy,7:P1}  {row.DirectionAccuracyDiffPctPoints,7:0.#}  {row.StateCorrectionAppliedRows,7}  {row.StateCorrectionGatedRows,5}  {row.LateGameBoostedRows,4}");
-
-    return 0;
-}
-
-static async Task<int> RunFitWeibull(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
-    bool validationMode = parsed.Bool("validation", false);
-
-    string defaultOutput = validationMode
-        ? profile?.ValidationModelPath ?? string.Empty
-        : profile?.ModelPath ?? string.Empty;
-
-    var options = new WeibullFitOptions
-    {
-        OutputPath = parsed.String("output", defaultOutput),
-        League = parsed.String("league", profile?.League ?? string.Empty),
-        MaxMinute = parsed.Int("max-minute", profile?.MaxMinute ?? 90),
-        GroupByColumn = parsed.String("group-by", profile?.GroupByColumn ?? string.Empty),
-        MinGroupGoals = parsed.Int("min-group-goals", profile?.MinGroupGoals ?? 30),
-        MaxIterations = parsed.Int("max-iterations", profile?.MaxIterations ?? 100),
-        Tolerance = parsed.Double("tolerance", profile?.Tolerance ?? 1e-9),
-        BlendWeibullWeight = parsed.Double("blend-weibull-weight", profile?.BlendWeibullWeight ?? 0.30)
-    };
-
-    var sampleOptions = new WeibullDbSampleOptions
-    {
-        League = options.League,
-        GroupByColumn = options.GroupByColumn,
-        MaxMinute = options.MaxMinute,
-        IncludeUnreliableMatches = parsed.Bool("include-unreliable", profile?.IncludeUnreliableMatches ?? false),
-        MaxExamples = parsed.Int("max-examples", 20)
-    };
-    AddSeasonIds(sampleOptions.SeasonIds, parsed);
-    if (sampleOptions.SeasonIds.Count == 0 && profile is not null)
-        AddProfileSeasonIds(sampleOptions.SeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
-    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
-        AddRounds(sampleOptions.Rounds, parsed);
-
-    IConfiguration configuration = new ConfigurationBuilder()
-        .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-        .Build();
-
-    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
-    var sampleLoader = new WeibullDbSampleLoader(dbContext, sampleOptions);
-    WeibullDbSampleResult sample = await sampleLoader.LoadAsync(CancellationToken.None);
-
-    var fitter = new WeibullModelFitter(options);
-    WeibullFitResult result = await fitter.FitAsync(sample.Rows, "database", CancellationToken.None);
-    foreach (string warning in sample.Warnings)
-        result.Warnings.Insert(0, warning);
-
-    Console.WriteLine();
-    Console.WriteLine("Weibull fit done.");
-    Console.WriteLine("Source: database");
-    Console.WriteLine($"Output: {result.OutputPath}");
-    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? "unknown" : result.League)}");
-    Console.WriteLine($"Seasons included: {(result.SeasonIds.Count == 0 ? "unknown" : string.Join(", ", result.SeasonIds))}");
-    Console.WriteLine($"Matches checked: {sample.MatchesChecked}");
-    Console.WriteLine($"Finished matches: {sample.FinishedMatches}");
-    Console.WriteLine($"Reliable finished matches: {sample.ReliableFinishedMatches}");
-    Console.WriteLine($"Unreliable finished matches: {sample.UnreliableFinishedMatches}");
-    Console.WriteLine($"Goals used: {result.GoalCount}");
-    Console.WriteLine($"Matches represented: {result.MatchCount}");
-    Console.WriteLine($"Mean goal minute: {result.MeanGoalMinute:0.00}");
-    Console.WriteLine($"Median goal minute: {result.MedianGoalMinute:0.00}");
-    Console.WriteLine($"Shape k: {result.ShapeK:0.######}");
-    Console.WriteLine($"Scale lambda: {result.ScaleLambda:0.######}");
-    Console.WriteLine($"Log-likelihood: {result.LogLikelihood:0.###}");
-    Console.WriteLine($"CDF at max minute ({result.MaxMinute}): {result.CdfAtMaxMinute:P2}");
-    Console.WriteLine($"Blend weights: Weibull {result.BlendWeibullWeight:P0}, Empirical {result.BlendEmpiricalWeight:P0}");
-    if (!string.IsNullOrWhiteSpace(result.GroupByColumn))
-        Console.WriteLine($"Group by: {result.GroupByColumn} ({result.Groups.Count} fitted groups)");
-
-    Console.WriteLine();
-    Console.WriteLine("Minute checkpoints, remaining share by model:");
-    Console.WriteLine("Minute   Weibull   Empirical   Blended");
-    foreach (TimingMinuteCheckpoint checkpoint in result.Checkpoints)
-        Console.WriteLine($"{checkpoint.Minute,6}   {checkpoint.WeibullRemainingShare,7:P1}   {checkpoint.EmpiricalRemainingShare,9:P1}   {checkpoint.BlendedRemainingShare,7:P1}");
-
-    Console.WriteLine();
-    Console.WriteLine("Bucket comparison:");
-    Console.WriteLine("Bucket     Actual    Weibull   Empirical   Blended");
-    foreach (TimingBucketComparison bucket in result.Buckets)
-        Console.WriteLine($"{bucket.Bucket,8}   {bucket.ActualPct,7:P1}   {bucket.WeibullExpectedPct,7:P1}   {bucket.EmpiricalExpectedPct,9:P1}   {bucket.BlendedExpectedPct,7:P1}   ({bucket.ActualGoals} goals)");
-
-    Console.WriteLine();
-    Console.WriteLine("Timing model fit scores by bucket error:");
-    Console.WriteLine("Model       MAE       RMSE      MaxErr");
-    foreach (TimingModelFitScore score in result.FitScores.OrderBy(x => x.MeanAbsoluteBucketError))
-        Console.WriteLine($"{score.Model,-9}   {score.MeanAbsoluteBucketError,7:P2}   {score.RootMeanSquaredBucketError,7:P2}   {score.MaxAbsoluteBucketError,7:P2}");
-
-    if (result.Groups.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Grouped timing models:");
-        Console.WriteLine("Group                 Goals  Matches  MeanMin  k        Lambda   Emp75Rem  Best");
-        foreach (TimingModelGroupResult group in result.Groups.OrderByDescending(x => x.GoalCount))
-        {
-            TimingMinuteCheckpoint? cp75 = group.Checkpoints.FirstOrDefault(x => x.Minute == 75);
-            string best = group.FitScores.OrderBy(x => x.MeanAbsoluteBucketError).FirstOrDefault()?.Model ?? "n/a";
-            Console.WriteLine($"{group.GroupName,-20} {group.GoalCount,5}  {group.MatchCount,7}  {group.MeanGoalMinute,7:0.00}  {group.ShapeK,7:0.####}  {group.ScaleLambda,7:0.##}  {cp75?.EmpiricalRemainingShare ?? 0,8:P1}  {best}");
-        }
-    }
-
-    if (result.Warnings.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings)
-            Console.WriteLine($"- {warning}");
-    }
-
-    return 0;
-}
-
-
 static async Task<int> RunValidateDb(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
@@ -801,14 +214,10 @@ static async Task<int> RunValidateDb(string[] args)
         OutputPath = parsed.String("output", parsed.String("report", string.Empty))
     };
 
-    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
+    if (parsed.Has("round") || parsed.Has("rounds") || parsed.Has("from-round") || parsed.Has("round-from") || parsed.Has("to-round"))
         AddRounds(options.Rounds, parsed);
 
-    IConfiguration configuration = new ConfigurationBuilder()
-        .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-        .Build();
-
+    IConfiguration configuration = BuildConfiguration();
     await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
     var runner = new DbValidationRunner(dbContext, options);
     DbValidationResult result = await runner.RunAsync(CancellationToken.None);
@@ -841,42 +250,6 @@ static async Task<int> RunValidateDb(string[] args)
     return 0;
 }
 
-static void WriteDbValidationReport(TextWriter writer, DbValidationResult result, DbValidationOptions options)
-{
-    writer.WriteLine();
-    writer.WriteLine("Database validation done.");
-    writer.WriteLine($"Matches checked: {result.MatchesChecked}");
-    writer.WriteLine($"Events checked: {result.EventsChecked}");
-    writer.WriteLine($"Match stats checked: {result.MatchStatsChecked}");
-    writer.WriteLine($"Odds checked: {result.OddsChecked}");
-    writer.WriteLine($"Errors: {result.ErrorCount}");
-    writer.WriteLine($"Warnings: {result.WarningCount}");
-    writer.WriteLine($"Info: {result.InfoCount}");
-
-    foreach (DbValidationCheckResult check in result.Checks)
-    {
-        writer.WriteLine();
-        writer.WriteLine($"[{check.Severity}] {check.Name}: {check.Message}");
-        foreach (string example in check.Examples.Take(options.MaxExamplesPerCheck))
-            writer.WriteLine($"  - {example}");
-
-        if (check.Examples.Count > options.MaxExamplesPerCheck)
-            writer.WriteLine($"  ... {check.Examples.Count - options.MaxExamplesPerCheck} more");
-    }
-}
-
-static LiveTotalsDbContext CreateDbContext(IConfiguration configuration)
-{
-    string connectionString = configuration.GetConnectionString("LiveTotalsDb")
-        ?? throw new InvalidOperationException("Connection string 'LiveTotalsDb' was not found in appsettings.json.");
-
-    var options = new DbContextOptionsBuilder<LiveTotalsDbContext>()
-        .UseNpgsql(connectionString)
-        .Options;
-
-    return new LiveTotalsDbContext(options);
-}
-
 static async Task<int> RunImportFlashscore(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
@@ -888,45 +261,16 @@ static async Task<int> RunImportFlashscore(string[] args)
     bool debugImport = parsed.Bool("debug-import", false);
 
     var rounds = new List<int>();
-    if (parsed.Has("round") || parsed.Has("from-round") || parsed.Has("to-round"))
+    if (parsed.Has("round") || parsed.Has("rounds") || parsed.Has("from-round") || parsed.Has("round-from") || parsed.Has("to-round"))
         AddRounds(rounds, parsed);
 
-    IConfiguration configuration = new ConfigurationBuilder()
-        .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-        .Build();
-
+    IConfiguration configuration = BuildConfiguration();
     await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
     var importer = new FlashscoreDbImporter(dbContext);
 
     FlashscoreImportResult result = await ImportFlashscoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, calendarOnly: false, debugImport, Console.Out, CancellationToken.None);
 
-    Console.WriteLine();
-    Console.WriteLine("Import done.");
-    Console.WriteLine($"Rounds imported: {result.RoundsImported}");
-    Console.WriteLine($"Calendars imported: {result.CalendarsImported}");
-    Console.WriteLine($"Incidents files imported: {result.IncidentsImported}");
-    Console.WriteLine($"Statistics files imported: {result.StatisticsImported}");
-    Console.WriteLine($"Odds files imported: {result.OddsImported}");
-    Console.WriteLine($"Warnings: {result.Warnings.Count}");
-    Console.WriteLine($"Failures: {result.Failures.Count}");
-
-    if (result.Warnings.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings)
-            Console.WriteLine($"- {warning}");
-    }
-
-    if (result.Failures.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Failures:");
-        foreach (string failure in result.Failures)
-            Console.WriteLine($"- {failure}");
-    }
-
+    PrintImportResult("Import done.", result, includeDetails: true);
     return result.Failures.Count == 0 ? 0 : 1;
 }
 
@@ -960,39 +304,13 @@ static async Task<int> RunImportFlashscoreFixtures(string[] args)
     if (parsed.Has("round") || parsed.Has("rounds") || parsed.Has("from-round") || parsed.Has("round-from") || parsed.Has("to-round"))
         AddRounds(rounds, parsed);
 
-    IConfiguration configuration = new ConfigurationBuilder()
-        .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-        .Build();
-
+    IConfiguration configuration = BuildConfiguration();
     await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
     var importer = new FlashscoreDbImporter(dbContext);
 
     FlashscoreImportResult result = await ImportFlashscoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, calendarOnly: true, debugImport, Console.Out, CancellationToken.None);
 
-    Console.WriteLine();
-    Console.WriteLine("Fixture import done.");
-    Console.WriteLine($"Rounds imported: {result.RoundsImported}");
-    Console.WriteLine($"Calendars imported: {result.CalendarsImported}");
-    Console.WriteLine($"Warnings: {result.Warnings.Count}");
-    Console.WriteLine($"Failures: {result.Failures.Count}");
-
-    if (result.Warnings.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings)
-            Console.WriteLine($"- {warning}");
-    }
-
-    if (result.Failures.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Failures:");
-        foreach (string failure in result.Failures)
-            Console.WriteLine($"- {failure}");
-    }
-
+    PrintImportResult("Fixture import done.", result, includeDetails: false);
     return result.Failures.Count == 0 ? 0 : 1;
 }
 
@@ -1083,74 +401,126 @@ static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
         }
 
         foreach (string eventFolder in Directory.GetDirectories(eventsFolder).OrderBy(x => x))
-        {
-            string eventId = Path.GetFileName(eventFolder);
-            if (string.IsNullOrWhiteSpace(eventId))
-            {
-                result.Warnings.Add($"round {round}: skipped non-event folder: {eventFolder}");
-                continue;
-            }
-
-            string incidentsPath = Path.Combine(eventFolder, "incidents.json");
-            if (File.Exists(incidentsPath))
-            {
-                try
-                {
-                    string json = await File.ReadAllTextAsync(incidentsPath, cancellationToken);
-                    if (debugImport)
-                        await log.WriteLineAsync($"  event {eventId}: incidents {incidentsPath}");
-
-                    await importer.ImportIncidentsAsync(eventId, json, incidentsPath, cancellationToken);
-                    result.IncidentsImported++;
-                }
-                catch (Exception ex)
-                {
-                    result.Warnings.Add($"event {eventId}: incidents import failed:{Environment.NewLine}{FormatImportException(ex)}");
-                }
-            }
-
-            string statisticsPath = Path.Combine(eventFolder, "statistics.json");
-            if (File.Exists(statisticsPath))
-            {
-                try
-                {
-                    string json = await File.ReadAllTextAsync(statisticsPath, cancellationToken);
-                    if (debugImport)
-                        await log.WriteLineAsync($"  event {eventId}: statistics {statisticsPath}");
-
-                    await importer.ImportStatisticsAsync(eventId, json, statisticsPath, cancellationToken);
-                    result.StatisticsImported++;
-                }
-                catch (Exception ex)
-                {
-                    result.Warnings.Add($"event {eventId}: statistics import failed:{Environment.NewLine}{FormatImportException(ex)}");
-                }
-            }
-
-            string oddsPath = Path.Combine(eventFolder, "odds.json");
-            if (File.Exists(oddsPath))
-            {
-                try
-                {
-                    string json = await File.ReadAllTextAsync(oddsPath, cancellationToken);
-                    if (debugImport)
-                        await log.WriteLineAsync($"  event {eventId}: odds {oddsPath}");
-
-                    await importer.ImportOddsAsync(eventId, json, oddsPath, cancellationToken);
-                    result.OddsImported++;
-                }
-                catch (Exception ex)
-                {
-                    result.Warnings.Add($"event {eventId}: odds import failed:{Environment.NewLine}{FormatImportException(ex)}");
-                }
-            }
-        }
+            await ImportFlashscoreEventFolderAsync(importer, result, round, eventFolder, debugImport, log, cancellationToken);
     }
 
     return result;
 }
 
+static async Task ImportFlashscoreEventFolderAsync(
+    FlashscoreDbImporter importer,
+    FlashscoreImportResult result,
+    int round,
+    string eventFolder,
+    bool debugImport,
+    TextWriter log,
+    CancellationToken cancellationToken)
+{
+    string eventId = Path.GetFileName(eventFolder);
+    if (string.IsNullOrWhiteSpace(eventId))
+    {
+        result.Warnings.Add($"round {round}: skipped non-event folder: {eventFolder}");
+        return;
+    }
 
+    string incidentsPath = Path.Combine(eventFolder, "incidents.json");
+    if (File.Exists(incidentsPath))
+    {
+        try
+        {
+            string json = await File.ReadAllTextAsync(incidentsPath, cancellationToken);
+            if (debugImport)
+                await log.WriteLineAsync($"  event {eventId}: incidents {incidentsPath}");
+
+            await importer.ImportIncidentsAsync(eventId, json, incidentsPath, cancellationToken);
+            result.IncidentsImported++;
+        }
+        catch (Exception ex)
+        {
+            result.Warnings.Add($"event {eventId}: incidents import failed:{Environment.NewLine}{FormatImportException(ex)}");
+        }
+    }
+
+    string statisticsPath = Path.Combine(eventFolder, "statistics.json");
+    if (File.Exists(statisticsPath))
+    {
+        try
+        {
+            string json = await File.ReadAllTextAsync(statisticsPath, cancellationToken);
+            if (debugImport)
+                await log.WriteLineAsync($"  event {eventId}: statistics {statisticsPath}");
+
+            await importer.ImportStatisticsAsync(eventId, json, statisticsPath, cancellationToken);
+            result.StatisticsImported++;
+        }
+        catch (Exception ex)
+        {
+            result.Warnings.Add($"event {eventId}: statistics import failed:{Environment.NewLine}{FormatImportException(ex)}");
+        }
+    }
+
+    string oddsPath = Path.Combine(eventFolder, "odds.json");
+    if (File.Exists(oddsPath))
+    {
+        try
+        {
+            string json = await File.ReadAllTextAsync(oddsPath, cancellationToken);
+            if (debugImport)
+                await log.WriteLineAsync($"  event {eventId}: odds {oddsPath}");
+
+            await importer.ImportOddsAsync(eventId, json, oddsPath, cancellationToken);
+            result.OddsImported++;
+        }
+        catch (Exception ex)
+        {
+            result.Warnings.Add($"event {eventId}: odds import failed:{Environment.NewLine}{FormatImportException(ex)}");
+        }
+    }
+}
+
+static void WriteDbValidationReport(TextWriter writer, DbValidationResult result, DbValidationOptions options)
+{
+    writer.WriteLine();
+    writer.WriteLine("Database validation done.");
+    writer.WriteLine($"Matches checked: {result.MatchesChecked}");
+    writer.WriteLine($"Events checked: {result.EventsChecked}");
+    writer.WriteLine($"Match stats checked: {result.MatchStatsChecked}");
+    writer.WriteLine($"Odds checked: {result.OddsChecked}");
+    writer.WriteLine($"Errors: {result.ErrorCount}");
+    writer.WriteLine($"Warnings: {result.WarningCount}");
+    writer.WriteLine($"Info: {result.InfoCount}");
+
+    foreach (DbValidationCheckResult check in result.Checks)
+    {
+        writer.WriteLine();
+        writer.WriteLine($"[{check.Severity}] {check.Name}: {check.Message}");
+        foreach (string example in check.Examples.Take(options.MaxExamplesPerCheck))
+            writer.WriteLine($"  - {example}");
+
+        if (check.Examples.Count > options.MaxExamplesPerCheck)
+            writer.WriteLine($"  ... {check.Examples.Count - options.MaxExamplesPerCheck} more");
+    }
+}
+
+static IConfiguration BuildConfiguration()
+{
+    return new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+}
+
+static LiveTotalsDbContext CreateDbContext(IConfiguration configuration)
+{
+    string connectionString = configuration.GetConnectionString("LiveTotalsDb")
+        ?? throw new InvalidOperationException("Connection string 'LiveTotalsDb' was not found in appsettings.json.");
+
+    var options = new DbContextOptionsBuilder<LiveTotalsDbContext>()
+        .UseNpgsql(connectionString)
+        .Options;
+
+    return new LiveTotalsDbContext(options);
+}
 
 static List<(int Round, string Folder)> SelectNearestSavedFixtureRoundFolders(List<(int Round, string Folder)> roundFolders)
 {
@@ -1231,22 +601,6 @@ static string FormatImportException(Exception exception)
     return string.Join(Environment.NewLine, lines);
 }
 
-
-
-static LiveTotalLateGameCorrectionOptions BuildLateGameCorrectionOptions(ParsedArgs parsed, LeagueProfile? profile)
-{
-    var options = new LiveTotalLateGameCorrectionOptions
-    {
-        Mode = parsed.String("late-game-correction", parsed.String("late-game-mode", profile?.StateCorrectionLateGameMode ?? LiveTotalLateGameCorrectionMode.BoostUp)),
-        StartMinute = parsed.Int("late-game-start-minute", profile?.StateCorrectionLateGameStartMinute ?? 70),
-        FactorMultiplier = parsed.Double("late-game-factor-multiplier", profile?.StateCorrectionLateGameFactorMultiplier ?? 1.15),
-        MaxFactor = parsed.Double("late-game-max-factor", profile?.StateCorrectionLateGameMaxFactor ?? 2.50),
-        MaxLine = parsed.Double("late-game-max-line", profile?.StateCorrectionLateGameMaxLine ?? 2.50)
-    };
-
-    return options.Normalized();
-}
-
 static async Task<LeagueProfile?> LoadOptionalProfileAsync(ParsedArgs parsed)
 {
     if (!parsed.Has("profile"))
@@ -1256,96 +610,6 @@ static async Task<LeagueProfile?> LoadOptionalProfileAsync(ParsedArgs parsed)
     LeagueProfileStore profileStore = await LeagueProfileStore.LoadAsync(profilesFile, CancellationToken.None);
     return profileStore.FindRequired(parsed.RequiredString("profile"));
 }
-
-static string GetRequiredProfilePath(LeagueProfile? profile, Func<LeagueProfile, string> selector, string argumentName, bool validationMode)
-{
-    string value = profile is null ? string.Empty : selector(profile);
-    if (!string.IsNullOrWhiteSpace(value))
-        return value;
-
-    string suffix = validationMode ? " validation" : string.Empty;
-    throw new ArgumentException($"Missing required argument --{argumentName}, or provide --profile with{suffix} {argumentName} path set.");
-}
-
-static void AddProfileSeasonIds(ICollection<int> target, IEnumerable<int> seasonIds)
-{
-    foreach (int seasonId in seasonIds.Where(x => x > 0).Distinct().OrderBy(x => x))
-    {
-        if (!target.Contains(seasonId))
-            target.Add(seasonId);
-    }
-}
-
-static void AddRequiredIntList(ICollection<int> target, ParsedArgs parsed, string argumentName)
-{
-    string raw = parsed.RequiredString(argumentName);
-    AddIntList(target, raw, argumentName, clearExisting: false);
-}
-
-static void AddOptionalIntList(ICollection<int> target, ParsedArgs parsed, string argumentName, bool clearExisting)
-{
-    if (!parsed.Has(argumentName))
-        return;
-
-    string raw = parsed.RequiredString(argumentName);
-    AddIntList(target, raw, argumentName, clearExisting);
-}
-
-static void AddIntList(ICollection<int> target, string raw, string argumentName, bool clearExisting)
-{
-    if (clearExisting)
-        target.Clear();
-
-    foreach (string token in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-    {
-        if (!int.TryParse(token, out int value))
-            throw new ArgumentException($"Argument --{argumentName} must contain comma-separated integers.");
-        target.Add(value);
-    }
-}
-
-static void AddOptionalDoubleList(ICollection<double> target, ParsedArgs parsed, string argumentName, bool clearExisting)
-{
-    if (!parsed.Has(argumentName))
-        return;
-
-    string raw = parsed.RequiredString(argumentName);
-    if (clearExisting)
-        target.Clear();
-
-    foreach (string token in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-    {
-        if (!double.TryParse(token, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value))
-            throw new ArgumentException($"Argument --{argumentName} must contain comma-separated numbers.");
-        target.Add(value);
-    }
-}
-
-static void AddSeasonIds(List<int> seasonIds, ParsedArgs parsed)
-{
-    if (parsed.Has("season-ids"))
-    {
-        string raw = parsed.RequiredString("season-ids");
-        foreach (string part in raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (!int.TryParse(part, out int seasonId) || seasonId <= 0)
-                throw new ArgumentException($"Argument --season-ids contains invalid season id '{part}'. Use comma-separated integers, for example --season-ids 57783,88562.");
-
-            if (!seasonIds.Contains(seasonId))
-                seasonIds.Add(seasonId);
-        }
-    }
-
-    if (parsed.Has("season-id"))
-    {
-        int seasonId = parsed.Int("season-id", 0);
-        if (seasonId > 0 && !seasonIds.Contains(seasonId))
-            seasonIds.Add(seasonId);
-    }
-
-    seasonIds.Sort();
-}
-
 
 static int StablePositiveInt(string value)
 {
@@ -1376,9 +640,7 @@ static int? TryParseSeasonYear(string value)
 static void AddRounds(ICollection<int> target, ParsedArgs parsed)
 {
     if (parsed.Has("rounds"))
-    {
         AddRoundList(target, parsed.RequiredString("rounds"), "rounds");
-    }
 
     if (parsed.Has("round"))
     {
@@ -1460,22 +722,7 @@ static void PrintDownloadResult(SofaScoreDownloadResult result)
     Console.WriteLine($"Files skipped: {result.FilesSkipped}");
     Console.WriteLine($"Warnings: {result.Warnings.Count}");
     Console.WriteLine($"Failures: {result.Failures.Count}");
-
-    if (result.Warnings.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings)
-            Console.WriteLine($"- {warning}");
-    }
-
-    if (result.Failures.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Failures:");
-        foreach (string failure in result.Failures)
-            Console.WriteLine($"- {failure}");
-    }
+    PrintWarningsAndFailures(result.Warnings, result.Failures);
 }
 
 static void PrintFlashscoreDownloadResult(FlashscoreDownloadResult result)
@@ -1488,20 +735,41 @@ static void PrintFlashscoreDownloadResult(FlashscoreDownloadResult result)
     Console.WriteLine($"Files skipped: {result.FilesSkipped}");
     Console.WriteLine($"Warnings: {result.Warnings.Count}");
     Console.WriteLine($"Failures: {result.Failures.Count}");
+    PrintWarningsAndFailures(result.Warnings, result.Failures);
+}
 
-    if (result.Warnings.Count > 0)
+static void PrintImportResult(string title, FlashscoreImportResult result, bool includeDetails)
+{
+    Console.WriteLine();
+    Console.WriteLine(title);
+    Console.WriteLine($"Rounds imported: {result.RoundsImported}");
+    Console.WriteLine($"Calendars imported: {result.CalendarsImported}");
+    if (includeDetails)
+    {
+        Console.WriteLine($"Incidents files imported: {result.IncidentsImported}");
+        Console.WriteLine($"Statistics files imported: {result.StatisticsImported}");
+        Console.WriteLine($"Odds files imported: {result.OddsImported}");
+    }
+    Console.WriteLine($"Warnings: {result.Warnings.Count}");
+    Console.WriteLine($"Failures: {result.Failures.Count}");
+    PrintWarningsAndFailures(result.Warnings, result.Failures);
+}
+
+static void PrintWarningsAndFailures(IReadOnlyCollection<string> warnings, IReadOnlyCollection<string> failures)
+{
+    if (warnings.Count > 0)
     {
         Console.WriteLine();
         Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings)
+        foreach (string warning in warnings)
             Console.WriteLine($"- {warning}");
     }
 
-    if (result.Failures.Count > 0)
+    if (failures.Count > 0)
     {
         Console.WriteLine();
         Console.WriteLine("Failures:");
-        foreach (string failure in result.Failures)
+        foreach (string failure in failures)
             Console.WriteLine($"- {failure}");
     }
 }
