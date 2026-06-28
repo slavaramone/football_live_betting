@@ -354,6 +354,14 @@
       "league": "NPL Victoria",
       "trainingSeasonIds": [2022, 2023, 2024, 2025],
       "currentSeasonId": 2026,
+      "stateWeibullCurvesPath": "outputs/calibration/npl-victoria-state-weibull-curves.json",
+      "nextGoalSideModelPath": "outputs/calibration/npl-victoria-next-goal-side-model.json",
+      "monteCarlo": {
+        "enabled": true,
+        "simulationCount": 20000,
+        "stepMinutes": 0.25,
+        "randomSeed": 12345
+      },
       "stateCorrectionShrinkMatches": 25,
       "stateCorrectionLateGameMode": "off",
       "liveBettingRules": [

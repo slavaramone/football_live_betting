@@ -185,9 +185,9 @@
             <Grid Grid.Row="0" ColumnDefinitions="45,55,58,58,58,70,62,70,150,*" Margin="0,0,0,4">
               <TextBlock Text="Line" Classes="label" />
               <TextBlock Grid.Column="1" Text="Side" Classes="label" />
-              <TextBlock Grid.Column="2" Text="BaseO" Classes="label" />
-              <TextBlock Grid.Column="3" Text="CorrO" Classes="label" />
-              <TextBlock Grid.Column="4" Text="Move" Classes="label" />
+              <TextBlock Grid.Column="2" Text="POver" Classes="label" />
+              <TextBlock Grid.Column="3" Text="SideP" Classes="label" />
+              <TextBlock Grid.Column="4" Text="Push" Classes="label" />
               <TextBlock Grid.Column="5" Text="Book" Classes="label" />
               <TextBlock Grid.Column="6" Text="Edge" Classes="label" />
               <TextBlock Grid.Column="7" Text="Fair" Classes="label" />
@@ -203,8 +203,8 @@
                         <TextBlock Text="{Binding LineText}" FontSize="12" FontWeight="SemiBold" />
                         <TextBlock Grid.Column="1" Text="{Binding Side}" FontSize="12" />
                         <TextBlock Grid.Column="2" Text="{Binding BaseOverText}" FontSize="12" />
-                        <TextBlock Grid.Column="3" Text="{Binding CorrOverText}" FontSize="12" />
-                        <TextBlock Grid.Column="4" Text="{Binding ProbabilityMoveText}" FontSize="12" Classes="positive" />
+                        <TextBlock Grid.Column="3" Text="{Binding ModelProbabilityText}" FontSize="12" />
+                        <TextBlock Grid.Column="4" Text="{Binding ProbabilityMoveText}" FontSize="12" />
                         <TextBlock Grid.Column="5" Text="{Binding BookOddsText}" FontSize="12" />
                         <TextBlock Grid.Column="6" Text="{Binding EdgeText}" FontSize="12" Classes="positive" />
                         <TextBlock Grid.Column="7" Text="{Binding FairOddsText}" FontSize="12" />

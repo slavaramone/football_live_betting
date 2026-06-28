@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Text.Json;
 using LiveTotalsHelper.Core.Models;
+using LiveTotalsHelper.Core.MonteCarlo;
 using LiveTotalsHelper.Core.Services;
 using LiveTotalsHelper.Infrastructure.Persistence;
 using LiveTotalsHelper.Tools;
@@ -8,9 +10,15 @@ namespace LiveTotalsHelper.App.Services;
 
 public sealed class LiveBettingSessionService : ILiveBettingSessionService
 {
-    private const string ModelRemovedMessage = "Old live-total model removed; Avalonia shell is waiting for the redesigned model.";
+    private const string ModelRemovedMessage = "Old live-total model removed; Monte Carlo model files are not configured for this profile.";
+    private const double DefaultMinimumEdge = 0.03;
     private readonly IReadOnlyList<LeagueProfile> _toolProfiles;
     private readonly string _logsFolder;
+    private readonly Dictionary<string, LoadedMonteCarloModel> _modelCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly JsonSerializerOptions _jsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     public LiveBettingSessionService(LiveTotalsDbContext db, IEnumerable<LeagueProfile> toolProfiles, string logsFolder)
     {
@@ -28,15 +36,15 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             {
                 Key = profile.Key,
                 DisplayName = string.IsNullOrWhiteSpace(profile.Name) ? profile.League : profile.Name,
-                RiskLevel = string.IsNullOrWhiteSpace(profile.RiskLevel) ? "Model disabled" : profile.RiskLevel,
-                AllowFixedMinuteBetting = false,
-                AllowAfterGoalBetting = false,
-                AllowAfterRedCardBetting = false,
+                RiskLevel = profile.MonteCarlo.Enabled ? "MC paper test" : string.IsNullOrWhiteSpace(profile.RiskLevel) ? "Model disabled" : profile.RiskLevel,
+                AllowFixedMinuteBetting = profile.MonteCarlo.Enabled,
+                AllowAfterGoalBetting = profile.MonteCarlo.Enabled,
+                AllowAfterRedCardBetting = profile.MonteCarlo.Enabled,
                 UseCurrentSeasonVolume = profile.UseCurrentSeasonVolume,
                 DefaultBeforeRound = profile.DefaultBeforeRound,
                 EdgeThreshold = profile.EdgeThreshold,
-                UseProbabilityMoveFilter = profile.UseProbabilityMoveFilter,
-                DecisionMode = "ModelDisabled",
+                UseProbabilityMoveFilter = false,
+                DecisionMode = profile.MonteCarlo.Enabled ? "StateWeibullMonteCarlo" : "ModelDisabled",
                 MinMinute = profile.MinMinute,
                 RequireGoalTrigger = profile.RequireGoalTrigger,
                 MinLine = profile.MinLine,
@@ -44,7 +52,7 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
                 AllowedLines = profile.AllowedLines,
                 FallbackBettingEnabled = false,
                 LiveBettingRulesCount = profile.LiveBettingRules.Count,
-                Notes = string.IsNullOrWhiteSpace(profile.Notes) ? ModelRemovedMessage : profile.Notes
+                Notes = BuildProfileNotes(profile)
             })
             .OrderBy(x => x.DisplayName)
             .ToList();
@@ -59,62 +67,202 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
 
     public Task<LiveBettingCheckResult> BuildCheckAsync(LiveBettingCheckInput input, CancellationToken cancellationToken = default)
     {
+        return Task.Run(() => BuildCheck(input, cancellationToken), cancellationToken);
+    }
+
+    private LiveBettingCheckResult BuildCheck(LiveBettingCheckInput input, CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
 
+        LeagueProfile? profile = FindToolProfile(input.ProfileKey);
         List<double> targetLines = ParseLines(input.TargetLinesText);
         if (targetLines.Count == 0)
             targetLines = [input.LiveOddsLine > 0 ? input.LiveOddsLine : input.StartingLine];
 
+        if (profile is null)
+            return BuildDisabledResult(input, targetLines, $"League profile '{input.ProfileKey}' was not found.");
+
+        if (!profile.MonteCarlo.Enabled)
+            return BuildDisabledResult(input, targetLines, ModelRemovedMessage);
+
+        LoadedMonteCarloModel model;
+        try
+        {
+            model = LoadMonteCarloModel(profile);
+        }
+        catch (Exception ex)
+        {
+            return BuildDisabledResult(input, targetLines, ex.Message, "MC MODEL LOAD ERROR");
+        }
+
+        var estimator = new EffectiveEndMinuteEstimator();
+        var decisions = new List<LiveBettingDecisionRow>();
+        var summaries = new List<string>();
+        var allWarnings = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        double? firstRemainingXg = null;
+        double? firstEffectiveEnd = null;
+        double? firstP0 = null;
+        double? firstP1 = null;
+        double? firstP2 = null;
+        double? firstP3Plus = null;
+
+        foreach (double line in targetLines.Distinct().OrderBy(x => x))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            double? overOdds = ResolveOddsForLine(line, input.LiveOverOddsText, input.LiveOverOdds, input.LiveOddsLine);
+            double? underOdds = ResolveOddsForLine(line, input.LiveUnderOddsText, input.LiveUnderOdds, input.LiveOddsLine);
+
+            var request = new LiveMonteCarloRequest
+            {
+                LeagueKey = profile.Key,
+                CurrentMinute = input.Minute,
+                HomeGoals = input.HomeGoals,
+                AwayGoals = input.AwayGoals,
+                HomeRedCards = input.HomeRedCards,
+                AwayRedCards = input.AwayRedCards,
+                LastGoalMinute = input.LastGoalMinute >= 0 ? input.LastGoalMinute : null,
+                Line = line,
+                OverOdds = overOdds,
+                UnderOdds = underOdds,
+                SimulationCount = profile.MonteCarlo.SimulationCount,
+                StepMinutes = profile.MonteCarlo.StepMinutes,
+                RandomSeed = profile.MonteCarlo.RandomSeed
+            };
+
+            EffectiveEndMinuteEstimate endEstimate = estimator.Estimate(request, profile.MonteCarlo);
+            var simulator = new LiveHazardMonteCarloSimulator();
+            LiveMonteCarloSimulationResult simulation;
+            try
+            {
+                simulation = simulator.Run(new LiveMonteCarloSimulationOptions
+                {
+                    Request = request,
+                    Curves = model.Curves,
+                    NextGoalSideModel = model.SideModel,
+                    EffectiveEndMinute = endEstimate.EffectiveEndMinute,
+                    TracePathCount = 0
+                });
+            }
+            catch (Exception ex)
+            {
+                decisions.Add(new LiveBettingDecisionRow
+                {
+                    Line = line,
+                    Side = "MC",
+                    Decision = "MC ERROR",
+                    Reason = ex.Message
+                });
+                allWarnings.Add(ex.Message);
+                continue;
+            }
+
+            firstRemainingXg ??= simulation.ExpectedRemainingGoals;
+            firstEffectiveEnd ??= simulation.EffectiveEndMinute;
+            firstP0 ??= simulation.Distribution.P0;
+            firstP1 ??= simulation.Distribution.P1;
+            firstP2 ??= simulation.Distribution.P2;
+            firstP3Plus ??= simulation.Distribution.P3Plus;
+
+            foreach (string warning in simulation.Warnings)
+                allWarnings.Add(warning);
+
+            summaries.Add($"{FormatLine(line)}: rem {simulation.ExpectedRemainingGoals:0.00}, Over {simulation.POver:0.0%}, Under {simulation.PUnder:0.0%}");
+            decisions.Add(BuildDecisionRow(line, "OVER", overOdds, simulation.POver, simulation.FairOverOdds, simulation.OverEdge, simulation, profile));
+            decisions.Add(BuildDecisionRow(line, "UNDER", underOdds, simulation.PUnder, simulation.FairUnderOdds, simulation.UnderEdge, simulation, profile));
+        }
+
+        bool anyBet = decisions.Any(x => x.Decision.Equals("MC VALUE", StringComparison.OrdinalIgnoreCase));
+        string distributionText = firstP0.HasValue
+            ? $"P0 {firstP0:0.0%}, P1 {firstP1:0.0%}, P2 {firstP2:0.0%}, P3+ {firstP3Plus:0.0%}"
+            : "no distribution";
+        string modelSummary = firstRemainingXg.HasValue
+            ? $"MC rem xG {firstRemainingXg:0.00}; eff end {firstEffectiveEnd:0.#}; {distributionText}; {string.Join(" | ", summaries)}"
+            : string.Join(" | ", summaries);
+
+        string warningText = BuildWarningSummary(allWarnings);
+        return new LiveBettingCheckResult
+        {
+            CheckedAt = DateTimeOffset.Now,
+            IsBettingAllowed = anyBet,
+            Status = anyBet ? "MC VALUE FOUND" : "MC PRICED",
+            Warnings = warningText,
+            ModelSummary = modelSummary,
+            DecisionRulesSummary = $"State-Weibull MC + next-goal-side model. Sims={profile.MonteCarlo.SimulationCount}, step={profile.MonteCarlo.StepMinutes:0.###}, min edge={GetMinimumEdge(profile):0.0%}. Curves: {Path.GetFileName(model.CurvesPath)}; side: {Path.GetFileName(model.SideModelPath)}.",
+            RemainingXg = firstRemainingXg ?? 0,
+            StateCorrectionFactor = 1,
+            StateCorrectionSource = "state-weibull-mc",
+            StateCorrectionSupported = true,
+            VolumeFactor = profile.MonteCarlo.SimulationCount,
+            VolumeFactorSource = "MC simulations",
+            Decisions = decisions
+        };
+    }
+
+    private LiveBettingDecisionRow BuildDecisionRow(
+        double line,
+        string side,
+        double? bookOdds,
+        double modelProbability,
+        double? fairOdds,
+        double? edge,
+        LiveMonteCarloSimulationResult simulation,
+        LeagueProfile profile)
+    {
+        double minEdge = GetMinimumEdge(profile);
+        string decision;
+        if (!bookOdds.HasValue)
+            decision = "NO ODDS";
+        else if (edge.HasValue && edge.Value >= minEdge)
+            decision = "MC VALUE";
+        else if (edge.HasValue && edge.Value > 0)
+            decision = "SMALL EDGE";
+        else
+            decision = "NO BET";
+
+        string reason = $"{side} prob {modelProbability:0.0%}, fair {FormatNullableOdds(fairOdds)}, book {FormatNullableOdds(bookOdds)}, edge {FormatNullablePercent(edge)}. " +
+                        $"Dist: 0={simulation.Distribution.P0:0.0%}, 1={simulation.Distribution.P1:0.0%}, 2={simulation.Distribution.P2:0.0%}, 3+={simulation.Distribution.P3Plus:0.0%}. " +
+                        $"{simulation.Explanation}";
+
+        return new LiveBettingDecisionRow
+        {
+            Line = line,
+            Side = side,
+            BookOdds = bookOdds,
+            ModelProbability = modelProbability,
+            FairOdds = fairOdds,
+            Edge = edge,
+            BaselineOverProbability = simulation.POver,
+            CorrectedOverProbability = modelProbability,
+            ProbabilityMove = simulation.PPush > 0 ? simulation.PPush : null,
+            Decision = decision,
+            Reason = reason
+        };
+    }
+
+    private LiveBettingCheckResult BuildDisabledResult(
+        LiveBettingCheckInput input,
+        IReadOnlyList<double> targetLines,
+        string message,
+        string status = "MODEL DISABLED")
+    {
         var decisions = new List<LiveBettingDecisionRow>();
         foreach (double line in targetLines.Distinct().OrderBy(x => x))
         {
             double? overOdds = ResolveOddsForLine(line, input.LiveOverOddsText, input.LiveOverOdds, input.LiveOddsLine);
             double? underOdds = ResolveOddsForLine(line, input.LiveUnderOddsText, input.LiveUnderOdds, input.LiveOddsLine);
-
-            if (overOdds.HasValue)
-            {
-                decisions.Add(new LiveBettingDecisionRow
-                {
-                    Line = line,
-                    Side = "OVER",
-                    BookOdds = overOdds.Value,
-                    Decision = "MODEL DISABLED",
-                    Reason = ModelRemovedMessage
-                });
-            }
-
-            if (underOdds.HasValue)
-            {
-                decisions.Add(new LiveBettingDecisionRow
-                {
-                    Line = line,
-                    Side = "UNDER",
-                    BookOdds = underOdds.Value,
-                    Decision = "MODEL DISABLED",
-                    Reason = ModelRemovedMessage
-                });
-            }
+            decisions.Add(new LiveBettingDecisionRow { Line = line, Side = "OVER", BookOdds = overOdds, Decision = status, Reason = message });
+            decisions.Add(new LiveBettingDecisionRow { Line = line, Side = "UNDER", BookOdds = underOdds, Decision = status, Reason = message });
         }
 
-        if (decisions.Count == 0)
-        {
-            decisions.Add(new LiveBettingDecisionRow
-            {
-                Line = input.LiveOddsLine > 0 ? input.LiveOddsLine : input.StartingLine,
-                Side = "OVER",
-                Decision = "NO ODDS",
-                Reason = "Enter live odds after the redesigned model is connected."
-            });
-        }
-
-        var result = new LiveBettingCheckResult
+        return new LiveBettingCheckResult
         {
             CheckedAt = DateTimeOffset.Now,
             IsBettingAllowed = false,
-            Status = "MODEL DISABLED",
-            Warnings = ModelRemovedMessage,
-            ModelSummary = ModelRemovedMessage,
-            DecisionRulesSummary = "No betting decisions are produced until the redesigned model is implemented.",
+            Status = status,
+            Warnings = message,
+            ModelSummary = message,
+            DecisionRulesSummary = "Configure Monte Carlo curve and next-goal-side model files for this profile.",
             RemainingXg = 0,
             StateCorrectionFactor = 1,
             StateCorrectionSource = "disabled",
@@ -123,8 +271,34 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             VolumeFactorSource = "disabled",
             Decisions = decisions
         };
+    }
 
-        return Task.FromResult(result);
+    private LoadedMonteCarloModel LoadMonteCarloModel(LeagueProfile profile)
+    {
+        string key = string.IsNullOrWhiteSpace(profile.Key) ? profile.Name : profile.Key;
+        if (_modelCache.TryGetValue(key, out LoadedMonteCarloModel? cached))
+            return cached;
+
+        if (string.IsNullOrWhiteSpace(profile.StateWeibullCurvesPath))
+            throw new InvalidOperationException($"StateWeibullCurvesPath is not configured for profile '{profile.Key}'.");
+        if (string.IsNullOrWhiteSpace(profile.NextGoalSideModelPath))
+            throw new InvalidOperationException($"NextGoalSideModelPath is not configured for profile '{profile.Key}'.");
+
+        string curvesPath = LeagueProfileStore.ResolvePath(profile.StateWeibullCurvesPath);
+        string sidePath = LeagueProfileStore.ResolvePath(profile.NextGoalSideModelPath);
+        if (!File.Exists(curvesPath))
+            throw new FileNotFoundException($"State Weibull curves file was not found: {curvesPath}", curvesPath);
+        if (!File.Exists(sidePath))
+            throw new FileNotFoundException($"Next-goal-side model file was not found: {sidePath}", sidePath);
+
+        StateWeibullCurveSet curves = JsonSerializer.Deserialize<StateWeibullCurveSet>(File.ReadAllText(curvesPath), _jsonOptions)
+            ?? throw new InvalidOperationException($"Could not read state Weibull curves: {curvesPath}");
+        NextGoalSideModelSet sideModel = JsonSerializer.Deserialize<NextGoalSideModelSet>(File.ReadAllText(sidePath), _jsonOptions)
+            ?? throw new InvalidOperationException($"Could not read next-goal-side model: {sidePath}");
+
+        var loaded = new LoadedMonteCarloModel(curves, sideModel, curvesPath, sidePath);
+        _modelCache[key] = loaded;
+        return loaded;
     }
 
     public string AppendPaperLog(LiveBettingCheckInput input, LiveBettingCheckResult result)
@@ -176,11 +350,41 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             Csv(input.SelectedBetSide),
             input.SelectedBetOdds.ToString("0.###", CultureInfo.InvariantCulture),
             input.Stake.ToString("0.##", CultureInfo.InvariantCulture),
-            Csv(row?.Decision ?? "MODEL DISABLED"),
-            Csv(row?.Reason ?? ModelRemovedMessage),
+            Csv(row?.Decision ?? "NO MODEL ROW"),
+            Csv(row?.Reason ?? "Selected bet row was not found in latest MC output."),
             Csv(input.BetNotes)));
 
         return path;
+    }
+
+    private LeagueProfile? FindToolProfile(string profileKeyOrName)
+    {
+        return _toolProfiles.FirstOrDefault(profile =>
+            profile.Key.Equals(profileKeyOrName, StringComparison.OrdinalIgnoreCase) ||
+            profile.Name.Equals(profileKeyOrName, StringComparison.OrdinalIgnoreCase) ||
+            profile.League.Equals(profileKeyOrName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string BuildProfileNotes(LeagueProfile profile)
+    {
+        string baseNotes = string.IsNullOrWhiteSpace(profile.Notes) ? ModelRemovedMessage : profile.Notes;
+        if (!profile.MonteCarlo.Enabled)
+            return baseNotes;
+
+        return $"MC enabled. {baseNotes}";
+    }
+
+    private static double GetMinimumEdge(LeagueProfile profile)
+    {
+        return profile.EdgeThreshold > 0 ? profile.EdgeThreshold : DefaultMinimumEdge;
+    }
+
+    private static string BuildWarningSummary(SortedSet<string> warnings)
+    {
+        if (warnings.Count == 0)
+            return string.Empty;
+
+        return $"{warnings.Count} MC warning(s). Sample: " + string.Join(" | ", warnings.Take(4));
     }
 
     private static List<double> ParseLines(string value)
@@ -221,6 +425,15 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         return null;
     }
 
+    private static string FormatLine(double line)
+        => line.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static string FormatNullableOdds(double? value)
+        => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";
+
+    private static string FormatNullablePercent(double? value)
+        => value.HasValue ? value.Value.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture) : "-";
+
     private static void EnsureLogHeader(string path, string header)
     {
         string? directory = Path.GetDirectoryName(path);
@@ -236,4 +449,10 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         value ??= string.Empty;
         return "\"" + value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
     }
+
+    private sealed record LoadedMonteCarloModel(
+        StateWeibullCurveSet Curves,
+        NextGoalSideModelSet SideModel,
+        string CurvesPath,
+        string SideModelPath);
 }

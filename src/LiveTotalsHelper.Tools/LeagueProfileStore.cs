@@ -51,6 +51,8 @@ public sealed class LeagueProfile
     public double? MinLine { get; set; }
     public List<double> TargetLines { get; set; } = [];
     public List<double> AllowedLines { get; set; } = [];
+    public string StateWeibullCurvesPath { get; set; } = string.Empty;
+    public string NextGoalSideModelPath { get; set; } = string.Empty;
     public bool FallbackBettingEnabled { get; set; } = false;
     public List<LiveTotalProfileBettingRule> LiveBettingRules { get; set; } = [];
     public string DecisionRulesNotes { get; set; } = "Old live-total model removed; waiting for redesigned model.";
