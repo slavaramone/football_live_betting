@@ -21,6 +21,7 @@ public static class HelpPrinter
         Console.WriteLine("  debug-state-weibull-clock           Export fitted state Weibull curve rows for one live score/minute.");
         Console.WriteLine("  fit-next-goal-side-model            Fit next-goal scorer-side probabilities with fallback hierarchy.");
         Console.WriteLine("  debug-next-goal-side                Resolve P(home/away next goal) for one live score/minute.");
+        Console.WriteLine("  simulate-live-total                 Run single-fixture Monte Carlo live total simulation.");
         Console.WriteLine();
         Console.WriteLine("Profile file:");
         Console.WriteLine("  Default: config/league-profiles.json");
@@ -37,6 +38,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-state-weibull-clock --curves outputs/calibration/npl-victoria-state-weibull-curves.json --profile npl-victoria --score 2-0 --minute 49 --until 96 --out outputs/debug/npl-victoria-2-0-49-clock.csv");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-next-goal-side-model --in outputs/calibration/npl-victoria-state-weibull-exposures.csv --out outputs/calibration/npl-victoria-next-goal-side-model.json --summary outputs/calibration/npl-victoria-next-goal-side-summary.csv");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-next-goal-side --model outputs/calibration/npl-victoria-next-goal-side-model.json --profile npl-victoria --score 2-0 --minute 49");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- simulate-live-total --curves outputs/calibration/npl-victoria-state-weibull-curves.json --side-model outputs/calibration/npl-victoria-next-goal-side-model.json --profile npl-victoria --score 2-0 --minute 49 --line 3.5 --under-odds 2.20 --sims 50000 --step 0.25 --seed 12345 --out outputs/debug/npl-victoria-2-0-49-sim.json");
         Console.WriteLine();
         Console.WriteLine("Common arguments:");
         Console.WriteLine("  --profile                         Profile key/name from config/league-profiles.json.");
@@ -59,9 +61,16 @@ public static class HelpPrinter
         Console.WriteLine("  --in / --input                    Input CSV for fitting commands.");
         Console.WriteLine("  --summary                         Summary CSV path for fitting commands.");
         Console.WriteLine("  --curves                          Fitted state Weibull curves JSON path for debug-state-weibull-clock.");
-        Console.WriteLine("  --model                           Fitted next-goal-side JSON path for debug-next-goal-side.");
+        Console.WriteLine("  --model                           Fitted next-goal-side JSON path for debug-next-goal-side/simulate-live-total alias.");
+        Console.WriteLine("  --side-model                      Fitted next-goal-side JSON path for simulate-live-total.");
         Console.WriteLine("  --until                           End minute for debug-state-weibull-clock output. Default: last fitted bucket end.");
-        Console.WriteLine("  --step                            Minute step for debug-state-weibull-clock output. Default: 1.");
+        Console.WriteLine("  --step                            Minute step for debug/simulation commands. Debug default: 1; MC default from profile.");
+        Console.WriteLine("  --sims                            Monte Carlo simulation count. Default from profile/global config.");
+        Console.WriteLine("  --seed                            Monte Carlo random seed. Default from profile/global config.");
+        Console.WriteLine("  --line                            Live total line for simulate-live-total.");
+        Console.WriteLine("  --over-odds / --under-odds        Optional book odds for edge calculation.");
+        Console.WriteLine("  --paths-out                       Optional CSV trace of early simulated goal paths.");
+        Console.WriteLine("  --trace-paths                     Number of simulated paths to trace when --paths-out is provided. Default: 200.");
         Console.WriteLine("  --min-mu-full-exposures           μ direct threshold. Default: 75.");
         Console.WriteLine("  --min-mu-goals                    μ direct goal threshold. Default: 30.");
         Console.WriteLine("  --min-k-full-exposures            k direct threshold. Default: 150.");

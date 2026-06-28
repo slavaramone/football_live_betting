@@ -37,6 +37,7 @@ try
         "debug-state-weibull-clock" => await RunDebugStateWeibullClock(commandArgs),
         "fit-next-goal-side-model" => await RunFitNextGoalSideModel(commandArgs),
         "debug-next-goal-side" => await RunDebugNextGoalSide(commandArgs),
+        "simulate-live-total" => await RunSimulateLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -535,6 +536,112 @@ static async Task<int> RunDebugNextGoalSide(string[] args)
     return 0;
 }
 
+
+static async Task<int> RunSimulateLiveTotal(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    MonteCarloConfig monteCarlo = profile?.MonteCarlo ?? new MonteCarloConfig();
+    (int homeGoals, int awayGoals) = ParseScore(parsed.RequiredString("score"));
+
+    int simulationCount = parsed.Int("sims", parsed.Int("simulation-count", monteCarlo.SimulationCount));
+    double stepMinutes = parsed.Double("step", parsed.Double("step-minutes", monteCarlo.StepMinutes));
+    int? seed = parsed.Has("seed")
+        ? parsed.Int("seed", 0)
+        : monteCarlo.RandomSeed;
+
+    double minute = parsed.RequiredDouble("minute");
+    double? lastGoalMinute = parsed.Has("last-goal-minute")
+        ? parsed.Double("last-goal-minute", 0.0)
+        : null;
+
+    var requestForEnd = new LiveMonteCarloRequest
+    {
+        LeagueKey = profile?.Key ?? parsed.String("league", parsed.String("profile", string.Empty)),
+        CurrentMinute = minute,
+        HomeGoals = homeGoals,
+        AwayGoals = awayGoals,
+        HomeRedCards = parsed.Int("hr", parsed.Int("home-red-cards", 0)),
+        AwayRedCards = parsed.Int("ar", parsed.Int("away-red-cards", 0)),
+        LastGoalMinute = lastGoalMinute,
+        Line = parsed.RequiredDouble("line"),
+        OverOdds = parsed.Has("over-odds") ? parsed.Double("over-odds", 0.0) : null,
+        UnderOdds = parsed.Has("under-odds") ? parsed.Double("under-odds", 0.0) : null,
+        MarketTotal = parsed.Has("market-total") ? parsed.Double("market-total", 0.0) : null,
+        PregameTotal = parsed.Has("pregame-total") ? parsed.Double("pregame-total", 0.0) : null,
+        SimulationCount = simulationCount,
+        StepMinutes = stepMinutes,
+        RandomSeed = seed
+    };
+
+    double estimatedEnd = minute < 45.0
+        ? (monteCarlo.DefaultEffectiveEnd2H > 0 ? monteCarlo.DefaultEffectiveEnd2H : 96.0)
+        : new EffectiveEndMinuteEstimator().Estimate(requestForEnd, monteCarlo).EffectiveEndMinute;
+
+    var options = new LiveTotalMonteCarloCommandOptions
+    {
+        CurvesPath = parsed.String("curves", parsed.String("in", parsed.String("input", "outputs/calibration/state-weibull-curves.json"))),
+        SideModelPath = parsed.String("side-model", parsed.String("model", "outputs/calibration/next-goal-side-model.json")),
+        OutputPath = parsed.String("out", parsed.String("output", "outputs/debug/live-total-mc.json")),
+        PathsOutputPath = parsed.String("paths-out", string.Empty),
+        League = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty),
+        Minute = minute,
+        UntilMinute = parsed.Has("until") ? parsed.Double("until", 0.0) : null,
+        HomeGoals = homeGoals,
+        AwayGoals = awayGoals,
+        HomeRedCards = requestForEnd.HomeRedCards,
+        AwayRedCards = requestForEnd.AwayRedCards,
+        LastGoalMinute = lastGoalMinute,
+        Line = requestForEnd.Line,
+        OverOdds = requestForEnd.OverOdds,
+        UnderOdds = requestForEnd.UnderOdds,
+        MarketTotal = requestForEnd.MarketTotal,
+        PregameTotal = requestForEnd.PregameTotal,
+        SimulationCount = simulationCount,
+        StepMinutes = stepMinutes,
+        RandomSeed = seed,
+        TracePathCount = parsed.Int("trace-paths", string.IsNullOrWhiteSpace(parsed.String("paths-out", string.Empty)) ? 0 : 200),
+        EstimatedEffectiveEndMinute = estimatedEnd
+    };
+
+    var command = new LiveTotalMonteCarloSimulatorCommand();
+    LiveTotalMonteCarloCommandResult result = await command.RunAsync(options, CancellationToken.None);
+    LiveMonteCarloSimulationResult simulation = result.Simulation;
+
+    Console.WriteLine("Live-total Monte Carlo simulation");
+    Console.WriteLine($"League: {simulation.League}");
+    Console.WriteLine($"State: {simulation.StartScore} at {simulation.StartMinute.ToString("0.##", CultureInfo.InvariantCulture)}'");
+    Console.WriteLine($"Effective end: {simulation.EffectiveEndMinute.ToString("0.##", CultureInfo.InvariantCulture)}'");
+    Console.WriteLine($"Line: {simulation.Line.ToString("0.##", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Simulations: {simulation.SimulationCount}");
+    Console.WriteLine($"Step minutes: {simulation.StepMinutes.ToString("0.####", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Expected remaining goals: {simulation.ExpectedRemainingGoals.ToString("0.####", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Distribution: P0={simulation.Distribution.P0.ToString("0.00%", CultureInfo.InvariantCulture)}, P1={simulation.Distribution.P1.ToString("0.00%", CultureInfo.InvariantCulture)}, P2={simulation.Distribution.P2.ToString("0.00%", CultureInfo.InvariantCulture)}, P3+={simulation.Distribution.P3Plus.ToString("0.00%", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"POver={simulation.POver.ToString("0.00%", CultureInfo.InvariantCulture)}, PUnder={simulation.PUnder.ToString("0.00%", CultureInfo.InvariantCulture)}, PPush={simulation.PPush.ToString("0.00%", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Fair over odds: {FormatOdds(simulation.FairOverOdds)}");
+    Console.WriteLine($"Fair under odds: {FormatOdds(simulation.FairUnderOdds)}");
+    if (simulation.OverEdge.HasValue)
+        Console.WriteLine($"Over edge: {simulation.OverEdge.Value.ToString("0.00%", CultureInfo.InvariantCulture)}");
+    if (simulation.UnderEdge.HasValue)
+        Console.WriteLine($"Under edge: {simulation.UnderEdge.Value.ToString("0.00%", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Output written: {result.OutputPath}");
+    if (!string.IsNullOrWhiteSpace(result.PathsOutputPath))
+        Console.WriteLine($"Path trace written: {result.PathsOutputPath}");
+
+    if (simulation.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in simulation.Warnings.Take(20))
+            Console.WriteLine($"- {warning}");
+        if (simulation.Warnings.Count > 20)
+            Console.WriteLine($"... {simulation.Warnings.Count - 20} more warnings in JSON output.");
+    }
+
+    return 0;
+}
+
 static async Task<int> RunValidateDb(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
@@ -835,6 +942,9 @@ static void WriteDbValidationReport(TextWriter writer, DbValidationResult result
             writer.WriteLine($"  ... {check.Examples.Count - options.MaxExamplesPerCheck} more");
     }
 }
+
+static string FormatOdds(double? value)
+    => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "<none>";
 
 static IConfiguration BuildConfiguration()
 {
