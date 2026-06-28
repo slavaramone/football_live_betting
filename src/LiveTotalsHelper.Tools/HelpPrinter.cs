@@ -17,6 +17,7 @@ public static class HelpPrinter
         Console.WriteLine("  db-validate                         Alias for validate-db.");
         Console.WriteLine("  debug-effective-end                 Estimate effective match end/remaining time for a live state.");
         Console.WriteLine("  build-state-weibull-exposures       Build score/time exposure CSV for fitting state Weibull curves.");
+        Console.WriteLine("  fit-state-weibull-curves            Fit state/time Weibull curves from exposure CSV.");
         Console.WriteLine();
         Console.WriteLine("Profile file:");
         Console.WriteLine("  Default: config/league-profiles.json");
@@ -29,6 +30,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore-fixtures --profile superettan");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db --league \"Superettan\" --season-id 2026");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-state-weibull-exposures --profile npl-victoria --seasons 2023,2024,2025 --out outputs/calibration/npl-victoria-state-weibull-exposures.csv");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-state-weibull-curves --in outputs/calibration/npl-victoria-state-weibull-exposures.csv --out outputs/calibration/npl-victoria-state-weibull-curves.json --summary outputs/calibration/npl-victoria-state-weibull-curves-summary.csv");
         Console.WriteLine();
         Console.WriteLine("Common arguments:");
         Console.WriteLine("  --profile                         Profile key/name from config/league-profiles.json.");
@@ -48,6 +50,12 @@ public static class HelpPrinter
         Console.WriteLine("  --hr / --ar                       Home/away red-card counts for debug-effective-end.");
         Console.WriteLine("  --seasons                         Comma-separated season years/ids for calibration commands.");
         Console.WriteLine("  --time-buckets                    Comma-separated buckets, for example 45-55,55-65,65-75.");
+        Console.WriteLine("  --in / --input                    Input CSV for fitting commands.");
+        Console.WriteLine("  --summary                         Summary CSV path for fitting commands.");
+        Console.WriteLine("  --min-mu-full-exposures           μ direct threshold. Default: 75.");
+        Console.WriteLine("  --min-mu-goals                    μ direct goal threshold. Default: 30.");
+        Console.WriteLine("  --min-k-full-exposures            k direct threshold. Default: 150.");
+        Console.WriteLine("  --min-k-goals                     k direct goal threshold. Default: 50.");
         Console.WriteLine("  --out / --output                  Optional output path for debug/calibration commands.");
     }
 

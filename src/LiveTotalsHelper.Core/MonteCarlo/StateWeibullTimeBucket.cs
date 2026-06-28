@@ -27,16 +27,14 @@ public sealed class StateWeibullTimeBucket
     public static IReadOnlyList<StateWeibullTimeBucket> DefaultBuckets()
         =>
         [
-            new(0, 15),
-            new(15, 30),
-            new(30, 45),
-            new(45, 55),
-            new(55, 65),
-            new(65, 75),
-            new(75, 85),
-            new(85, 90),
-            new(90, 96),
-            new(96, 105)
+            new(0, 20),
+            new(20, 35),
+            new(35, 45),
+            new(45, 60),
+            new(60, 70),
+            new(70, 80),
+            new(80, 90),
+            new(90, 96)
         ];
 
     public static IReadOnlyList<StateWeibullTimeBucket> ParseList(string raw)

@@ -33,6 +33,7 @@ try
         "db-validate" => await RunValidateDb(commandArgs),
         "debug-effective-end" => await RunDebugEffectiveEnd(commandArgs),
         "build-state-weibull-exposures" => await RunBuildStateWeibullExposures(commandArgs),
+        "fit-state-weibull-curves" => await RunFitStateWeibullCurves(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -330,6 +331,46 @@ static async Task<int> RunBuildStateWeibullExposures(string[] args)
         foreach (string warning in result.Warnings)
             Console.WriteLine($"- {warning}");
     }
+
+    return 0;
+}
+
+
+static async Task<int> RunFitStateWeibullCurves(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    string league = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty);
+
+    var options = new StateWeibullCurveFitterOptions
+    {
+        InputPath = parsed.String("in", parsed.String("input", "outputs/calibration/state-weibull-exposures.csv")),
+        OutputPath = parsed.String("out", parsed.String("output", "outputs/calibration/state-weibull-curves.json")),
+        SummaryPath = parsed.String("summary", "outputs/calibration/state-weibull-curves-summary.csv"),
+        League = league,
+        MinMuFullBucketExposures = parsed.Double("min-mu-full-exposures", 75.0),
+        MinMuGoals = parsed.Int("min-mu-goals", 30),
+        MinKFullBucketExposures = parsed.Double("min-k-full-exposures", 150.0),
+        MinKGoals = parsed.Int("min-k-goals", 50),
+        MinK = parsed.Double("min-k", 0.65),
+        MaxK = parsed.Double("max-k", 1.85),
+        KStep = parsed.Double("k-step", 0.05),
+        DefaultK = parsed.Double("default-k", 1.0)
+    };
+
+    var fitter = new StateWeibullCurveFitter();
+    StateWeibullCurveFitResult result = await fitter.FitAsync(options, CancellationToken.None);
+
+    Console.WriteLine("State Weibull curves fitted");
+    Console.WriteLine($"Input rows read: {result.ExposureRowsRead}");
+    Console.WriteLine($"Curves written: {result.CurvesWritten}");
+    Console.WriteLine($"Exact supported: {result.ExactSupported}");
+    Console.WriteLine($"Partial supported: {result.PartialSupported}");
+    Console.WriteLine($"Unsupported sparse: {result.UnsupportedSparse}");
+    Console.WriteLine($"Time fallbacks written: {result.TimeFallbacksWritten}");
+    Console.WriteLine($"Output written: {result.OutputPath}");
+    Console.WriteLine($"Summary written: {result.SummaryPath}");
 
     return 0;
 }

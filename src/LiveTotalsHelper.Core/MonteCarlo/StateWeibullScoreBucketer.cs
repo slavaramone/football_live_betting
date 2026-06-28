@@ -2,6 +2,16 @@ namespace LiveTotalsHelper.Core.MonteCarlo;
 
 public static class StateWeibullScoreBucketer
 {
+    public static IReadOnlyList<string> StandardBuckets { get; } =
+    [
+        "draw_0_0",
+        "draw_1_1_plus",
+        "margin1_total1_2",
+        "margin1_total3_plus",
+        "margin2",
+        "margin3_plus"
+    ];
+
     public static string ResolveScoreBucket(int homeGoals, int awayGoals)
     {
         if (homeGoals < 0)
