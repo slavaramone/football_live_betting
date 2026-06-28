@@ -350,10 +350,29 @@ public sealed class StateWeibullExposureBuilder
 
     private static double EffectiveMinute(MatchEventEntity matchEvent)
     {
-        if (matchEvent.TimeSeconds.HasValue && matchEvent.TimeSeconds.Value > 0)
-            return Math.Round(matchEvent.TimeSeconds.Value / 60.0, 4);
+        // Flashscore importer stores TimeSeconds as a chronological display sort key
+        // (minute * 60 + addedTime), not as true elapsed seconds. For example 90+5
+        // becomes 5405 seconds => 90.0833 minutes if divided by 60, which wrongly
+        // collapses all stoppage-time goals near 90.0. For exposure fitting we need
+        // effective football minute instead.
+        int minute = Math.Max(0, matchEvent.Minute);
+        int added = Math.Max(0, matchEvent.AddedTime.GetValueOrDefault());
 
-        return matchEvent.Minute + Math.Max(0, matchEvent.AddedTime ?? 0);
+        if (added <= 0)
+            return minute;
+
+        // Keep first-half stoppage-time goals in the first-half terminal bucket.
+        // 45+3 should contribute as a 45' goal, not as an early second-half 48' goal.
+        if (minute == 45)
+            return 45.0;
+
+        // Second-half stoppage time must be expanded, otherwise late goals are
+        // concentrated at 90.0 and distort the 90+ Weibull shape.
+        if (minute >= 90)
+            return minute + added;
+
+        // Defensive fallback for any non-standard added-time event.
+        return minute + added;
     }
 
     private static async Task WriteCsvAsync(
