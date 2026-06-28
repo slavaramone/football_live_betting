@@ -34,6 +34,7 @@ try
         "debug-effective-end" => await RunDebugEffectiveEnd(commandArgs),
         "build-state-weibull-exposures" => await RunBuildStateWeibullExposures(commandArgs),
         "fit-state-weibull-curves" => await RunFitStateWeibullCurves(commandArgs),
+        "debug-state-weibull-clock" => await RunDebugStateWeibullClock(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -371,6 +372,66 @@ static async Task<int> RunFitStateWeibullCurves(string[] args)
     Console.WriteLine($"Time fallbacks written: {result.TimeFallbacksWritten}");
     Console.WriteLine($"Output written: {result.OutputPath}");
     Console.WriteLine($"Summary written: {result.SummaryPath}");
+
+    return 0;
+}
+
+
+
+static async Task<int> RunDebugStateWeibullClock(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    (int homeGoals, int awayGoals) = ParseScore(parsed.RequiredString("score"));
+
+    var options = new StateWeibullClockDebugOptions
+    {
+        CurvesPath = parsed.String("curves", parsed.String("in", parsed.String("input", "outputs/calibration/state-weibull-curves.json"))),
+        OutputPath = parsed.String("out", parsed.String("output", "outputs/debug/state-weibull-clock.csv")),
+        League = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty),
+        HomeGoals = homeGoals,
+        AwayGoals = awayGoals,
+        Minute = parsed.RequiredDouble("minute"),
+        UntilMinute = parsed.Has("until") ? parsed.Double("until", 0.0) : null,
+        StepMinutes = parsed.Double("step", parsed.Double("step-minutes", 1.0))
+    };
+
+    var debugger = new StateWeibullClockDebugger();
+    StateWeibullClockDebugResult result = await debugger.DebugAsync(options, CancellationToken.None);
+
+    Console.WriteLine("State Weibull clock debug");
+    Console.WriteLine($"Curve file league: {result.League}");
+    Console.WriteLine($"Score: {result.ExactScore}");
+    Console.WriteLine($"Score bucket: {result.ScoreBucket}");
+    Console.WriteLine($"Minute: {result.StartMinute.ToString("0.##", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Until: {result.UntilMinute.ToString("0.##", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Step: {result.StepMinutes.ToString("0.##", CultureInfo.InvariantCulture)}");
+
+    if (result.StartingCurve is not null)
+    {
+        StateWeibullCurve curve = result.StartingCurve;
+        Console.WriteLine($"Starting time bucket: {curve.TimeBucket} ({curve.BucketStartMinute.ToString("0.##", CultureInfo.InvariantCulture)}-{curve.BucketEndMinute.ToString("0.##", CultureInfo.InvariantCulture)})");
+        Console.WriteLine($"Status: {curve.Status}");
+        Console.WriteLine($"Curve source: {curve.CurveSource}");
+        Console.WriteLine($"μ source: {curve.ExpectedGoalsSource}");
+        Console.WriteLine($"k source: {curve.ShapeKSource}");
+        Console.WriteLine($"Exact bucket sample: {curve.FullBucketExposures.ToString("0.##", CultureInfo.InvariantCulture)} full-bucket exposures, {curve.GoalCount} goals");
+        Console.WriteLine($"Expected goals in starting bucket: {curve.ExpectedGoalsInBucket.ToString("0.####", CultureInfo.InvariantCulture)}");
+        Console.WriteLine($"Shape k: {curve.ShapeK.ToString("0.####", CultureInfo.InvariantCulture)}");
+    }
+
+    Console.WriteLine($"Expected remaining to until: {result.ExpectedRemainingToUntil.ToString("0.####", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Rows written: {result.RowsWritten}");
+    Console.WriteLine($"Output written: {result.OutputPath}");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
+    }
 
     return 0;
 }
