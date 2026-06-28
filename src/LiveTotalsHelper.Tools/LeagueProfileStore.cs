@@ -4,6 +4,10 @@ namespace LiveTotalsHelper.Tools;
 
 public sealed class LeagueProfilesConfig
 {
+    public string ModelRoot { get; set; } = @"C:\Temp\football_data\models";
+    public List<int> DefaultSnapshotMinutes { get; set; } = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85];
+    public List<double> DefaultTargetLines { get; set; } = [2.5, 3.5];
+    public List<double> DefaultAllowedLines { get; set; } = [2.5, 3.5];
     public List<LeagueProfile> Profiles { get; set; } = [];
 }
 
@@ -23,6 +27,15 @@ public sealed class LeagueProfile
     public string Key { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string League { get; set; } = string.Empty;
+
+    // Flashscore download/import defaults.
+    public string FlashscoreFixturesUrl { get; set; } = string.Empty;
+    public int FlashscoreTournamentId { get; set; }
+    public int FlashscoreSeasonId { get; set; }
+    public string FlashscoreSeasonName { get; set; } = string.Empty;
+    public string FlashscoreSeasonYear { get; set; } = string.Empty;
+    public string FlashscoreCountry { get; set; } = string.Empty;
+    public string FlashscoreCountryCode { get; set; } = string.Empty;
 
     // Production/live artifacts and seasons.
     public string ModelPath { get; set; } = string.Empty;
@@ -79,7 +92,7 @@ public sealed class LeagueProfile
     public double MinUnderProbabilityMove { get; set; } = -0.12;
     public bool UnderSignalsBettingAllowed { get; set; }
     public List<LiveTotalProfileBettingRule> LiveBettingRules { get; set; } = [];
-    // Decision/rules gate used by price-live-total and Avalonia.
+    // Decision/rules gate used by Avalonia live pricing and model evaluation.
     public string DecisionMode { get; set; } = LiveTotalDecisionMode.FullModel;
     public int? MinMinute { get; set; }
     public bool RequireGoalTrigger { get; set; }
@@ -135,6 +148,7 @@ public sealed class LeagueProfileStore
             AllowTrailingCommas = true
         }) ?? new LeagueProfilesConfig();
 
+        ApplyProfileDefaults(config);
         return new LeagueProfileStore(config.Profiles);
     }
 
@@ -152,7 +166,116 @@ public sealed class LeagueProfileStore
             AllowTrailingCommas = true
         }, cancellationToken) ?? new LeagueProfilesConfig();
 
+        ApplyProfileDefaults(config);
         return new LeagueProfileStore(config.Profiles);
+    }
+
+
+    private static void ApplyProfileDefaults(LeagueProfilesConfig config)
+    {
+        string modelRoot = string.IsNullOrWhiteSpace(config.ModelRoot)
+            ? @"C:\Temp\football_data\models"
+            : config.ModelRoot;
+
+        foreach (LeagueProfile profile in config.Profiles)
+        {
+            if (string.IsNullOrWhiteSpace(profile.Key) && !string.IsNullOrWhiteSpace(profile.League))
+                profile.Key = Slug(profile.League);
+            if (string.IsNullOrWhiteSpace(profile.Name))
+                profile.Name = profile.League;
+            if (string.IsNullOrWhiteSpace(profile.League))
+                profile.League = profile.Name;
+
+            if (profile.ValidationTrainingSeasonIds.Count == 0 && profile.TrainingSeasonIds.Count > 0)
+                profile.ValidationTrainingSeasonIds = profile.TrainingSeasonIds.ToList();
+            if (profile.ValidationTestSeasonIds.Count == 0 && profile.CurrentSeasonId > 0)
+                profile.ValidationTestSeasonIds = [profile.CurrentSeasonId];
+            if (profile.BaseSeasonIds.Count == 0 && profile.TrainingSeasonIds.Count > 0)
+                profile.BaseSeasonIds = profile.TrainingSeasonIds.ToList();
+            if (profile.TargetLines.Count == 0)
+                profile.TargetLines = config.DefaultTargetLines.Count > 0 ? config.DefaultTargetLines.ToList() : [2.5, 3.5];
+            if (profile.AllowedLines.Count == 0)
+                profile.AllowedLines = config.DefaultAllowedLines.Count > 0 ? config.DefaultAllowedLines.ToList() : profile.TargetLines.ToList();
+            if (profile.SnapshotMinutes.Count == 0)
+                profile.SnapshotMinutes = config.DefaultSnapshotMinutes.Count > 0
+                    ? config.DefaultSnapshotMinutes.ToList()
+                    : [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85];
+            if (profile.CurrentSeasonId <= 0 && profile.ValidationTestSeasonIds.Count > 0)
+                profile.CurrentSeasonId = profile.ValidationTestSeasonIds.Max();
+            if (profile.FlashscoreSeasonId <= 0 && profile.CurrentSeasonId > 0)
+                profile.FlashscoreSeasonId = profile.CurrentSeasonId;
+            if (string.IsNullOrWhiteSpace(profile.FlashscoreSeasonYear) && profile.FlashscoreSeasonId > 0)
+                profile.FlashscoreSeasonYear = profile.FlashscoreSeasonId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (string.IsNullOrWhiteSpace(profile.FlashscoreSeasonName) && !string.IsNullOrWhiteSpace(profile.FlashscoreSeasonYear))
+                profile.FlashscoreSeasonName = profile.FlashscoreSeasonYear;
+
+            string key = string.IsNullOrWhiteSpace(profile.Key) ? Slug(profile.League) : profile.Key;
+            string root = Path.Combine(modelRoot, key);
+            string trainingRange = SeasonRange(profile.TrainingSeasonIds);
+            string validationTrainingRange = SeasonRange(profile.ValidationTrainingSeasonIds);
+            string validationDatasetRange = ValidationDatasetRange(profile.ValidationTrainingSeasonIds, profile.ValidationTestSeasonIds);
+            string validationTestRange = SeasonRange(profile.ValidationTestSeasonIds);
+
+            profile.ModelPath = SetPathIfMissing(profile.ModelPath, root, $"weibull-{trainingRange}.json");
+            profile.StateCorrectionPath = SetPathIfMissing(profile.StateCorrectionPath, root, $"state-correction-{trainingRange}.json");
+            profile.EmpiricalSettlementPath = SetPathIfMissing(profile.EmpiricalSettlementPath, root, $"empirical-settlement-{trainingRange}.json");
+            profile.CalibrationDatasetPath = SetPathIfMissing(profile.CalibrationDatasetPath, root, $"calibration-{trainingRange}.csv");
+            profile.CalibrationAnalysisPath = SetPathIfMissing(profile.CalibrationAnalysisPath, root, $"calibration-analysis-{trainingRange}.csv");
+            profile.ModelEvaluationPath = SetPathIfMissing(profile.ModelEvaluationPath, root, $"model-evaluation-{trainingRange}.csv");
+
+            profile.ValidationModelPath = SetPathIfMissing(profile.ValidationModelPath, root, $"validation-weibull-{validationTrainingRange}.json");
+            profile.ValidationCalibrationDatasetPath = SetPathIfMissing(profile.ValidationCalibrationDatasetPath, root, $"validation-calibration-{validationDatasetRange}.csv");
+            profile.ValidationStateCorrectionPath = SetPathIfMissing(profile.ValidationStateCorrectionPath, root, $"validation-state-correction-{validationTrainingRange}.json");
+            profile.ValidationEmpiricalSettlementPath = SetPathIfMissing(profile.ValidationEmpiricalSettlementPath, root, $"validation-empirical-settlement-{validationTrainingRange}.json");
+            profile.ValidationCalibrationAnalysisPath = SetPathIfMissing(profile.ValidationCalibrationAnalysisPath, root, $"validation-calibration-analysis-{validationDatasetRange}.csv");
+            profile.ValidationModelEvaluationPath = SetPathIfMissing(profile.ValidationModelEvaluationPath, root, $"validation-model-evaluation-{validationTestRange}.csv");
+        }
+    }
+
+    private static string SetPathIfMissing(string value, string directory, string fileName)
+    {
+        if (!string.IsNullOrWhiteSpace(value) || string.IsNullOrWhiteSpace(fileName) || fileName.Contains("--", StringComparison.Ordinal))
+            return value;
+
+        return Path.Combine(directory, fileName);
+    }
+
+    private static string SeasonRange(IReadOnlyCollection<int> seasons)
+    {
+        if (seasons.Count == 0)
+            return string.Empty;
+
+        int min = seasons.Min();
+        int max = seasons.Max();
+        return min == max
+            ? min.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : $"{min.ToString(System.Globalization.CultureInfo.InvariantCulture)}-{max.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+    }
+
+    private static string ValidationDatasetRange(IReadOnlyCollection<int> trainingSeasons, IReadOnlyCollection<int> testSeasons)
+    {
+        if (trainingSeasons.Count == 0)
+            return SeasonRange(testSeasons);
+        if (testSeasons.Count == 0)
+            return SeasonRange(trainingSeasons);
+
+        int min = trainingSeasons.Min();
+        int max = testSeasons.Max();
+        return min == max
+            ? min.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : $"{min.ToString(System.Globalization.CultureInfo.InvariantCulture)}-{max.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+    }
+
+    private static string Slug(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var chars = value.Trim().ToLowerInvariant().Select(ch => char.IsLetterOrDigit(ch) ? ch : '-').ToArray();
+        string slug = new string(chars);
+        while (slug.Contains("--", StringComparison.Ordinal))
+            slug = slug.Replace("--", "-", StringComparison.Ordinal);
+        return slug.Trim('-');
     }
 
     public LeagueProfile FindRequired(string profileKeyOrName)

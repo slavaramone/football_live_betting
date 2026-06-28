@@ -35,3 +35,14 @@ Use `--late-game-max-line 2.5` to keep the current behavior, or lower/raise it f
 ## Patch: better market-total selector
 
 `build-live-total-calibration-dataset` now selects the main market total from the most balanced O/U line instead of taking the median expected goals across all available total lines. Alternative lines are ignored after the selected balanced line is chosen.
+
+## After-goal continuation experiment
+
+```bash
+dotnet run --project src/LiveTotalsHelper.Tools -- analyze-after-goal-continuation --profile npl-queensland --validation true
+```
+
+Outputs:
+
+- `*-after-goal-continuation.csv`
+- `*-after-goal-continuation-summary.csv`

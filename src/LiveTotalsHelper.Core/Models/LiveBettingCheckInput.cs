@@ -17,11 +17,23 @@ public sealed class LiveBettingCheckInput
     public double StartingLine { get; set; } = 2.5;
     public double StartingOverOdds { get; set; } = 1.90;
     public double StartingUnderOdds { get; set; } = 1.90;
+    public double StartingOverOdds25 { get; set; } = 1.90;
+    public double StartingUnderOdds25 { get; set; } = 1.90;
+    public double StartingOverOdds35 { get; set; } = 0;
+    public double StartingUnderOdds35 { get; set; } = 0;
 
+    public double LiveOddsLine { get; set; } = 2.5;
+    public double LiveOverOdds { get; set; } = 2.30;
+    public double LiveUnderOdds { get; set; } = 1.65;
+    public double LiveOverOdds25 { get; set; } = 2.30;
+    public double LiveUnderOdds25 { get; set; } = 1.65;
+    public double LiveOverOdds35 { get; set; } = 0;
+    public double LiveUnderOdds35 { get; set; } = 0;
     public string LiveOverOddsText { get; set; } = "2.5=2.30";
     public string LiveUnderOddsText { get; set; } = "2.5=1.65";
-    public string TargetLinesText { get; set; } = "0.5,1,1.5,2,2.5,3,3.5,4";
+    public string TargetLinesText { get; set; } = "2.5,3.5";
 
+    public double SelectedBetLine { get; set; } = 2.5;
     public string SelectedBetLineText { get; set; } = "2.5";
     public string SelectedBetSide { get; set; } = "UNDER";
     public double SelectedBetOdds { get; set; } = 1.90;

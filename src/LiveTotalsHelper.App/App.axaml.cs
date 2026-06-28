@@ -43,6 +43,7 @@ public partial class App : Application
                 LeagueProfileStore profileStore = LeagueProfileStore.Load(settings.ProfilesFile);
                 AppStartupTrace.Write($"Profiles loaded: {profileStore.Profiles.Count}");
                 string logsFolder = settings.LogsFolder;
+                string stateFile = ResolveStateFile(settings.StateFile, logsFolder);
 
                 var matchRepository = new LiveTotalsHelper.Infrastructure.DbMatchRepository(dbContext);
                 var liveSessionService = new LiveTotalsHelper.App.Services.LiveBettingSessionService(dbContext, profileStore.Profiles, logsFolder);
@@ -50,7 +51,7 @@ public partial class App : Application
                 desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
                 desktop.MainWindow = new MainWindow
                 {
-                    DataContext = new MainWindowViewModel(matchRepository, liveSessionService)
+                    DataContext = new MainWindowViewModel(matchRepository, liveSessionService, stateFile)
                 };
                 AppStartupTrace.Write("MainWindow assigned");
 
@@ -135,8 +136,21 @@ public partial class App : Application
             profilesFile = "config/league-profiles.json";
 
         string logsFolder = GetNestedString(root, "LiveBetting", "LogsFolder");
+        string stateFile = GetNestedString(root, "LiveBetting", "StateFile");
 
-        return new AppStartupSettings(connectionString, profilesFile, logsFolder);
+        return new AppStartupSettings(connectionString, profilesFile, logsFolder, stateFile);
+    }
+
+    private static string ResolveStateFile(string configuredStateFile, string logsFolder)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredStateFile))
+            return Path.GetFullPath(configuredStateFile);
+
+        string folder = !string.IsNullOrWhiteSpace(logsFolder)
+            ? logsFolder
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LiveTotalsHelper");
+
+        return Path.Combine(folder, "live-app-state.json");
     }
 
     private static string GetNestedString(JsonElement root, string section, string key)
@@ -155,6 +169,7 @@ public partial class App : Application
     private sealed record AppStartupSettings(
         string LiveTotalsDbConnectionString,
         string ProfilesFile,
-        string LogsFolder);
+        string LogsFolder,
+        string StateFile);
 
 }

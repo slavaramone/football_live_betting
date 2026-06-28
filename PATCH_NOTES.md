@@ -50,4 +50,4 @@ Added late-game diagnostics:
 
 ## Price command
 
-`price-live-total` now uses the same late-game boost logic and prints the active late-game correction settings.
+Retired console live pricing; Avalonia live pricing now owns the paper-test workflow.

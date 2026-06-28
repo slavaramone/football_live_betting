@@ -16,6 +16,8 @@ public sealed class FlashscoreDownloadOptions
     public bool DownloadIncidents { get; init; } = true;
     public bool DownloadStatistics { get; init; } = true;
     public bool DownloadOdds { get; init; } = true;
+    public bool FixturesOnly { get; init; }
+    public bool NearestRoundOnly { get; init; }
     public bool SkipPlayoffs { get; init; } = true;
     public bool Headless { get; init; } = true;
     public int RenderWaitMs { get; init; } = 4_000;

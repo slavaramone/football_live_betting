@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using LiveTotalsHelper.Infrastructure.Flashscore;
 using LiveTotalsHelper.Infrastructure.Persistence;
 using LiveTotalsHelper.Infrastructure.Persistence.Flashscore;
@@ -22,16 +23,20 @@ try
     return command switch
     {
         "download-flashscore" => await RunDownloadFlashscore(commandArgs),
+        "download-flashscore-fixtures" => await RunDownloadFlashscoreFixtures(commandArgs),
+        "parse-flashscore-fixtures" => await RunDownloadFlashscoreFixtures(commandArgs),
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
         "import-flashscore" => await RunImportFlashscore(commandArgs),
+        "import-flashscore-fixtures" => await RunImportFlashscoreFixtures(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
         "build-live-total-calibration-dataset" => await RunBuildLiveTotalCalibrationDataset(commandArgs),
         "analyze-live-total-calibration" => await RunAnalyzeLiveTotalCalibration(commandArgs),
+        "analyze-after-goal-patterns" => await RunAnalyzeAfterGoalPatterns(commandArgs),
+        "analyze-after-goal-continuation" => await RunAnalyzeAfterGoalContinuation(commandArgs),
         "fit-live-total-state-correction" => await RunFitLiveTotalStateCorrection(commandArgs),
         "evaluate-live-total-performance" => await RunEvaluateLiveTotalPerformance(commandArgs),
         "fit-weibull" => await RunFitWeibull(commandArgs),
-        "price-live-total" => await RunPriceLiveTotal(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -79,13 +84,87 @@ static async Task<int> RunDownloadFlashscore(string[] args)
             ? !parsed.Bool("include-playoffs", true)
             : parsed.Bool("skip-playoffs", true),
         Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
-        RenderWaitMs = parsed.Int("render-wait-ms", 3_000),
-        DetailWaitMs = parsed.Int("detail-wait-ms", 3_000),
+        RenderWaitMs = parsed.Int("render-wait-ms", 4_000),
+        DetailWaitMs = parsed.Int("detail-wait-ms", 4_000),
         ShowMoreWaitMs = parsed.Int("show-more-wait-ms", 2_000),
         MaxShowMoreClicks = parsed.Int("max-show-more-clicks", 40),
         DelayMs = parsed.Int("delay-ms", 450),
         DefaultYear = defaultYear
     };
+
+    AddOptionalRounds(options.Rounds, parsed);
+
+    var downloader = new FlashscoreDownloader(new SofaScoreJsonFileStore());
+    FlashscoreDownloadResult result = await downloader.DownloadAsync(options, Console.Out, CancellationToken.None);
+    PrintFlashscoreDownloadResult(result);
+
+    return result.Failures.Count == 0 ? 0 : 1;
+}
+
+static async Task<int> RunDownloadFlashscoreFixtures(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+
+    string seasonYear = parsed.String("season-year", profile?.FlashscoreSeasonYear ?? string.Empty);
+    int seasonId = parsed.Has("season-id")
+        ? parsed.RequiredInt("season-id")
+        : profile?.FlashscoreSeasonId > 0
+            ? profile.FlashscoreSeasonId
+            : profile?.CurrentSeasonId > 0
+                ? profile.CurrentSeasonId
+                : DateTimeOffset.UtcNow.Year;
+
+    if (string.IsNullOrWhiteSpace(seasonYear))
+        seasonYear = seasonId.ToString(CultureInfo.InvariantCulture);
+
+    int defaultYear = parsed.Has("default-year")
+        ? parsed.Int("default-year", DateTimeOffset.UtcNow.Year)
+        : TryParseSeasonYear(seasonYear) ?? seasonId;
+
+    string seasonName = parsed.String("season-name", profile?.FlashscoreSeasonName ?? seasonYear);
+    if (string.IsNullOrWhiteSpace(seasonName))
+        seasonName = seasonYear;
+
+    int tournamentId = parsed.Has("tournament-id")
+        ? parsed.RequiredInt("tournament-id")
+        : profile?.FlashscoreTournamentId > 0
+            ? profile.FlashscoreTournamentId
+            : StablePositiveInt($"flashscore:tournament:{profile?.League ?? parsed.String("league", string.Empty)}");
+
+    var options = new FlashscoreDownloadOptions
+    {
+        Url = parsed.String("url", profile?.FlashscoreFixturesUrl ?? string.Empty),
+        League = parsed.String("league", profile?.League ?? string.Empty),
+        TournamentId = tournamentId,
+        SeasonId = seasonId,
+        SeasonName = seasonName,
+        SeasonYear = seasonYear,
+        CountryName = parsed.String("country", profile?.FlashscoreCountry ?? string.Empty),
+        CountryCode = parsed.String("country-code", profile?.FlashscoreCountryCode ?? string.Empty),
+        OutputRoot = parsed.String("output", "data/flashscore"),
+        Overwrite = parsed.Bool("overwrite", true),
+        DownloadIncidents = false,
+        DownloadStatistics = false,
+        DownloadOdds = false,
+        FixturesOnly = true,
+        NearestRoundOnly = true,
+        SkipPlayoffs = parsed.Has("include-playoffs")
+            ? !parsed.Bool("include-playoffs", true)
+            : parsed.Bool("skip-playoffs", true),
+        Headless = parsed.Has("show-browser") ? false : parsed.Bool("headless", true),
+        RenderWaitMs = parsed.Int("render-wait-ms", 3_000),
+        DetailWaitMs = parsed.Int("detail-wait-ms", 3_000),
+        ShowMoreWaitMs = parsed.Int("show-more-wait-ms", 2_000),
+        MaxShowMoreClicks = 0,
+        DelayMs = parsed.Int("delay-ms", 150),
+        DefaultYear = defaultYear
+    };
+
+    if (string.IsNullOrWhiteSpace(options.Url))
+        throw new ArgumentException("Missing required argument --url, or provide --profile with flashscoreFixturesUrl set.");
+    if (string.IsNullOrWhiteSpace(options.League))
+        throw new ArgumentException("Missing required argument --league, or provide --profile with league set.");
 
     AddOptionalRounds(options.Rounds, parsed);
 
@@ -270,6 +349,129 @@ static async Task<int> RunAnalyzeLiveTotalCalibration(string[] args)
     static string P(double value) => value.ToString("P1", CultureInfo.InvariantCulture);
     static string F(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
     static string D(double? value) => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "n/a";
+}
+
+
+static async Task<int> RunAnalyzeAfterGoalPatterns(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+
+    var options = new LiveTotalAfterGoalPatternAnalysisOptions
+    {
+        InputPath = parsed.String("input", defaultInput),
+        OutputPath = parsed.String("output", string.Empty),
+        PatternMinRows = parsed.Int("pattern-min-rows", 20),
+        PatternMinMatches = parsed.Int("pattern-min-matches", 10),
+        EmpiricalSettlementMinBucketRows = parsed.Int("settlement-min-bucket-rows", 80),
+        EmpiricalSettlementMinBucketMatches = parsed.Int("settlement-min-bucket-matches", 40),
+        EmpiricalSettlementMaxRemainingGoals = parsed.Int("settlement-max-remaining-goals", 8),
+        EmpiricalSettlementSmoothing = parsed.Double("settlement-smoothing", 0.25)
+    };
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
+
+    if (parsed.Has("training-season-ids"))
+        AddRequiredIntList(options.TrainingSeasonIds, parsed, "training-season-ids");
+    else if (profile is not null)
+        AddProfileSeasonIds(options.TrainingSeasonIds, validationMode ? profile.ValidationTrainingSeasonIds : profile.TrainingSeasonIds);
+
+    if (parsed.Has("test-season-ids"))
+        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
+    else if (profile is not null && validationMode)
+        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
+
+    if (parsed.Has("target-lines"))
+        AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
+    else if (profile?.TargetLines is { Count: > 0 })
+    {
+        options.TargetLines.Clear();
+        foreach (double line in profile.TargetLines)
+            options.TargetLines.Add(line);
+    }
+
+    var analyzer = new LiveTotalAfterGoalPatternAnalyzer(options);
+    LiveTotalAfterGoalPatternAnalysisResult result = await analyzer.AnalyzeAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("After-goal pattern analysis done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"Output: {result.OutputPath}");
+    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasonIds)}");
+    Console.WriteLine($"Test seasons: {string.Join(", ", result.TestSeasonIds)}");
+    Console.WriteLine($"Rows read: {result.RowsRead}");
+    Console.WriteLine($"Test rows: {result.TestRows}");
+    Console.WriteLine($"After-goal rows analyzed: {result.AfterGoalRows}");
+    Console.WriteLine($"Rows skipped without expected final goals: {result.RowsSkippedMissingExpectedFinalGoals}");
+    Console.WriteLine($"Unsupported empirical settlement rows skipped: {result.UnsupportedEmpiricalRows}");
+    Console.WriteLine($"Pattern buckets written: {result.Summaries.Count}");
+
+    return 0;
+}
+
+
+static async Task<int> RunAnalyzeAfterGoalContinuation(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    bool validationMode = parsed.Bool("validation", false);
+
+    string defaultInput = validationMode
+        ? profile?.ValidationCalibrationDatasetPath ?? string.Empty
+        : profile?.CalibrationDatasetPath ?? string.Empty;
+
+    var options = new LiveTotalAfterGoalContinuationAnalysisOptions
+    {
+        League = parsed.String("league", profile?.League ?? string.Empty),
+        InputPath = parsed.String("input", defaultInput),
+        OutputPath = parsed.String("output", string.Empty),
+        SummaryOutputPath = parsed.String("summary-output", string.Empty),
+        MinSummaryRows = parsed.Int("min-summary-rows", 5)
+    };
+    if (string.IsNullOrWhiteSpace(options.InputPath))
+        throw new ArgumentException("Missing required argument --input, or provide --profile with a calibration dataset path.");
+
+    if (parsed.Has("test-season-ids"))
+        AddRequiredIntList(options.TestSeasonIds, parsed, "test-season-ids");
+    else if (profile is not null && validationMode)
+        AddProfileSeasonIds(options.TestSeasonIds, profile.ValidationTestSeasonIds);
+
+    if (parsed.Has("target-lines"))
+        AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
+    else if (profile?.TargetLines is { Count: > 0 })
+    {
+        options.TargetLines.Clear();
+        foreach (double line in profile.TargetLines)
+            options.TargetLines.Add(line);
+    }
+
+    if (parsed.Has("windows"))
+    {
+        options.Windows.Clear();
+        AddRequiredIntList(options.Windows, parsed, "windows");
+    }
+
+    var analyzer = new LiveTotalAfterGoalContinuationAnalyzer(options);
+    LiveTotalAfterGoalContinuationAnalysisResult result = await analyzer.AnalyzeAsync(CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("After-goal continuation analysis done.");
+    Console.WriteLine($"Input: {result.InputPath}");
+    Console.WriteLine($"Rows output: {result.OutputPath}");
+    Console.WriteLine($"Summary output: {result.SummaryOutputPath}");
+    Console.WriteLine($"Test seasons: {(result.TestSeasonIds.Count == 0 ? "all" : string.Join(", ", result.TestSeasonIds))}");
+    Console.WriteLine($"Rows read: {result.RowsRead}");
+    Console.WriteLine($"Test rows: {result.TestRows}");
+    Console.WriteLine($"After-goal rows: {result.AfterGoalRows}");
+    Console.WriteLine($"Continuation rows written: {result.ContinuationRows}");
+    Console.WriteLine($"Summary rows written: {result.SummaryRows}");
+
+    return 0;
 }
 
 static async Task<int> RunFitLiveTotalStateCorrection(string[] args)
@@ -586,266 +788,6 @@ static async Task<int> RunFitWeibull(string[] args)
 }
 
 
-static async Task<int> RunPriceLiveTotal(string[] args)
-{
-    var parsed = ArgsParser.Parse(args);
-
-    LeagueProfile? profile = null;
-    string profileNameForOutput = string.Empty;
-    string profilesFile = parsed.String("profiles-file", "config/league-profiles.json");
-    if (parsed.Has("profile"))
-    {
-        string requestedProfile = parsed.RequiredString("profile");
-        LeagueProfileStore profileStore = await LeagueProfileStore.LoadAsync(profilesFile, CancellationToken.None);
-        profile = profileStore.FindRequired(requestedProfile);
-        profileNameForOutput = string.IsNullOrWhiteSpace(profile.Name) ? profile.Key : profile.Name;
-    }
-
-    string modelPath = parsed.Has("model")
-        ? parsed.RequiredString("model")
-        : profile?.ModelPath ?? throw new ArgumentException("Missing required argument --model, or provide --profile with a modelPath in config/league-profiles.json.");
-
-    var options = new LiveTotalPriceOptions
-    {
-        ModelPath = modelPath,
-        StateCorrectionPath = parsed.String("state-correction", profile?.StateCorrectionPath ?? string.Empty),
-        StateCorrectionScope = parsed.String("state-correction-scope", parsed.String("correction-scope", LiveTotalStateCorrectionScope.FixedMinute)),
-        StateCorrectionDirectionGuard = parsed.String("state-correction-direction", parsed.String("correction-direction", LiveTotalStateCorrectionDirectionGuard.UpOnly)),
-        LateGameCorrection = BuildLateGameCorrectionOptions(parsed, profile),
-        EmpiricalSettlementPath = parsed.String("empirical-settlement", profile?.GetEmpiricalSettlementPath() ?? string.Empty),
-        StateTrigger = LiveTotalStateTrigger.Normalize(parsed.String("state-trigger", LiveTotalStateTrigger.FixedMinute)),
-        StartingLine = parsed.RequiredDouble("starting-line"),
-        StartingOverOdds = parsed.RequiredDouble("starting-over"),
-        StartingUnderOdds = parsed.RequiredDouble("starting-under"),
-        Minute = parsed.RequiredInt("minute"),
-        HomeGoals = parsed.RequiredInt("home-goals"),
-        AwayGoals = parsed.RequiredInt("away-goals"),
-        EmpiricalWeight = parsed.Double("empirical-weight", profile?.DefaultEmpiricalWeight ?? 0.80),
-        EdgeThreshold = parsed.Double("edge-threshold", profile?.EdgeThreshold ?? 0.10),
-        UseProbabilityMoveFilter = parsed.Bool("use-probability-move-filter", profile?.UseProbabilityMoveFilter ?? false),
-        MinOverProbabilityMove = parsed.Double("min-over-probability-move", profile?.MinOverProbabilityMove ?? 0.10),
-        MinUnderProbabilityMove = parsed.Double("min-under-probability-move", profile?.MinUnderProbabilityMove ?? -0.12),
-        UnderSignalsBettingAllowed = parsed.Bool("under-signals-betting-allowed", profile?.UnderSignalsBettingAllowed ?? false),
-        HomeRedCards = parsed.Int("home-red-cards", parsed.Int("home-reds", 0)),
-        AwayRedCards = parsed.Int("away-red-cards", parsed.Int("away-reds", 0)),
-        LastGoalMinute = parsed.Int("last-goal-minute", -1),
-        RecentGoalMinutes = parsed.Int("recent-goal-minutes", 2),
-        VolumeFactor = parsed.Double("volume-factor", 1.0),
-        VolumeFactorSource = parsed.Has("volume-factor") ? "manual --volume-factor" : "none/default 1.0"
-    };
-
-    if (profile?.LiveBettingRules is { Count: > 0 })
-    {
-        foreach (LiveTotalProfileBettingRule rule in profile.LiveBettingRules)
-            options.LiveBettingRules.Add(rule);
-    }
-
-    ApplyProfileDecisionRules(options.DecisionRules, profile);
-    ApplyDecisionRuleOverrides(options.DecisionRules, parsed);
-
-    bool explicitTargetLines = parsed.Has("target-lines");
-    if (!explicitTargetLines && profile?.TargetLines is { Count: > 0 })
-    {
-        options.TargetLines.Clear();
-        foreach (double line in profile.TargetLines)
-            options.TargetLines.Add(line);
-    }
-
-    bool inferredCurrentSeasonVolume = parsed.Has("current-season-id") && parsed.Has("base-season-ids");
-    bool useCurrentSeasonVolume = !parsed.Has("volume-factor") && parsed.Bool("use-current-season-volume", profile?.UseCurrentSeasonVolume ?? inferredCurrentSeasonVolume);
-    SeasonVolumeFactorResult? seasonVolume = null;
-    if (useCurrentSeasonVolume)
-    {
-        string league = parsed.String("league", profile?.League ?? string.Empty);
-        int currentSeasonId = parsed.Has("current-season-id")
-            ? parsed.RequiredInt("current-season-id")
-            : profile?.CurrentSeasonId ?? 0;
-        int beforeRound = parsed.Has("before-round")
-            ? parsed.RequiredInt("before-round")
-            : profile?.DefaultBeforeRound ?? 0;
-        int priorStrength = parsed.Int("prior-strength-matches", profile?.PriorStrengthMatches ?? 100);
-
-        if (string.IsNullOrWhiteSpace(league))
-            throw new ArgumentException("Current-season volume requires --league or a profile with league set.");
-        if (currentSeasonId <= 0)
-            throw new ArgumentException("Current-season volume requires --current-season-id or a profile with currentSeasonId set.");
-        if (beforeRound <= 0)
-            throw new ArgumentException("Current-season volume requires --before-round. It should be the next/current round, so only earlier completed rounds are used.");
-
-        var volumeOptions = new SeasonVolumeFactorOptions
-        {
-            League = league,
-            CurrentSeasonId = currentSeasonId,
-            BeforeRound = beforeRound,
-            PriorStrengthMatches = priorStrength
-        };
-
-        if (parsed.Has("base-season-ids"))
-        {
-            AddRequiredIntList(volumeOptions.BaseSeasonIds, parsed, "base-season-ids");
-        }
-        else if (profile?.BaseSeasonIds is { Count: > 0 })
-        {
-            foreach (int seasonId in profile.BaseSeasonIds)
-                volumeOptions.BaseSeasonIds.Add(seasonId);
-        }
-        else
-        {
-            throw new ArgumentException("Current-season volume requires --base-season-ids or a profile with baseSeasonIds set.");
-        }
-
-        IConfiguration configuration = new ConfigurationBuilder()
-            .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-            .Build();
-
-        await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
-        var volumeCalculator = new SeasonVolumeFactorCalculator(dbContext);
-        seasonVolume = await volumeCalculator.CalculateAsync(volumeOptions, CancellationToken.None);
-        options.VolumeFactor = seasonVolume.Factor;
-        options.VolumeFactorSource = seasonVolume.Source;
-    }
-
-    AddOptionalDoubleList(options.TargetLines, parsed, "target-lines", clearExisting: true);
-    AddLiveOverOdds(options.LiveOverOddsByLine, parsed);
-    AddLiveUnderOdds(options.LiveUnderOddsByLine, parsed);
-    AddLiveOddsLinesToTargets(options.TargetLines, options.LiveOverOddsByLine, explicitTargetLines);
-    AddLiveOddsLinesToTargets(options.TargetLines, options.LiveUnderOddsByLine, explicitTargetLines);
-
-    var pricer = new LiveTotalPricer(options);
-    LiveTotalPriceResult result = await pricer.PriceAsync(CancellationToken.None);
-
-    Console.WriteLine();
-    Console.WriteLine("Live total pricing done.");
-    if (!string.IsNullOrWhiteSpace(profileNameForOutput))
-    {
-        Console.WriteLine($"Profile: {profileNameForOutput} ({profile!.Key})");
-        if (!string.IsNullOrWhiteSpace(profile.RiskLevel))
-            Console.WriteLine($"Profile risk: {profile.RiskLevel}");
-        if (!string.IsNullOrWhiteSpace(profile.Notes))
-            Console.WriteLine($"Profile notes: {profile.Notes}");
-    }
-    Console.WriteLine($"Model: {result.ModelPath}");
-    Console.WriteLine($"Settlement: {result.EmpiricalSettlementSource}");
-    Console.WriteLine($"League: {(string.IsNullOrWhiteSpace(result.League) ? (profile?.League ?? "unknown") : result.League)}");
-    Console.WriteLine($"Minute/score: {result.Minute}'  {result.HomeGoals}-{result.AwayGoals} ({result.ScoreState}; {result.DetailedScoreState}; {result.StateTrigger})");
-    Console.WriteLine($"Timing group: {result.SelectedTimingGroup}");
-    if (!string.IsNullOrWhiteSpace(result.TimingFallback))
-        Console.WriteLine($"Timing fallback: {result.TimingFallback}");
-    Console.WriteLine($"Starting O/U: line {result.StartingLine:0.##}, over {result.StartingOverOdds:0.###}, under {result.StartingUnderOdds:0.###}");
-    Console.WriteLine($"Starting fair over probability: {result.StartingFairOverProbability:P2}");
-    Console.WriteLine($"Starting total xG: {result.StartingTotalXg:0.###}");
-    Console.WriteLine($"Blend: Empirical {result.EmpiricalWeight:P0}, Weibull {result.WeibullWeight:P0}");
-    Console.WriteLine($"Edge threshold: {options.EdgeThreshold:P0}");
-    Console.WriteLine($"Probability move filter: {options.UseProbabilityMoveFilter}; over >= {options.MinOverProbabilityMove:+0%;-0%;0%}, under <= {options.MinUnderProbabilityMove:+0%;-0%;0%}; under allowed: {options.UnderSignalsBettingAllowed}");
-    Console.WriteLine($"Decision rules: {result.DecisionRulesSummary}");
-    if (!string.IsNullOrWhiteSpace(profile?.DecisionRulesNotes))
-        Console.WriteLine($"Decision rules notes: {profile.DecisionRulesNotes}");
-    if (options.LiveBettingRules.Count > 0)
-        Console.WriteLine($"Profile betting rules loaded: {options.LiveBettingRules.Count}");
-    Console.WriteLine($"Remaining share: Weibull {result.WeibullRemainingShare:P1}, Empirical {result.EmpiricalRemainingShare:P1}, Used {result.TimingRemainingShare:P1}");
-    Console.WriteLine($"Remaining xG before state correction: {result.RemainingXgBeforeStateCorrection:0.###}");
-    Console.WriteLine($"State correction scope: {LiveTotalStateCorrectionScope.Normalize(options.StateCorrectionScope)}");
-    Console.WriteLine($"State correction direction: {LiveTotalStateCorrectionDirectionGuard.Normalize(options.StateCorrectionDirectionGuard)}");
-    Console.WriteLine($"Late-game correction: {options.LateGameCorrection.Summary()}");
-    Console.WriteLine($"State correction: {result.StateCorrectionFactor:0.###} ({result.StateCorrectionSource})");
-    Console.WriteLine($"State correction supported for betting: {result.StateCorrectionSupported}");
-    Console.WriteLine($"Remaining xG before volume: {result.RemainingXgBeforeVolume:0.###}");
-    Console.WriteLine($"Current-season volume active: {useCurrentSeasonVolume}");
-    Console.WriteLine($"Volume factor: {result.VolumeFactor:0.###} ({result.VolumeFactorSource})");
-    if (seasonVolume is not null)
-    {
-        Console.WriteLine($"Volume base: {seasonVolume.BaseGoals} goals / {seasonVolume.BaseMatches} matches = {seasonVolume.BaseGoalsPerMatch:0.###} GPM");
-        Console.WriteLine($"Volume current: {seasonVolume.CurrentGoals} goals / {seasonVolume.CurrentMatches} matches = {seasonVolume.CurrentGoalsPerMatch:0.###} GPM");
-        Console.WriteLine($"Volume raw factor: {seasonVolume.RawFactor:0.###}, shrink weight: {seasonVolume.Weight:P1}");
-        if (!string.IsNullOrWhiteSpace(seasonVolume.Warning))
-            result.Warnings.Add(seasonVolume.Warning);
-    }
-    Console.WriteLine($"Expected remaining goals: {result.RemainingXg:0.###}");
-
-    if (!result.StateCorrectionSupported && !string.IsNullOrWhiteSpace(options.StateCorrectionPath))
-        result.Warnings.Add("Unsupported sparse state bucket - no betting decision will be allowed.");
-
-    if (result.Warnings.Count > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Warnings:");
-        foreach (string warning in result.Warnings)
-            Console.WriteLine($"- {warning}");
-    }
-
-    Console.WriteLine();
-    Console.WriteLine("Over/Under pricing:");
-    Console.WriteLine("Line  BaseO  CorrO   Move   Over%   Push%  Under%  FairO  BookO   EdgeO     EVO    FairU  BookU   EdgeU     EVU    Decision");
-    foreach (LiveTotalLinePrice line in result.Lines)
-    {
-        string bookOver = line.BookOverOdds.HasValue ? line.BookOverOdds.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";
-        string overEdge = line.OverEdge.HasValue ? line.OverEdge.Value.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture) : "-";
-        string overEv = line.OverExpectedValue.HasValue ? line.OverExpectedValue.Value.ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture) : "-";
-        string fairOver = FormatFairOdds(line.FairOdds);
-
-        string bookUnder = line.BookUnderOdds.HasValue ? line.BookUnderOdds.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";
-        string underEdge = line.UnderEdge.HasValue ? line.UnderEdge.Value.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture) : "-";
-        string underEv = line.UnderExpectedValue.HasValue ? line.UnderExpectedValue.Value.ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture) : "-";
-        string fairUnder = FormatFairOdds(line.FairUnderOdds);
-
-        Console.WriteLine($"{line.Line,4:0.##}  {line.BaselineOverNoPushProbability,5:P0}  {line.CorrectedOverNoPushProbability,5:P0}  {line.OverProbabilityMove,6:+0.0%;-0.0%;0.0%}  {line.WinProbability,6:P1}  {line.PushProbability,6:P1}  {line.UnderWinProbability,6:P1}  {fairOver,5}  {bookOver,5}  {overEdge,7}  {overEv,7}  {fairUnder,6}  {bookUnder,5}  {underEdge,7}  {underEv,7}  {line.Decision}");
-    }
-
-    Console.WriteLine();
-    Console.WriteLine("Decision explanations:");
-    foreach (LiveTotalLinePrice line in result.Lines)
-    {
-        if (line.BookOverOdds.HasValue)
-            Console.WriteLine($"- Over {line.Line:0.##}: {line.OverDecision} — {line.OverDecisionExplanation}");
-        if (line.BookUnderOdds.HasValue)
-            Console.WriteLine($"- Under {line.Line:0.##}: {line.UnderDecision} — {line.UnderDecisionExplanation}");
-    }
-
-    return 0;
-}
-
-
-static void ApplyProfileDecisionRules(LiveTotalDecisionRuleOptions target, LeagueProfile? profile)
-{
-    if (profile is null)
-        return;
-
-    target.DecisionMode = profile.DecisionMode;
-    target.MinMinute = profile.MinMinute;
-    target.RequireGoalTrigger = profile.RequireGoalTrigger;
-    target.MinLine = profile.MinLine;
-    target.AllowedLines.Clear();
-    foreach (double line in profile.AllowedLines)
-        target.AllowedLines.Add(line);
-    target.FallbackBettingEnabled = profile.FallbackBettingEnabled;
-    target.Notes = profile.DecisionRulesNotes;
-}
-
-static void ApplyDecisionRuleOverrides(LiveTotalDecisionRuleOptions target, ParsedArgs parsed)
-{
-    if (parsed.Has("decision-mode"))
-        target.DecisionMode = parsed.RequiredString("decision-mode");
-    if (parsed.Has("min-minute"))
-        target.MinMinute = parsed.RequiredInt("min-minute");
-    if (parsed.Has("require-goal-trigger"))
-        target.RequireGoalTrigger = parsed.Bool("require-goal-trigger", target.RequireGoalTrigger);
-    if (parsed.Has("min-line"))
-        target.MinLine = parsed.RequiredDouble("min-line");
-    if (parsed.Has("allowed-lines"))
-        AddOptionalDoubleList(target.AllowedLines, parsed, "allowed-lines", clearExisting: true);
-    if (parsed.Has("fallback-betting-enabled"))
-        target.FallbackBettingEnabled = parsed.Bool("fallback-betting-enabled", target.FallbackBettingEnabled);
-}
-
-static string FormatFairOdds(double odds)
-{
-    if (double.IsNaN(odds) || double.IsInfinity(odds) || odds > 9999)
-        return "-";
-    return odds.ToString("0.###", CultureInfo.InvariantCulture);
-}
-
-
 static async Task<int> RunValidateDb(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
@@ -957,7 +899,7 @@ static async Task<int> RunImportFlashscore(string[] args)
     await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
     var importer = new FlashscoreDbImporter(dbContext);
 
-    FlashscoreImportResult result = await ImportFlashscoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, debugImport, Console.Out, CancellationToken.None);
+    FlashscoreImportResult result = await ImportFlashscoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, calendarOnly: false, debugImport, Console.Out, CancellationToken.None);
 
     Console.WriteLine();
     Console.WriteLine("Import done.");
@@ -988,6 +930,72 @@ static async Task<int> RunImportFlashscore(string[] args)
     return result.Failures.Count == 0 ? 0 : 1;
 }
 
+static async Task<int> RunImportFlashscoreFixtures(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+
+    string league = parsed.String("league", profile?.League ?? string.Empty);
+    if (string.IsNullOrWhiteSpace(league))
+        throw new ArgumentException("Missing required argument --league, or provide --profile with league set.");
+
+    int seasonId = parsed.Has("season-id")
+        ? parsed.RequiredInt("season-id")
+        : profile?.FlashscoreSeasonId > 0
+            ? profile.FlashscoreSeasonId
+            : profile?.CurrentSeasonId > 0
+                ? profile.CurrentSeasonId
+                : DateTimeOffset.UtcNow.Year;
+
+    int tournamentId = parsed.Has("tournament-id")
+        ? parsed.RequiredInt("tournament-id")
+        : profile?.FlashscoreTournamentId > 0
+            ? profile.FlashscoreTournamentId
+            : StablePositiveInt($"flashscore:tournament:{league}");
+
+    string inputRoot = parsed.String("input", parsed.String("output", "data/flashscore"));
+    bool debugImport = parsed.Bool("debug-import", false);
+
+    var rounds = new List<int>();
+    if (parsed.Has("round") || parsed.Has("rounds") || parsed.Has("from-round") || parsed.Has("round-from") || parsed.Has("to-round"))
+        AddRounds(rounds, parsed);
+
+    IConfiguration configuration = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+        .Build();
+
+    await using LiveTotalsDbContext dbContext = await DatabaseMigrator.CreateMigratedDbContextAsync(configuration, Console.Out, CancellationToken.None);
+    var importer = new FlashscoreDbImporter(dbContext);
+
+    FlashscoreImportResult result = await ImportFlashscoreFolderAsync(importer, inputRoot, league, tournamentId, seasonId, rounds, calendarOnly: true, debugImport, Console.Out, CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Fixture import done.");
+    Console.WriteLine($"Rounds imported: {result.RoundsImported}");
+    Console.WriteLine($"Calendars imported: {result.CalendarsImported}");
+    Console.WriteLine($"Warnings: {result.Warnings.Count}");
+    Console.WriteLine($"Failures: {result.Failures.Count}");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
+    }
+
+    if (result.Failures.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Failures:");
+        foreach (string failure in result.Failures)
+            Console.WriteLine($"- {failure}");
+    }
+
+    return result.Failures.Count == 0 ? 0 : 1;
+}
+
 static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
     FlashscoreDbImporter importer,
     string inputRoot,
@@ -995,6 +1003,7 @@ static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
     int tournamentId,
     int seasonId,
     IReadOnlyCollection<int> requestedRounds,
+    bool calendarOnly,
     bool debugImport,
     TextWriter log,
     CancellationToken cancellationToken)
@@ -1032,6 +1041,9 @@ static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
         roundFolders = roundFolders.OrderBy(x => x.Round).ToList();
     }
 
+    if (calendarOnly && requestedRounds.Count == 0)
+        roundFolders = SelectNearestSavedFixtureRoundFolders(roundFolders);
+
     foreach ((int round, string roundFolder) in roundFolders)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1059,6 +1071,9 @@ static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
             result.Failures.Add($"round {round}: calendar import failed:{Environment.NewLine}{FormatImportException(ex)}");
             continue;
         }
+
+        if (calendarOnly)
+            continue;
 
         string eventsFolder = Path.Combine(roundFolder, "events");
         if (!Directory.Exists(eventsFolder))
@@ -1136,6 +1151,70 @@ static async Task<FlashscoreImportResult> ImportFlashscoreFolderAsync(
 }
 
 
+
+static List<(int Round, string Folder)> SelectNearestSavedFixtureRoundFolders(List<(int Round, string Folder)> roundFolders)
+{
+    if (roundFolders.Count <= 1)
+        return roundFolders;
+
+    long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+    var candidates = new List<(int Round, string Folder, long EarliestFutureStart, long EarliestKnownStart)>();
+    foreach ((int round, string folder) in roundFolders)
+    {
+        string calendarPath = Path.Combine(folder, "calendar.json");
+        long earliestFutureStart = long.MaxValue;
+        long earliestKnownStart = long.MaxValue;
+
+        if (File.Exists(calendarPath))
+        {
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(File.ReadAllText(calendarPath));
+                if (document.RootElement.TryGetProperty("events", out JsonElement eventsElement) &&
+                    eventsElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement eventElement in eventsElement.EnumerateArray())
+                    {
+                        if (!eventElement.TryGetProperty("startTimestamp", out JsonElement startElement) ||
+                            !startElement.TryGetInt64(out long startTimestamp))
+                            continue;
+
+                        if (startTimestamp < earliestKnownStart)
+                            earliestKnownStart = startTimestamp;
+                        if (startTimestamp >= now - 6 * 60 * 60 && startTimestamp < earliestFutureStart)
+                            earliestFutureStart = startTimestamp;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Bad calendar JSON will be reported during the actual import path.
+            }
+            catch (IOException)
+            {
+                // File read races are non-fatal here; the actual import will report them.
+            }
+        }
+
+        candidates.Add((round, folder, earliestFutureStart, earliestKnownStart));
+    }
+
+    var selected = candidates
+        .Where(x => x.EarliestFutureStart != long.MaxValue)
+        .OrderBy(x => x.EarliestFutureStart)
+        .ThenBy(x => x.Round)
+        .FirstOrDefault();
+
+    if (selected.Folder is null)
+        selected = candidates
+            .OrderBy(x => x.EarliestKnownStart)
+            .ThenBy(x => x.Round)
+            .First();
+
+    return [(selected.Round, selected.Folder)];
+}
+
 static string FormatImportException(Exception exception)
 {
     var lines = new List<string>();
@@ -1152,205 +1231,6 @@ static string FormatImportException(Exception exception)
     return string.Join(Environment.NewLine, lines);
 }
 
-
-
-static void AddLiveOverOdds(IDictionary<double, double> target, ParsedArgs parsed)
-{
-    AddLiveOverOddsForLine(target, parsed, 1.5, "live-over-1.5", "live-over-15", "over-1.5", "over-15");
-    AddLiveOverOddsForLine(target, parsed, 2.0, "live-over-2.0", "live-over-20", "over-2.0", "over-20");
-    AddLiveOverOddsForLine(target, parsed, 2.5, "live-over-2.5", "live-over-25", "over-2.5", "over-25");
-    AddLiveOverOddsForLine(target, parsed, 3.0, "live-over-3.0", "live-over-30", "over-3.0", "over-30");
-
-    AddDynamicLiveOverOdds(target, parsed);
-
-    // Generic syntax: --live-over-odds "1.5=1.40,2.0=1.85,2.5=2.45,3.5=4.10"
-    if (!parsed.Has("live-over-odds"))
-        return;
-
-    string raw = parsed.RequiredString("live-over-odds");
-    foreach (string token in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-    {
-        string[] parts = token.Split('=', StringSplitOptions.TrimEntries);
-        if (parts.Length != 2 ||
-            !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double line) ||
-            !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double odds))
-        {
-            throw new ArgumentException("Argument --live-over-odds must use comma-separated line=odds pairs, for example 1.5=1.40,2.0=1.85,3.5=4.10.");
-        }
-
-        if (odds <= 1.0)
-            throw new ArgumentException($"Live over odds for line {line:0.##} must be greater than 1.0.");
-
-        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
-    }
-}
-
-static void AddLiveUnderOdds(IDictionary<double, double> target, ParsedArgs parsed)
-{
-    AddLiveUnderOddsForLine(target, parsed, 1.5, "live-under-1.5", "live-under-15", "under-1.5", "under-15");
-    AddLiveUnderOddsForLine(target, parsed, 2.0, "live-under-2.0", "live-under-20", "under-2.0", "under-20");
-    AddLiveUnderOddsForLine(target, parsed, 2.5, "live-under-2.5", "live-under-25", "under-2.5", "under-25");
-    AddLiveUnderOddsForLine(target, parsed, 3.0, "live-under-3.0", "live-under-30", "under-3.0", "under-30");
-
-    AddDynamicLiveUnderOdds(target, parsed);
-
-    // Generic syntax: --live-under-odds "1.5=3.60,2.0=2.10,2.5=1.65,3.5=1.90"
-    if (!parsed.Has("live-under-odds"))
-        return;
-
-    string raw = parsed.RequiredString("live-under-odds");
-    foreach (string token in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-    {
-        string[] parts = token.Split('=', StringSplitOptions.TrimEntries);
-        if (parts.Length != 2 ||
-            !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double line) ||
-            !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double odds))
-        {
-            throw new ArgumentException("Argument --live-under-odds must use comma-separated line=odds pairs, for example 1.5=3.60,2.0=2.10,3.5=1.90.");
-        }
-
-        if (odds <= 1.0)
-            throw new ArgumentException($"Live under odds for line {line:0.##} must be greater than 1.0.");
-
-        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
-    }
-}
-
-static void AddDynamicLiveOverOdds(IDictionary<double, double> target, ParsedArgs parsed)
-{
-    foreach (KeyValuePair<string, string?> pair in parsed.Values)
-    {
-        string key = pair.Key;
-        if (!TryParseLiveOverLineArgument(key, out double line))
-            continue;
-
-        if (string.IsNullOrWhiteSpace(pair.Value))
-            throw new ArgumentException($"Argument --{key} requires odds value.");
-
-        if (!double.TryParse(pair.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double odds) || odds <= 1.0)
-            throw new ArgumentException($"Argument --{key} must be a number greater than 1.0.");
-
-        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
-    }
-}
-
-static void AddDynamicLiveUnderOdds(IDictionary<double, double> target, ParsedArgs parsed)
-{
-    foreach (KeyValuePair<string, string?> pair in parsed.Values)
-    {
-        string key = pair.Key;
-        if (!TryParseLiveUnderLineArgument(key, out double line))
-            continue;
-
-        if (string.IsNullOrWhiteSpace(pair.Value))
-            throw new ArgumentException($"Argument --{key} requires odds value.");
-
-        if (!double.TryParse(pair.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double odds) || odds <= 1.0)
-            throw new ArgumentException($"Argument --{key} must be a number greater than 1.0.");
-
-        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
-    }
-}
-
-static bool TryParseLiveUnderLineArgument(string key, out double line)
-{
-    line = 0.0;
-
-    string? suffix = null;
-    if (key.StartsWith("live-under-", StringComparison.OrdinalIgnoreCase))
-        suffix = key["live-under-".Length..];
-    else if (key.StartsWith("under-", StringComparison.OrdinalIgnoreCase))
-        suffix = key["under-".Length..];
-
-    if (string.IsNullOrWhiteSpace(suffix) || suffix.Equals("odds", StringComparison.OrdinalIgnoreCase))
-        return false;
-
-    suffix = suffix.Replace('_', '.');
-
-    if (suffix.Length == 2 && suffix.All(char.IsDigit) &&
-        int.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out int compact) && compact > 0)
-    {
-        line = compact / 10.0;
-        return line > 0;
-    }
-
-    if (double.TryParse(suffix, NumberStyles.Float, CultureInfo.InvariantCulture, out line))
-        return line > 0;
-
-    return false;
-}
-
-static bool TryParseLiveOverLineArgument(string key, out double line)
-{
-    line = 0.0;
-
-    string? suffix = null;
-    if (key.StartsWith("live-over-", StringComparison.OrdinalIgnoreCase))
-        suffix = key["live-over-".Length..];
-    else if (key.StartsWith("over-", StringComparison.OrdinalIgnoreCase))
-        suffix = key["over-".Length..];
-
-    if (string.IsNullOrWhiteSpace(suffix) || suffix.Equals("odds", StringComparison.OrdinalIgnoreCase))
-        return false;
-
-    suffix = suffix.Replace('_', '.');
-
-    // Convenience form retained for old args: --live-over-35 means line 3.5.
-    // Only two-digit compact values are interpreted this way; use decimal form for 4.25, 5.5, etc.
-    if (suffix.Length == 2 && suffix.All(char.IsDigit) &&
-        int.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out int compact) && compact > 0)
-    {
-        line = compact / 10.0;
-        return line > 0;
-    }
-
-    if (double.TryParse(suffix, NumberStyles.Float, CultureInfo.InvariantCulture, out line))
-        return line > 0;
-
-    return false;
-}
-
-static void AddLiveOddsLinesToTargets(ICollection<double> targetLines, IDictionary<double, double> liveOddsByLine, bool explicitTargetLines)
-{
-    if (explicitTargetLines)
-        return;
-
-    foreach (double line in liveOddsByLine.Keys)
-    {
-        if (!targetLines.Any(existing => Math.Abs(LiveTotalPricer.NormalizeLineKey(existing) - line) < 1e-9))
-            targetLines.Add(line);
-    }
-}
-
-static void AddLiveOverOddsForLine(IDictionary<double, double> target, ParsedArgs parsed, double line, params string[] names)
-{
-    foreach (string name in names)
-    {
-        if (!parsed.Has(name))
-            continue;
-
-        double odds = parsed.Double(name, 0.0);
-        if (odds <= 1.0)
-            throw new ArgumentException($"Argument --{name} must be greater than 1.0.");
-
-        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
-    }
-}
-
-static void AddLiveUnderOddsForLine(IDictionary<double, double> target, ParsedArgs parsed, double line, params string[] names)
-{
-    foreach (string name in names)
-    {
-        if (!parsed.Has(name))
-            continue;
-
-        double odds = parsed.Double(name, 0.0);
-        if (odds <= 1.0)
-            throw new ArgumentException($"Argument --{name} must be greater than 1.0.");
-
-        target[LiveTotalPricer.NormalizeLineKey(line)] = odds;
-    }
-}
 
 
 static LiveTotalLateGameCorrectionOptions BuildLateGameCorrectionOptions(ParsedArgs parsed, LeagueProfile? profile)
@@ -1466,6 +1346,21 @@ static void AddSeasonIds(List<int> seasonIds, ParsedArgs parsed)
     seasonIds.Sort();
 }
 
+
+static int StablePositiveInt(string value)
+{
+    const uint offset = 2166136261;
+    const uint prime = 16777619;
+
+    uint hash = offset;
+    foreach (char c in value ?? string.Empty)
+    {
+        hash ^= c;
+        hash *= prime;
+    }
+
+    return (int)(hash % 2_000_000_000U) + 1;
+}
 
 static int? TryParseSeasonYear(string value)
 {

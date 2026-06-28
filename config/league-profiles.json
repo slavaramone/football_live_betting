@@ -1,4 +1,8 @@
 {
+  "modelRoot": "C:\\Temp\\football_data\\models",
+  "defaultSnapshotMinutes": [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85],
+  "defaultTargetLines": [2.5, 3.5],
+  "defaultAllowedLines": [2.5, 3.5],
   "profiles": [
 	{
 	"key": "npl-new-south-wales",
@@ -234,137 +238,247 @@
     },
 	
     {
+      "key": "npl-queensland",
+      "name": "NPL Queensland",
+      "league": "NPL Queensland",
+      "trainingSeasonIds": [2022, 2023, 2024, 2025],
+      "currentSeasonId": 2026,
+      "stateCorrectionShrinkMatches": 25,
+      "stateCorrectionLateGameMode": "off",
+      "liveBettingRules": [
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 2.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.10,
+          "allowBet": true,
+          "notes": "Strongest rule."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 3.5,
+          "minProbabilityMove": 0.07,
+          "minEdge": 0.12,
+          "allowBet": true,
+          "notes": "Usable but weaker."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "Equalizer",
+          "side": "Over",
+          "line": 2.5,
+          "minuteFrom": 21,
+          "minuteTo": 65,
+          "minEdge": 0.08,
+          "allowBet": false,
+          "notes": "Paper-test first: equalizer reopens match strongly."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "Equalizer",
+          "side": "Over",
+          "line": 3.5,
+          "minuteFrom": 21,
+          "minuteTo": 35,
+          "minEdge": 0.10,
+          "allowBet": false,
+          "notes": "Smaller sample but strong signal after early equalizer."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "FirstGoal",
+          "side": "Over",
+          "line": 2.5,
+          "minuteFrom": 1,
+          "minuteTo": 35,
+          "minEdge": 0.10,
+          "allowBet": false,
+          "notes": "Use baseline price only; pattern correction not trusted yet."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "FirstGoal",
+          "side": "Over",
+          "line": 2.5,
+          "minuteFrom": 1,
+          "minuteTo": 20,
+          "minEdge": 0.08,
+          "allowBet": false
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "FirstGoal",
+          "side": "Over",
+          "line": 3.5,
+          "minuteFrom": 1,
+          "minuteTo": 20,
+          "minEdge": 0.10,
+          "allowBet": false
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "Equalizer",
+          "side": "Over",
+          "line": 2.5,
+          "minuteFrom": 51,
+          "minuteTo": 65,
+          "minEdge": 0.08,
+          "allowBet": false
+        }
+      ],
+      "flashscoreFixturesUrl": "https://www.flashscore.co.ke/football/australia/npl-queensland/fixtures/",
+      "flashscoreTournamentId": 100003,
+      "flashscoreCountry": "Australia",
+      "flashscoreCountryCode": "AUS"
+    },
+    {
+      "key": "npl-victoria",
+      "name": "NPL Victoria",
+      "league": "NPL Victoria",
+      "trainingSeasonIds": [2022, 2023, 2024, 2025],
+      "currentSeasonId": 2026,
+      "stateCorrectionShrinkMatches": 25,
+      "stateCorrectionLateGameMode": "off",
+      "liveBettingRules": [
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 2.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.10,
+          "allowBet": true,
+          "notes": "Avoid 70+ minute signals manually."
+        },
+        {
+          "stateTrigger": "FixedMinute",
+          "side": "Over",
+          "line": 3.5,
+          "minProbabilityMove": 0.05,
+          "minEdge": 0.10,
+          "allowBet": true,
+          "notes": "Validated well for small league."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "Equalizer",
+          "goalSide": "Away",
+          "side": "Over",
+          "line": 2.5,
+          "minuteFrom": 36,
+          "minuteTo": 50,
+          "minEdge": 0.08,
+          "allowBet": false,
+          "notes": "Paper-test: away equalizer / 1-0 to 1-1 reopens game strongly."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "Equalizer",
+          "goalSide": "Away",
+          "side": "Over",
+          "line": 3.5,
+          "minuteFrom": 36,
+          "minuteTo": 50,
+          "minEdge": 0.10,
+          "allowBet": false,
+          "notes": "Paper-test only; good continuation but small sample."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "ExtendsToTwoGoalLead",
+          "side": "Over",
+          "line": 3.5,
+          "minuteFrom": 21,
+          "minuteTo": 35,
+          "minEdge": 0.10,
+          "allowBet": false,
+          "notes": "Watchlist only: early 2-0 continuation signal."
+        }
+      ],
+      "flashscoreFixturesUrl": "https://www.flashscore.co.ke/football/australia/npl-victoria/fixtures/",
+      "flashscoreTournamentId": 100002,
+      "flashscoreCountry": "Australia",
+      "flashscoreCountryCode": "AUS"
+    },
+    {
+      "key": "npl-new-south-wales",
+      "name": "NPL New South Wales",
+      "league": "NPL New South Wales",
+      "trainingSeasonIds": [2023, 2024, 2025],
+      "currentSeasonId": 2026,
+      "stateCorrectionShrinkMatches": 25,
+      "liveBettingRules": [
+        { "stateTrigger": "FixedMinute", "side": "Over", "line": 2.5, "minProbabilityMove": 0.05, "minEdge": 0.10, "allowBet": true, "notes": "Strongest validated rule." },
+        { "stateTrigger": "FixedMinute", "side": "Over", "line": 3.5, "minProbabilityMove": 0.10, "minEdge": 0.12, "allowBet": false, "notes": "Paper-test only." }
+      ],
+      "flashscoreFixturesUrl": "https://www.flashscore.co.ke/football/australia/npl-nsw/fixtures/",
+      "flashscoreCountry": "Australia",
+      "flashscoreCountryCode": "AUS"
+    },
+    {
+      "key": "norway-1st-division",
+      "name": "Norway 1st Division",
+      "league": "Norway 1st Division",
+      "trainingSeasonIds": [2023, 2024, 2025],
+      "currentSeasonId": 2026,
+      "stateCorrectionShrinkMatches": 25,
+      "liveBettingRules": [
+        { "stateTrigger": "FixedMinute", "side": "Over", "line": 2.5, "minProbabilityMove": 0.05, "minEdge": 0.10, "allowBet": true, "notes": "Validated strong." },
+        { "stateTrigger": "FixedMinute", "side": "Over", "line": 3.5, "minProbabilityMove": 0.05, "minEdge": 0.10, "allowBet": true, "notes": "Validated strong." }
+      ],
+      "flashscoreFixturesUrl": "https://www.flashscore.co.ke/football/norway/obos-ligaen/fixtures/",
+      "flashscoreTournamentId": 200001,
+      "flashscoreCountry": "Norway",
+      "flashscoreCountryCode": "NO"
+    },
+    {
       "key": "china-super-league",
       "name": "China Super League",
       "league": "China Super League",
-      "modelPath": "C:\\Temp\\football_data\\models\\china-super-league\\weibull-2023-2025.json",
-      "stateCorrectionPath": "C:\\Temp\\football_data\\models\\china-super-league\\state-correction-2023-2025.json",
-      "empiricalSettlementPath": "C:\\Temp\\football_data\\models\\china-super-league\\empirical-settlement-2023-2025.json",
-      "calibrationDatasetPath": "C:\\Temp\\football_data\\models\\china-super-league\\calibration-2023-2025.csv",
-      "calibrationAnalysisPath": "C:\\Temp\\football_data\\models\\china-super-league\\calibration-analysis-2023-2025.csv",
-      "modelEvaluationPath": "C:\\Temp\\football_data\\models\\china-super-league\\model-evaluation-2023-2025.csv",
-      "trainingSeasonIds": [
-        2023,
-        2024,
-        2025
-      ],
-      "validationTrainingSeasonIds": [
-        2023,
-        2024,
-        2025
-      ],
-      "validationTestSeasonIds": [
-        2026
-      ],
-      "validationModelPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-weibull-2023-2025.json",
-      "validationCalibrationDatasetPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-calibration-2023-2026.csv",
-      "validationStateCorrectionPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-state-correction-2023-2025.json",
-      "validationEmpiricalSettlementPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-empirical-settlement-2023-2025.json",
-      "validationCalibrationAnalysisPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-calibration-analysis-2023-2026.csv",
-      "validationModelEvaluationPath": "C:\\Temp\\football_data\\models\\china-super-league\\validation-model-evaluation-2026.csv",
-      "maxMinute": 90,
-      "groupByColumn": "ScoreStateBefore",
-      "minGroupGoals": 30,
-      "maxIterations": 100,
-      "tolerance": 1e-09,
-      "blendWeibullWeight": 0.3,
-      "includeUnreliableMatches": false,
-      "includeEventTriggers": true,
-      "snapshotMinutes": [
-        10,
-        15,
-        20,
-        25,
-        30,
-        35,
-        40,
-        45,
-        50,
-        55,
-        60,
-        65,
-        70,
-        75,
-        80,
-        85
-      ],
-      "stateCorrectionMinBucketMatches": 100,
-      "stateCorrectionMinFactor": 0.5,
-      "stateCorrectionMaxFactor": 2.5,
-      "stateCorrectionShrinkMatches": 25,
-      "stateCorrectionLateGameMode": "boost-up",
-      "stateCorrectionLateGameStartMinute": 70,
-      "stateCorrectionLateGameFactorMultiplier": 1.15,
-      "stateCorrectionLateGameMaxFactor": 2.5,
-      "stateCorrectionLateGameMaxLine": 2.5,
-      "baseSeasonIds": [
-        2023,
-        2024,
-        2025
-      ],
+      "trainingSeasonIds": [2023, 2024, 2025],
       "currentSeasonId": 2026,
-      "defaultBeforeRound": null,
-      "useCurrentSeasonVolume": true,
-      "priorStrengthMatches": 100,
-      "defaultEmpiricalWeight": 0.8,
-      "edgeThreshold": 0.1,
-      "useProbabilityMoveFilter": true,
-      "minOverProbabilityMove": 0.1,
-      "minUnderProbabilityMove": -0.12,
-      "underSignalsBettingAllowed": false,
-      "decisionMode": "FullModel",
-      "minLine": 2.5,
-      "allowedLines": [
-        2.5,
-        3.5
-      ],
-      "fallbackBettingEnabled": true,
-      "requireGoalTrigger": false,
-      "targetLines": [
-        2.5,
-        3.5
-      ],
+      "stateCorrectionShrinkMatches": 25,
       "liveBettingRules": [
+        { "stateTrigger": "FixedMinute", "side": "Over", "line": 2.5, "minProbabilityMove": 0.05, "minEdge": 0.10, "allowBet": true, "notes": "Validated main rule." },
+        { "stateTrigger": "FixedMinute", "side": "Over", "line": 3.5, "minProbabilityMove": 0.07, "minEdge": 0.12, "allowBet": true, "notes": "Stricter threshold." },
         {
           "stateTrigger": "AfterGoal",
-          "side": "Over",
-          "line": 2.5,
-          "minProbabilityMove": 0.1,
-          "minEdge": 0.1,
-          "allowBet": true,
-          "notes": "After-goal Over 2.5 requires positive probability movement and sufficient edge."
-        },
-        {
-          "stateTrigger": "AfterGoal",
-          "side": "Under",
-          "line": 2.5,
-          "minProbabilityMove": -0.12,
-          "minEdge": 0.1,
-          "allowBet": true,
-          "notes": "After-goal Under 2.5 requires negative probability movement and sufficient edge."
-        },
-        {
-          "stateTrigger": "AfterGoal",
+          "goalEffect": "Equalizer",
           "side": "Over",
           "line": 3.5,
-          "minProbabilityMove": 0.1,
-          "minEdge": 0.1,
-          "allowBet": true,
-          "notes": "After-goal Over 3.5 requires positive probability movement and sufficient edge."
+          "minuteFrom": 36,
+          "minuteTo": 65,
+          "minEdge": 0.08,
+          "allowBet": false,
+          "notes": "CSL paper-test: equalizer strongly improves Over 3.5, especially 36-65."
         },
         {
           "stateTrigger": "AfterGoal",
-          "side": "Under",
+          "goalEffect": "Equalizer",
+          "side": "Over",
+          "line": 2.5,
+          "minuteFrom": 51,
+          "minuteTo": 65,
+          "minEdge": 0.08,
+          "allowBet": false,
+          "notes": "CSL paper-test: late-mid equalizer reopens Over 2.5."
+        },
+        {
+          "stateTrigger": "AfterGoal",
+          "goalEffect": "ExtendsToTwoGoalLead",
+          "side": "Over",
           "line": 3.5,
-          "minProbabilityMove": -0.12,
-          "minEdge": 0.1,
-          "allowBet": true,
-          "notes": "After-goal Under 3.5 requires negative probability movement and sufficient edge."
+          "minuteFrom": 21,
+          "minuteTo": 50,
+          "minEdge": 0.10,
+          "allowBet": false,
+          "notes": "CSL watchlist: early 2-goal lead continuation."
         }
       ],
-      "riskLevel": "Paper test",
-      "decisionRulesNotes": "Full-model pricing with specialist after-goal rules. Only totals 2.5 and 3.5 are enabled because those are the retained Flashscore markets.",
-      "notes": "Shared China Super League profile for console tools and Avalonia. Production training seasons are 2023-2025; 2026 is the current season."
+      "flashscoreFixturesUrl": "https://www.flashscore.co.ke/football/china/super-league/fixtures/",
+      "flashscoreCountry": "China",
+      "flashscoreCountryCode": "CN"
     }
   ]
 }
