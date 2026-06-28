@@ -33,12 +33,12 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore --league superettan --season-id 2026");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore-fixtures --profile superettan");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db --league \"Superettan\" --season-id 2026");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-state-weibull-exposures --profile npl-victoria --seasons 2023,2024,2025 --out outputs/calibration/npl-victoria-state-weibull-exposures.csv");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-state-weibull-curves --in outputs/calibration/npl-victoria-state-weibull-exposures.csv --out outputs/calibration/npl-victoria-state-weibull-curves.json --summary outputs/calibration/npl-victoria-state-weibull-curves-summary.csv");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-state-weibull-clock --curves outputs/calibration/npl-victoria-state-weibull-curves.json --profile npl-victoria --score 2-0 --minute 49 --until 96 --out outputs/debug/npl-victoria-2-0-49-clock.csv");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-next-goal-side-model --in outputs/calibration/npl-victoria-state-weibull-exposures.csv --out outputs/calibration/npl-victoria-next-goal-side-model.json --summary outputs/calibration/npl-victoria-next-goal-side-summary.csv");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-next-goal-side --model outputs/calibration/npl-victoria-next-goal-side-model.json --profile npl-victoria --score 2-0 --minute 49");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- simulate-live-total --curves outputs/calibration/npl-victoria-state-weibull-curves.json --side-model outputs/calibration/npl-victoria-next-goal-side-model.json --profile npl-victoria --score 2-0 --minute 49 --line 3.5 --under-odds 2.20 --sims 50000 --step 0.25 --seed 12345 --out outputs/debug/npl-victoria-2-0-49-sim.json");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-state-weibull-exposures --profile npl-victoria");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-state-weibull-curves --profile npl-victoria");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-state-weibull-clock --profile npl-victoria --score 2-0 --minute 49 --until 96 --out outputs/debug/npl-victoria-2-0-49-clock.csv");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-next-goal-side-model --profile npl-victoria");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-next-goal-side --profile npl-victoria --score 2-0 --minute 49");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- simulate-live-total --profile npl-victoria --score 2-0 --minute 49 --line 3.5 --under-odds 2.20");
         Console.WriteLine();
         Console.WriteLine("Common arguments:");
         Console.WriteLine("  --profile                         Profile key/name from config/league-profiles.json.");
@@ -56,13 +56,13 @@ public static class HelpPrinter
         Console.WriteLine("  --minute                          Live minute for debug-effective-end.");
         Console.WriteLine("  --score                           Current score as home-away, for example 2-0.");
         Console.WriteLine("  --hr / --ar                       Home/away red-card counts for debug-effective-end.");
-        Console.WriteLine("  --seasons                         Comma-separated season years/ids for calibration commands.");
-        Console.WriteLine("  --time-buckets                    Comma-separated buckets, for example 45-55,55-65,65-75.");
-        Console.WriteLine("  --in / --input                    Input CSV for fitting commands.");
-        Console.WriteLine("  --summary                         Summary CSV path for fitting commands.");
-        Console.WriteLine("  --curves                          Fitted state Weibull curves JSON path for debug-state-weibull-clock.");
-        Console.WriteLine("  --model                           Fitted next-goal-side JSON path for debug-next-goal-side/simulate-live-total alias.");
-        Console.WriteLine("  --side-model                      Fitted next-goal-side JSON path for simulate-live-total.");
+        Console.WriteLine("  --seasons                         Optional override for profile calibrationSeasonIds.");
+        Console.WriteLine("  --time-buckets                    Optional override for profile stateWeibullTimeBuckets.");
+        Console.WriteLine("  --in / --input                    Optional override for profile input CSV path.");
+        Console.WriteLine("  --summary                         Optional override for profile summary CSV path.");
+        Console.WriteLine("  --curves                          Optional override for profile fitted state Weibull curves JSON path.");
+        Console.WriteLine("  --model                           Optional override for profile fitted next-goal-side JSON path.");
+        Console.WriteLine("  --side-model                      Optional override for profile fitted next-goal-side JSON path.");
         Console.WriteLine("  --until                           End minute for debug-state-weibull-clock output. Default: last fitted bucket end.");
         Console.WriteLine("  --step                            Minute step for debug/simulation commands. Debug default: 1; MC default from profile.");
         Console.WriteLine("  --sims                            Monte Carlo simulation count. Default from profile/global config.");
@@ -71,12 +71,12 @@ public static class HelpPrinter
         Console.WriteLine("  --over-odds / --under-odds        Optional book odds for edge calculation.");
         Console.WriteLine("  --paths-out                       Optional CSV trace of early simulated goal paths.");
         Console.WriteLine("  --trace-paths                     Number of simulated paths to trace when --paths-out is provided. Default: 200.");
-        Console.WriteLine("  --min-mu-full-exposures           μ direct threshold. Default: 75.");
-        Console.WriteLine("  --min-mu-goals                    μ direct goal threshold. Default: 30.");
-        Console.WriteLine("  --min-k-full-exposures            k direct threshold. Default: 150.");
-        Console.WriteLine("  --min-k-goals                     k direct goal threshold. Default: 50.");
-        Console.WriteLine("  --min-exact-goals                 Next-goal-side exact directional/time threshold. Default: 25.");
-        Console.WriteLine("  --prior-weight-goals              Smoothing prior weight for exact next-goal side samples. Default: 6.");
+        Console.WriteLine("  --min-mu-full-exposures           Optional override for profile stateWeibullCurveFit.minMuFullBucketExposures.");
+        Console.WriteLine("  --min-mu-goals                    Optional override for profile stateWeibullCurveFit.minMuGoals.");
+        Console.WriteLine("  --min-k-full-exposures            Optional override for profile stateWeibullCurveFit.minKFullBucketExposures.");
+        Console.WriteLine("  --min-k-goals                     Optional override for profile stateWeibullCurveFit.minKGoals.");
+        Console.WriteLine("  --min-exact-goals                 Optional override for profile nextGoalSideFit.minExactGoals.");
+        Console.WriteLine("  --prior-weight-goals              Optional override for profile nextGoalSideFit.priorWeightGoals.");
         Console.WriteLine("  --out / --output                  Optional output path for debug/calibration commands.");
     }
 

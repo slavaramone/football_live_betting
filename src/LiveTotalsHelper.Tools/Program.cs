@@ -289,9 +289,12 @@ static async Task<int> RunBuildStateWeibullExposures(string[] args)
         seasons.Add(parsed.RequiredString("season-id"));
     if (parsed.Has("seasons"))
         seasons.AddRange(parsed.RequiredString("seasons").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+    if (seasons.Count == 0 && profile is not null)
+        seasons.AddRange(profile.CalibrationSeasonIds.Select(x => x.ToString(CultureInfo.InvariantCulture)));
 
-    string outputPath = parsed.String("out", parsed.String("output", "outputs/calibration/state-weibull-exposures.csv"));
-    IReadOnlyList<StateWeibullTimeBucket> timeBuckets = StateWeibullTimeBucket.ParseList(parsed.String("time-buckets", string.Empty));
+    string outputPath = GetPathArgument(parsed, profile?.StateWeibullExposuresPath, "outputs/calibration/state-weibull-exposures.csv", "out", "output");
+    string timeBucketText = parsed.String("time-buckets", profile is null ? string.Empty : string.Join(',', profile.StateWeibullTimeBuckets));
+    IReadOnlyList<StateWeibullTimeBucket> timeBuckets = StateWeibullTimeBucket.ParseList(timeBucketText);
 
     double profileDefaultFinalMinute = profile?.MonteCarlo.DefaultEffectiveEnd2H ?? 96.0;
     if (profileDefaultFinalMinute <= 0)
@@ -346,21 +349,22 @@ static async Task<int> RunFitStateWeibullCurves(string[] args)
 
     LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
     string league = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty);
+    StateWeibullCurveFitProfileSettings fit = profile?.StateWeibullCurveFit ?? new StateWeibullCurveFitProfileSettings();
 
     var options = new StateWeibullCurveFitterOptions
     {
-        InputPath = parsed.String("in", parsed.String("input", "outputs/calibration/state-weibull-exposures.csv")),
-        OutputPath = parsed.String("out", parsed.String("output", "outputs/calibration/state-weibull-curves.json")),
-        SummaryPath = parsed.String("summary", "outputs/calibration/state-weibull-curves-summary.csv"),
+        InputPath = GetPathArgument(parsed, profile?.StateWeibullExposuresPath, "outputs/calibration/state-weibull-exposures.csv", "in", "input"),
+        OutputPath = GetPathArgument(parsed, profile?.StateWeibullCurvesPath, "outputs/calibration/state-weibull-curves.json", "out", "output"),
+        SummaryPath = GetPathArgument(parsed, profile?.StateWeibullCurvesSummaryPath, "outputs/calibration/state-weibull-curves-summary.csv", "summary"),
         League = league,
-        MinMuFullBucketExposures = parsed.Double("min-mu-full-exposures", 75.0),
-        MinMuGoals = parsed.Int("min-mu-goals", 30),
-        MinKFullBucketExposures = parsed.Double("min-k-full-exposures", 150.0),
-        MinKGoals = parsed.Int("min-k-goals", 50),
-        MinK = parsed.Double("min-k", 0.65),
-        MaxK = parsed.Double("max-k", 1.85),
-        KStep = parsed.Double("k-step", 0.05),
-        DefaultK = parsed.Double("default-k", 1.0)
+        MinMuFullBucketExposures = parsed.Double("min-mu-full-exposures", fit.MinMuFullBucketExposures),
+        MinMuGoals = parsed.Int("min-mu-goals", fit.MinMuGoals),
+        MinKFullBucketExposures = parsed.Double("min-k-full-exposures", fit.MinKFullBucketExposures),
+        MinKGoals = parsed.Int("min-k-goals", fit.MinKGoals),
+        MinK = parsed.Double("min-k", fit.MinK),
+        MaxK = parsed.Double("max-k", fit.MaxK),
+        KStep = parsed.Double("k-step", fit.KStep),
+        DefaultK = parsed.Double("default-k", fit.DefaultK)
     };
 
     var fitter = new StateWeibullCurveFitter();
@@ -390,8 +394,8 @@ static async Task<int> RunDebugStateWeibullClock(string[] args)
 
     var options = new StateWeibullClockDebugOptions
     {
-        CurvesPath = parsed.String("curves", parsed.String("in", parsed.String("input", "outputs/calibration/state-weibull-curves.json"))),
-        OutputPath = parsed.String("out", parsed.String("output", "outputs/debug/state-weibull-clock.csv")),
+        CurvesPath = GetPathArgument(parsed, profile?.StateWeibullCurvesPath, "outputs/calibration/state-weibull-curves.json", "curves", "in", "input"),
+        OutputPath = GetPathArgument(parsed, null, "outputs/debug/state-weibull-clock.csv", "out", "output"),
         League = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty),
         HomeGoals = homeGoals,
         AwayGoals = awayGoals,
@@ -446,20 +450,21 @@ static async Task<int> RunFitNextGoalSideModel(string[] args)
 
     LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
     string league = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty);
+    NextGoalSideFitProfileSettings fit = profile?.NextGoalSideFit ?? new NextGoalSideFitProfileSettings();
 
     var options = new NextGoalSideModelFitterOptions
     {
-        InputPath = parsed.String("in", parsed.String("input", "outputs/calibration/state-weibull-exposures.csv")),
-        OutputPath = parsed.String("out", parsed.String("output", "outputs/calibration/next-goal-side-model.json")),
-        SummaryPath = parsed.String("summary", "outputs/calibration/next-goal-side-summary.csv"),
+        InputPath = GetPathArgument(parsed, profile?.StateWeibullExposuresPath, "outputs/calibration/state-weibull-exposures.csv", "in", "input"),
+        OutputPath = GetPathArgument(parsed, profile?.NextGoalSideModelPath, "outputs/calibration/next-goal-side-model.json", "out", "output"),
+        SummaryPath = GetPathArgument(parsed, profile?.NextGoalSideSummaryPath, "outputs/calibration/next-goal-side-summary.csv", "summary"),
         League = league,
-        MinExactGoals = parsed.Int("min-exact-goals", 25),
-        MinDirectionalOverallGoals = parsed.Int("min-directional-overall-goals", 50),
-        MinPressureTimeGoals = parsed.Int("min-pressure-time-goals", 40),
-        MinNeutralScoreTimeGoals = parsed.Int("min-neutral-score-time-goals", 25),
-        MinTimeGoals = parsed.Int("min-time-goals", 50),
-        MinLeagueGoals = parsed.Int("min-league-goals", 100),
-        PriorWeightGoals = parsed.Double("prior-weight-goals", 6.0)
+        MinExactGoals = parsed.Int("min-exact-goals", fit.MinExactGoals),
+        MinDirectionalOverallGoals = parsed.Int("min-directional-overall-goals", fit.MinDirectionalOverallGoals),
+        MinPressureTimeGoals = parsed.Int("min-pressure-time-goals", fit.MinPressureTimeGoals),
+        MinNeutralScoreTimeGoals = parsed.Int("min-neutral-score-time-goals", fit.MinNeutralScoreTimeGoals),
+        MinTimeGoals = parsed.Int("min-time-goals", fit.MinTimeGoals),
+        MinLeagueGoals = parsed.Int("min-league-goals", fit.MinLeagueGoals),
+        PriorWeightGoals = parsed.Double("prior-weight-goals", fit.PriorWeightGoals)
     };
 
     var fitter = new NextGoalSideModelFitter();
@@ -491,7 +496,7 @@ static async Task<int> RunDebugNextGoalSide(string[] args)
 
     var options = new NextGoalSideDebugOptions
     {
-        ModelPath = parsed.String("model", parsed.String("in", parsed.String("input", "outputs/calibration/next-goal-side-model.json"))),
+        ModelPath = GetPathArgument(parsed, profile?.NextGoalSideModelPath, "outputs/calibration/next-goal-side-model.json", "model", "in", "input"),
         League = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty),
         HomeGoals = homeGoals,
         AwayGoals = awayGoals,
@@ -581,10 +586,10 @@ static async Task<int> RunSimulateLiveTotal(string[] args)
 
     var options = new LiveTotalMonteCarloCommandOptions
     {
-        CurvesPath = parsed.String("curves", parsed.String("in", parsed.String("input", "outputs/calibration/state-weibull-curves.json"))),
-        SideModelPath = parsed.String("side-model", parsed.String("model", "outputs/calibration/next-goal-side-model.json")),
-        OutputPath = parsed.String("out", parsed.String("output", "outputs/debug/live-total-mc.json")),
-        PathsOutputPath = parsed.String("paths-out", string.Empty),
+        CurvesPath = GetPathArgument(parsed, profile?.StateWeibullCurvesPath, "outputs/calibration/state-weibull-curves.json", "curves", "in", "input"),
+        SideModelPath = GetPathArgument(parsed, profile?.NextGoalSideModelPath, "outputs/calibration/next-goal-side-model.json", "side-model", "model"),
+        OutputPath = GetPathArgument(parsed, profile?.LiveMonteCarloOutputPath, "outputs/debug/live-total-mc.json", "out", "output"),
+        PathsOutputPath = parsed.Has("paths-out") ? parsed.String("paths-out", string.Empty) : string.Empty,
         League = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty),
         Minute = minute,
         UntilMinute = parsed.Has("until") ? parsed.Double("until", 0.0) : null,
@@ -1045,6 +1050,21 @@ static string FormatImportException(Exception exception)
     return string.Join(Environment.NewLine, lines);
 }
 
+
+static string GetPathArgument(ParsedArgs parsed, string? profileValue, string defaultValue, params string[] names)
+{
+    foreach (string name in names)
+    {
+        string value = parsed.String(name, string.Empty);
+        if (!string.IsNullOrWhiteSpace(value))
+            return value;
+    }
+
+    if (!string.IsNullOrWhiteSpace(profileValue))
+        return profileValue;
+
+    return defaultValue;
+}
 
 static async Task<LeagueProfile?> LoadProfileByKeyOrLeagueAsync(ParsedArgs parsed)
 {

@@ -5,10 +5,15 @@ namespace LiveTotalsHelper.Tools;
 
 public sealed class LeagueProfilesConfig
 {
-    public List<int> DefaultSnapshotMinutes { get; set; } = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85];
+    public string ModelRoot { get; set; } = @"C:\Temp\football_data\models";
+    public string ReportRoot { get; set; } = @"C:\Temp\football_data\reports";
+    public List<int> DefaultCalibrationSeasonIds { get; set; } = [];
+    public List<string> DefaultStateWeibullTimeBuckets { get; set; } = ["0-20", "20-35", "35-45", "45-60", "60-70", "70-80", "80-90", "90-96"];
     public List<double> DefaultTargetLines { get; set; } = [2.5, 3.5];
     public List<double> DefaultAllowedLines { get; set; } = [2.5, 3.5];
     public MonteCarloConfig MonteCarlo { get; set; } = new();
+    public StateWeibullCurveFitProfileSettings StateWeibullCurveFit { get; set; } = new();
+    public NextGoalSideFitProfileSettings NextGoalSideFit { get; set; } = new();
     public List<LeagueProfile> Profiles { get; set; } = [];
 }
 
@@ -21,6 +26,58 @@ public sealed class LiveTotalProfileBettingRule
     public double MinEdge { get; set; }
     public bool AllowBet { get; set; } = true;
     public string Notes { get; set; } = string.Empty;
+}
+
+public sealed class StateWeibullCurveFitProfileSettings
+{
+    public double MinMuFullBucketExposures { get; set; } = 75.0;
+    public int MinMuGoals { get; set; } = 30;
+    public double MinKFullBucketExposures { get; set; } = 150.0;
+    public int MinKGoals { get; set; } = 50;
+    public double MinK { get; set; } = 0.65;
+    public double MaxK { get; set; } = 1.85;
+    public double KStep { get; set; } = 0.05;
+    public double DefaultK { get; set; } = 1.0;
+
+    public StateWeibullCurveFitProfileSettings WithDefaultsFrom(StateWeibullCurveFitProfileSettings fallback)
+    {
+        return new StateWeibullCurveFitProfileSettings
+        {
+            MinMuFullBucketExposures = MinMuFullBucketExposures > 0 ? MinMuFullBucketExposures : fallback.MinMuFullBucketExposures,
+            MinMuGoals = MinMuGoals > 0 ? MinMuGoals : fallback.MinMuGoals,
+            MinKFullBucketExposures = MinKFullBucketExposures > 0 ? MinKFullBucketExposures : fallback.MinKFullBucketExposures,
+            MinKGoals = MinKGoals > 0 ? MinKGoals : fallback.MinKGoals,
+            MinK = MinK > 0 ? MinK : fallback.MinK,
+            MaxK = MaxK > 0 ? MaxK : fallback.MaxK,
+            KStep = KStep > 0 ? KStep : fallback.KStep,
+            DefaultK = DefaultK > 0 ? DefaultK : fallback.DefaultK
+        };
+    }
+}
+
+public sealed class NextGoalSideFitProfileSettings
+{
+    public int MinExactGoals { get; set; } = 25;
+    public int MinDirectionalOverallGoals { get; set; } = 50;
+    public int MinPressureTimeGoals { get; set; } = 40;
+    public int MinNeutralScoreTimeGoals { get; set; } = 25;
+    public int MinTimeGoals { get; set; } = 50;
+    public int MinLeagueGoals { get; set; } = 100;
+    public double PriorWeightGoals { get; set; } = 6.0;
+
+    public NextGoalSideFitProfileSettings WithDefaultsFrom(NextGoalSideFitProfileSettings fallback)
+    {
+        return new NextGoalSideFitProfileSettings
+        {
+            MinExactGoals = MinExactGoals > 0 ? MinExactGoals : fallback.MinExactGoals,
+            MinDirectionalOverallGoals = MinDirectionalOverallGoals > 0 ? MinDirectionalOverallGoals : fallback.MinDirectionalOverallGoals,
+            MinPressureTimeGoals = MinPressureTimeGoals > 0 ? MinPressureTimeGoals : fallback.MinPressureTimeGoals,
+            MinNeutralScoreTimeGoals = MinNeutralScoreTimeGoals > 0 ? MinNeutralScoreTimeGoals : fallback.MinNeutralScoreTimeGoals,
+            MinTimeGoals = MinTimeGoals > 0 ? MinTimeGoals : fallback.MinTimeGoals,
+            MinLeagueGoals = MinLeagueGoals > 0 ? MinLeagueGoals : fallback.MinLeagueGoals,
+            PriorWeightGoals = PriorWeightGoals > 0 ? PriorWeightGoals : fallback.PriorWeightGoals
+        };
+    }
 }
 
 public sealed class LeagueProfile
@@ -37,28 +94,42 @@ public sealed class LeagueProfile
     public string FlashscoreCountry { get; set; } = string.Empty;
     public string FlashscoreCountryCode { get; set; } = string.Empty;
 
-    // UI shell settings retained so the Avalonia app can compile while the old model is replaced.
     public int CurrentSeasonId { get; set; }
+    public List<int> CalibrationSeasonIds { get; set; } = [];
+    public List<int> TrainingSeasonIds { get; set; } = [];
     public List<int> BaseSeasonIds { get; set; } = [];
     public int? DefaultBeforeRound { get; set; }
     public bool UseCurrentSeasonVolume { get; set; } = true;
-    public double EdgeThreshold { get; set; } = 0.10;
+
+    public string ModelFolder { get; set; } = string.Empty;
+    public string ReportFolder { get; set; } = string.Empty;
+    public string StateWeibullExposuresPath { get; set; } = string.Empty;
+    public string StateWeibullCurvesPath { get; set; } = string.Empty;
+    public string StateWeibullCurvesSummaryPath { get; set; } = string.Empty;
+    public string NextGoalSideModelPath { get; set; } = string.Empty;
+    public string NextGoalSideSummaryPath { get; set; } = string.Empty;
+    public string LiveMonteCarloOutputPath { get; set; } = string.Empty;
+    public string LiveMonteCarloPathsOutputPath { get; set; } = string.Empty;
+
+    public List<string> StateWeibullTimeBuckets { get; set; } = [];
+    public StateWeibullCurveFitProfileSettings StateWeibullCurveFit { get; set; } = new();
+    public NextGoalSideFitProfileSettings NextGoalSideFit { get; set; } = new();
+    public MonteCarloConfig MonteCarlo { get; set; } = new();
+
+    public double EdgeThreshold { get; set; } = 0.05;
     public bool UseProbabilityMoveFilter { get; set; }
     public bool UnderSignalsBettingAllowed { get; set; }
-    public string DecisionMode { get; set; } = "ModelDisabled";
+    public string DecisionMode { get; set; } = "StateWeibullMonteCarlo";
     public int? MinMinute { get; set; }
     public bool RequireGoalTrigger { get; set; }
     public double? MinLine { get; set; }
     public List<double> TargetLines { get; set; } = [];
     public List<double> AllowedLines { get; set; } = [];
-    public string StateWeibullCurvesPath { get; set; } = string.Empty;
-    public string NextGoalSideModelPath { get; set; } = string.Empty;
-    public bool FallbackBettingEnabled { get; set; } = false;
+    public bool FallbackBettingEnabled { get; set; } = true;
     public List<LiveTotalProfileBettingRule> LiveBettingRules { get; set; } = [];
-    public string DecisionRulesNotes { get; set; } = "Old live-total model removed; waiting for redesigned model.";
-    public string RiskLevel { get; set; } = "Model disabled";
+    public string DecisionRulesNotes { get; set; } = string.Empty;
+    public string RiskLevel { get; set; } = "MC paper test";
     public string Notes { get; set; } = string.Empty;
-    public MonteCarloConfig MonteCarlo { get; set; } = new();
 }
 
 public sealed class LeagueProfileStore
@@ -161,14 +232,70 @@ public sealed class LeagueProfileStore
                 profile.FlashscoreSeasonYear = profile.FlashscoreSeasonId.ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (string.IsNullOrWhiteSpace(profile.FlashscoreSeasonName) && !string.IsNullOrWhiteSpace(profile.FlashscoreSeasonYear))
                 profile.FlashscoreSeasonName = profile.FlashscoreSeasonYear;
+
+            if (profile.CalibrationSeasonIds.Count == 0)
+                profile.CalibrationSeasonIds = profile.TrainingSeasonIds.Count > 0
+                    ? profile.TrainingSeasonIds.ToList()
+                    : profile.BaseSeasonIds.Count > 0
+                        ? profile.BaseSeasonIds.ToList()
+                        : config.DefaultCalibrationSeasonIds.ToList();
+            if (profile.TrainingSeasonIds.Count == 0 && profile.CalibrationSeasonIds.Count > 0)
+                profile.TrainingSeasonIds = profile.CalibrationSeasonIds.ToList();
+            if (profile.BaseSeasonIds.Count == 0 && profile.CalibrationSeasonIds.Count > 0)
+                profile.BaseSeasonIds = profile.CalibrationSeasonIds.ToList();
+
             if (profile.TargetLines.Count == 0)
                 profile.TargetLines = config.DefaultTargetLines.Count > 0 ? config.DefaultTargetLines.ToList() : [2.5, 3.5];
             if (profile.AllowedLines.Count == 0)
                 profile.AllowedLines = config.DefaultAllowedLines.Count > 0 ? config.DefaultAllowedLines.ToList() : profile.TargetLines.ToList();
+            if (profile.StateWeibullTimeBuckets.Count == 0)
+                profile.StateWeibullTimeBuckets = config.DefaultStateWeibullTimeBuckets.Count > 0
+                    ? config.DefaultStateWeibullTimeBuckets.ToList()
+                    : ["0-20", "20-35", "35-45", "45-60", "60-70", "70-80", "80-90", "90-96"];
+
             profile.MonteCarlo = profile.MonteCarlo.WithDefaultsFrom(config.MonteCarlo);
+            profile.StateWeibullCurveFit = profile.StateWeibullCurveFit.WithDefaultsFrom(config.StateWeibullCurveFit);
+            profile.NextGoalSideFit = profile.NextGoalSideFit.WithDefaultsFrom(config.NextGoalSideFit);
+
+            string modelFolder = profile.ModelFolder;
+            if (string.IsNullOrWhiteSpace(modelFolder) && !string.IsNullOrWhiteSpace(config.ModelRoot))
+                modelFolder = Path.Combine(config.ModelRoot, profile.Key);
+            string reportFolder = profile.ReportFolder;
+            if (string.IsNullOrWhiteSpace(reportFolder) && !string.IsNullOrWhiteSpace(config.ReportRoot))
+                reportFolder = config.ReportRoot;
+            if (string.IsNullOrWhiteSpace(reportFolder))
+                reportFolder = modelFolder;
+
+            profile.ModelFolder = modelFolder;
+            profile.ReportFolder = reportFolder;
+            ApplyGeneratedPaths(profile, modelFolder, reportFolder);
+
+            if (string.IsNullOrWhiteSpace(profile.DecisionRulesNotes))
+                profile.DecisionRulesNotes = "State-Weibull Monte Carlo with next-goal-side fallback model.";
             if (string.IsNullOrWhiteSpace(profile.Notes))
-                profile.Notes = "Old live-total model removed; this profile is retained for downloading/importing and the future Avalonia model shell.";
+                profile.Notes = "State-Weibull Monte Carlo profile. Calibration commands read/write paths and thresholds from this profile.";
         }
+    }
+
+    private static void ApplyGeneratedPaths(LeagueProfile profile, string modelFolder, string reportFolder)
+    {
+        string key = string.IsNullOrWhiteSpace(profile.Key) ? Slug(profile.League) : profile.Key;
+        profile.StateWeibullExposuresPath = ValueOrDefault(profile.StateWeibullExposuresPath, modelFolder, $"{key}-state-weibull-exposures.csv");
+        profile.StateWeibullCurvesPath = ValueOrDefault(profile.StateWeibullCurvesPath, modelFolder, $"{key}-state-weibull-curves.json");
+        profile.StateWeibullCurvesSummaryPath = ValueOrDefault(profile.StateWeibullCurvesSummaryPath, reportFolder, $"{key}-state-weibull-curves-summary.csv");
+        profile.NextGoalSideModelPath = ValueOrDefault(profile.NextGoalSideModelPath, modelFolder, $"{key}-next-goal-side-model.json");
+        profile.NextGoalSideSummaryPath = ValueOrDefault(profile.NextGoalSideSummaryPath, reportFolder, $"{key}-next-goal-side-summary.csv");
+        profile.LiveMonteCarloOutputPath = ValueOrDefault(profile.LiveMonteCarloOutputPath, reportFolder, $"{key}-live-total-mc.json");
+        profile.LiveMonteCarloPathsOutputPath = ValueOrDefault(profile.LiveMonteCarloPathsOutputPath, reportFolder, $"{key}-live-total-mc-paths.csv");
+    }
+
+    private static string ValueOrDefault(string value, string folder, string fileName)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            return value;
+        if (string.IsNullOrWhiteSpace(folder))
+            return fileName;
+        return Path.Combine(folder, fileName);
     }
 
     private static string Slug(string value)
