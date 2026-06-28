@@ -34,6 +34,86 @@ public static class StateWeibullScoreBucketer
         return "margin3_plus";
     }
 
+    public static IReadOnlyList<string> StandardDirectionalBuckets { get; } =
+    [
+        "draw_0_0",
+        "draw_1_1_plus",
+        "home_lead1_low",
+        "away_lead1_low",
+        "home_lead1_high",
+        "away_lead1_high",
+        "home_lead2",
+        "away_lead2",
+        "home_lead3_plus",
+        "away_lead3_plus"
+    ];
+
+    public static string ResolveDirectionalScoreBucket(int homeGoals, int awayGoals)
+    {
+        if (homeGoals < 0)
+            throw new ArgumentOutOfRangeException(nameof(homeGoals));
+        if (awayGoals < 0)
+            throw new ArgumentOutOfRangeException(nameof(awayGoals));
+
+        int totalGoals = homeGoals + awayGoals;
+        int margin = Math.Abs(homeGoals - awayGoals);
+
+        if (margin == 0)
+            return totalGoals == 0 ? "draw_0_0" : "draw_1_1_plus";
+
+        bool homeLeads = homeGoals > awayGoals;
+        if (margin == 1)
+        {
+            bool lowTotal = totalGoals <= 2;
+            if (homeLeads)
+                return lowTotal ? "home_lead1_low" : "home_lead1_high";
+
+            return lowTotal ? "away_lead1_low" : "away_lead1_high";
+        }
+
+        if (margin == 2)
+            return homeLeads ? "home_lead2" : "away_lead2";
+
+        return homeLeads ? "home_lead3_plus" : "away_lead3_plus";
+    }
+
+    public static string ResolvePressureBucket(int homeGoals, int awayGoals)
+    {
+        if (homeGoals == awayGoals)
+            return "draw";
+
+        int margin = Math.Abs(homeGoals - awayGoals);
+        bool homeLeads = homeGoals > awayGoals;
+        if (margin == 1)
+            return homeLeads ? "home_lead1" : "away_lead1";
+
+        return homeLeads ? "home_lead2_plus" : "away_lead2_plus";
+    }
+
+    public static double RuleBasedHomeNextGoalProbability(int homeGoals, int awayGoals)
+    {
+        if (homeGoals == awayGoals)
+            return 0.53;
+
+        int margin = Math.Abs(homeGoals - awayGoals);
+        bool homeLeads = homeGoals > awayGoals;
+
+        if (homeLeads)
+        {
+            if (margin == 1)
+                return 0.48;
+            if (margin == 2)
+                return 0.43;
+            return 0.40;
+        }
+
+        if (margin == 1)
+            return 0.58;
+        if (margin == 2)
+            return 0.63;
+        return 0.66;
+    }
+
     public static string ResolveExactScore(int homeGoals, int awayGoals)
         => $"{homeGoals}-{awayGoals}";
 }

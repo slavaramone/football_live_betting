@@ -19,6 +19,8 @@ public static class HelpPrinter
         Console.WriteLine("  build-state-weibull-exposures       Build score/time exposure CSV for fitting state Weibull curves.");
         Console.WriteLine("  fit-state-weibull-curves            Fit state/time Weibull curves from exposure CSV.");
         Console.WriteLine("  debug-state-weibull-clock           Export fitted state Weibull curve rows for one live score/minute.");
+        Console.WriteLine("  fit-next-goal-side-model            Fit next-goal scorer-side probabilities with fallback hierarchy.");
+        Console.WriteLine("  debug-next-goal-side                Resolve P(home/away next goal) for one live score/minute.");
         Console.WriteLine();
         Console.WriteLine("Profile file:");
         Console.WriteLine("  Default: config/league-profiles.json");
@@ -33,6 +35,8 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-state-weibull-exposures --profile npl-victoria --seasons 2023,2024,2025 --out outputs/calibration/npl-victoria-state-weibull-exposures.csv");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-state-weibull-curves --in outputs/calibration/npl-victoria-state-weibull-exposures.csv --out outputs/calibration/npl-victoria-state-weibull-curves.json --summary outputs/calibration/npl-victoria-state-weibull-curves-summary.csv");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-state-weibull-clock --curves outputs/calibration/npl-victoria-state-weibull-curves.json --profile npl-victoria --score 2-0 --minute 49 --until 96 --out outputs/debug/npl-victoria-2-0-49-clock.csv");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-next-goal-side-model --in outputs/calibration/npl-victoria-state-weibull-exposures.csv --out outputs/calibration/npl-victoria-next-goal-side-model.json --summary outputs/calibration/npl-victoria-next-goal-side-summary.csv");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-next-goal-side --model outputs/calibration/npl-victoria-next-goal-side-model.json --profile npl-victoria --score 2-0 --minute 49");
         Console.WriteLine();
         Console.WriteLine("Common arguments:");
         Console.WriteLine("  --profile                         Profile key/name from config/league-profiles.json.");
@@ -55,12 +59,15 @@ public static class HelpPrinter
         Console.WriteLine("  --in / --input                    Input CSV for fitting commands.");
         Console.WriteLine("  --summary                         Summary CSV path for fitting commands.");
         Console.WriteLine("  --curves                          Fitted state Weibull curves JSON path for debug-state-weibull-clock.");
+        Console.WriteLine("  --model                           Fitted next-goal-side JSON path for debug-next-goal-side.");
         Console.WriteLine("  --until                           End minute for debug-state-weibull-clock output. Default: last fitted bucket end.");
         Console.WriteLine("  --step                            Minute step for debug-state-weibull-clock output. Default: 1.");
         Console.WriteLine("  --min-mu-full-exposures           μ direct threshold. Default: 75.");
         Console.WriteLine("  --min-mu-goals                    μ direct goal threshold. Default: 30.");
         Console.WriteLine("  --min-k-full-exposures            k direct threshold. Default: 150.");
         Console.WriteLine("  --min-k-goals                     k direct goal threshold. Default: 50.");
+        Console.WriteLine("  --min-exact-goals                 Next-goal-side exact directional/time threshold. Default: 25.");
+        Console.WriteLine("  --prior-weight-goals              Smoothing prior weight for exact next-goal side samples. Default: 6.");
         Console.WriteLine("  --out / --output                  Optional output path for debug/calibration commands.");
     }
 

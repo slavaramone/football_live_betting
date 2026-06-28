@@ -35,6 +35,8 @@ try
         "build-state-weibull-exposures" => await RunBuildStateWeibullExposures(commandArgs),
         "fit-state-weibull-curves" => await RunFitStateWeibullCurves(commandArgs),
         "debug-state-weibull-clock" => await RunDebugStateWeibullClock(commandArgs),
+        "fit-next-goal-side-model" => await RunFitNextGoalSideModel(commandArgs),
+        "debug-next-goal-side" => await RunDebugNextGoalSide(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -424,6 +426,103 @@ static async Task<int> RunDebugStateWeibullClock(string[] args)
     Console.WriteLine($"Expected remaining to until: {result.ExpectedRemainingToUntil.ToString("0.####", CultureInfo.InvariantCulture)}");
     Console.WriteLine($"Rows written: {result.RowsWritten}");
     Console.WriteLine($"Output written: {result.OutputPath}");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
+    }
+
+    return 0;
+}
+
+
+static async Task<int> RunFitNextGoalSideModel(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    string league = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty);
+
+    var options = new NextGoalSideModelFitterOptions
+    {
+        InputPath = parsed.String("in", parsed.String("input", "outputs/calibration/state-weibull-exposures.csv")),
+        OutputPath = parsed.String("out", parsed.String("output", "outputs/calibration/next-goal-side-model.json")),
+        SummaryPath = parsed.String("summary", "outputs/calibration/next-goal-side-summary.csv"),
+        League = league,
+        MinExactGoals = parsed.Int("min-exact-goals", 25),
+        MinDirectionalOverallGoals = parsed.Int("min-directional-overall-goals", 50),
+        MinPressureTimeGoals = parsed.Int("min-pressure-time-goals", 40),
+        MinNeutralScoreTimeGoals = parsed.Int("min-neutral-score-time-goals", 25),
+        MinTimeGoals = parsed.Int("min-time-goals", 50),
+        MinLeagueGoals = parsed.Int("min-league-goals", 100),
+        PriorWeightGoals = parsed.Double("prior-weight-goals", 6.0)
+    };
+
+    var fitter = new NextGoalSideModelFitter();
+    NextGoalSideModelFitResult result = await fitter.FitAsync(options, CancellationToken.None);
+
+    Console.WriteLine("Next-goal-side model fitted");
+    Console.WriteLine($"Input rows read: {result.ExposureRowsRead}");
+    Console.WriteLine($"Goal rows read: {result.GoalRowsRead}");
+    Console.WriteLine($"Estimates written: {result.EstimatesWritten}");
+    Console.WriteLine($"Exact supported: {result.ExactSupported}");
+    Console.WriteLine($"Directional fallback: {result.DirectionalFallback}");
+    Console.WriteLine($"Pressure-time fallback: {result.PressureTimeFallback}");
+    Console.WriteLine($"Neutral-score/time fallback: {result.NeutralScoreTimeFallback}");
+    Console.WriteLine($"Time fallback: {result.TimeFallback}");
+    Console.WriteLine($"League fallback: {result.LeagueFallback}");
+    Console.WriteLine($"Rule-based fallback: {result.RuleBasedFallback}");
+    Console.WriteLine($"Output written: {result.OutputPath}");
+    Console.WriteLine($"Summary written: {result.SummaryPath}");
+
+    return 0;
+}
+
+static async Task<int> RunDebugNextGoalSide(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    (int homeGoals, int awayGoals) = ParseScore(parsed.RequiredString("score"));
+
+    var options = new NextGoalSideDebugOptions
+    {
+        ModelPath = parsed.String("model", parsed.String("in", parsed.String("input", "outputs/calibration/next-goal-side-model.json"))),
+        League = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty),
+        HomeGoals = homeGoals,
+        AwayGoals = awayGoals,
+        Minute = parsed.RequiredDouble("minute")
+    };
+
+    var debugger = new NextGoalSideDebugger();
+    NextGoalSideDebugResult result = await debugger.DebugAsync(options, CancellationToken.None);
+
+    Console.WriteLine("Next-goal-side debug");
+    Console.WriteLine($"Model league: {result.League}");
+    Console.WriteLine($"Score: {result.ExactScore}");
+    Console.WriteLine($"Directional bucket: {result.DirectionalScoreBucket}");
+    Console.WriteLine($"Neutral bucket: {result.NeutralScoreBucket}");
+    Console.WriteLine($"Pressure bucket: {result.PressureBucket}");
+    Console.WriteLine($"Minute: {result.Minute.ToString("0.##", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Time bucket: {result.TimeBucket}");
+
+    if (result.Estimate is not null)
+    {
+        NextGoalSideEstimate estimate = result.Estimate;
+        Console.WriteLine($"Status: {estimate.Status}");
+        Console.WriteLine($"Probability source: {estimate.ProbabilitySource}");
+        Console.WriteLine($"P(home next goal): {estimate.ProbabilityHomeNextGoal.ToString("0.####", CultureInfo.InvariantCulture)}");
+        Console.WriteLine($"P(away next goal): {estimate.ProbabilityAwayNextGoal.ToString("0.####", CultureInfo.InvariantCulture)}");
+        Console.WriteLine($"Exact sample: {estimate.ExactGoalCount} goals (home={estimate.ExactHomeGoalCount}, away={estimate.ExactAwayGoalCount})");
+        Console.WriteLine($"Exact raw P(home): {(estimate.ExactRawProbabilityHomeNextGoal.HasValue ? estimate.ExactRawProbabilityHomeNextGoal.Value.ToString("0.####", CultureInfo.InvariantCulture) : "<none>")}");
+        Console.WriteLine($"Fallback source: {estimate.FallbackSource}");
+        Console.WriteLine($"Fallback sample: {estimate.FallbackGoalCount} goals (home={estimate.FallbackHomeGoalCount}, away={estimate.FallbackAwayGoalCount})");
+        Console.WriteLine($"Fallback P(home): {estimate.FallbackProbabilityHomeNextGoal.ToString("0.####", CultureInfo.InvariantCulture)}");
+        Console.WriteLine($"Rule-based P(home): {estimate.RuleBasedProbabilityHomeNextGoal.ToString("0.####", CultureInfo.InvariantCulture)}");
+    }
 
     if (result.Warnings.Count > 0)
     {
