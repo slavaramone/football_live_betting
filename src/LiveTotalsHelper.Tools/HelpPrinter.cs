@@ -16,6 +16,7 @@ public static class HelpPrinter
         Console.WriteLine("  validate-db                         Validate imported PostgreSQL data quality.");
         Console.WriteLine("  db-validate                         Alias for validate-db.");
         Console.WriteLine("  debug-effective-end                 Estimate effective match end/remaining time for a live state.");
+        Console.WriteLine("  build-state-weibull-exposures       Build score/time exposure CSV for fitting state Weibull curves.");
         Console.WriteLine();
         Console.WriteLine("Profile file:");
         Console.WriteLine("  Default: config/league-profiles.json");
@@ -27,6 +28,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore --league superettan --season-id 2026");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore-fixtures --profile superettan");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db --league \"Superettan\" --season-id 2026");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-state-weibull-exposures --profile npl-victoria --seasons 2023,2024,2025 --out outputs/calibration/npl-victoria-state-weibull-exposures.csv");
         Console.WriteLine();
         Console.WriteLine("Common arguments:");
         Console.WriteLine("  --profile                         Profile key/name from config/league-profiles.json.");
@@ -44,7 +46,9 @@ public static class HelpPrinter
         Console.WriteLine("  --minute                          Live minute for debug-effective-end.");
         Console.WriteLine("  --score                           Current score as home-away, for example 2-0.");
         Console.WriteLine("  --hr / --ar                       Home/away red-card counts for debug-effective-end.");
-        Console.WriteLine("  --out / --output                  Optional JSON output path for debug commands.");
+        Console.WriteLine("  --seasons                         Comma-separated season years/ids for calibration commands.");
+        Console.WriteLine("  --time-buckets                    Comma-separated buckets, for example 45-55,55-65,65-75.");
+        Console.WriteLine("  --out / --output                  Optional output path for debug/calibration commands.");
     }
 
     public static int UnknownCommand(string command)

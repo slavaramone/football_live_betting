@@ -32,6 +32,7 @@ try
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
         "debug-effective-end" => await RunDebugEffectiveEnd(commandArgs),
+        "build-state-weibull-exposures" => await RunBuildStateWeibullExposures(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -266,6 +267,68 @@ static async Task<int> RunDebugEffectiveEnd(string[] args)
             CancellationToken.None);
 
         Console.WriteLine($"Output written: {fullPath}");
+    }
+
+    return 0;
+}
+
+static async Task<int> RunBuildStateWeibullExposures(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    LeagueProfile? profile = await LoadProfileByKeyOrLeagueAsync(parsed);
+    string league = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty);
+
+    var seasons = new List<string>();
+    if (parsed.Has("season-id"))
+        seasons.Add(parsed.RequiredString("season-id"));
+    if (parsed.Has("seasons"))
+        seasons.AddRange(parsed.RequiredString("seasons").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+
+    string outputPath = parsed.String("out", parsed.String("output", "outputs/calibration/state-weibull-exposures.csv"));
+    IReadOnlyList<StateWeibullTimeBucket> timeBuckets = StateWeibullTimeBucket.ParseList(parsed.String("time-buckets", string.Empty));
+
+    double profileDefaultFinalMinute = profile?.MonteCarlo.DefaultEffectiveEnd2H ?? 96.0;
+    if (profileDefaultFinalMinute <= 0)
+        profileDefaultFinalMinute = 96.0;
+
+    double defaultFinalMinute = parsed.Double("default-final-minute", profileDefaultFinalMinute);
+
+    var options = new StateWeibullExposureBuilderOptions
+    {
+        League = league,
+        Seasons = seasons,
+        TimeBuckets = timeBuckets,
+        OutputPath = outputPath,
+        DefaultFinalMinute = defaultFinalMinute,
+        MinimumInstantGoalIntervalMinutes = parsed.Double("minimum-instant-goal-interval", 0.01)
+    };
+
+    IConfiguration configuration = BuildConfiguration();
+    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
+
+    var builder = new StateWeibullExposureBuilder(dbContext);
+    StateWeibullExposureBuildResult result = await builder.BuildAsync(options, CancellationToken.None);
+
+    Console.WriteLine("State Weibull exposure dataset built");
+    Console.WriteLine($"League filter: {(string.IsNullOrWhiteSpace(options.League) ? "<all>" : options.League)}");
+    Console.WriteLine($"Season filter: {(options.Seasons.Count == 0 ? "<all>" : string.Join(",", options.Seasons))}");
+    Console.WriteLine($"Time buckets: {string.Join(",", options.TimeBuckets.Select(x => x.Key))}");
+    Console.WriteLine($"Default final minute: {options.DefaultFinalMinute.ToString("0.##", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Matches loaded: {result.MatchesLoaded}");
+    Console.WriteLine($"Matches used: {result.MatchesUsed}");
+    Console.WriteLine($"Skipped missing score: {result.MatchesSkippedMissingScore}");
+    Console.WriteLine($"Skipped invalid timeline: {result.MatchesSkippedInvalidTimeline}");
+    Console.WriteLine($"Exposure rows written: {result.ExposureRowsWritten}");
+    Console.WriteLine($"Goal rows written: {result.GoalRowsWritten}");
+    Console.WriteLine($"Output written: {Path.GetFullPath(options.OutputPath)}");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"- {warning}");
     }
 
     return 0;
