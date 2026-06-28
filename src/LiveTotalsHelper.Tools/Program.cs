@@ -38,6 +38,9 @@ try
         "fit-next-goal-side-model" => await RunFitNextGoalSideModel(commandArgs),
         "debug-next-goal-side" => await RunDebugNextGoalSide(commandArgs),
         "simulate-live-total" => await RunSimulateLiveTotal(commandArgs),
+        "evaluate-monte-carlo-model" => await RunEvaluateMonteCarloModel(commandArgs),
+        "evaluate-live-monte-carlo" => await RunEvaluateMonteCarloModel(commandArgs),
+        "backtest-monte-carlo-model" => await RunEvaluateMonteCarloModel(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -643,6 +646,83 @@ static async Task<int> RunSimulateLiveTotal(string[] args)
         if (simulation.Warnings.Count > 20)
             Console.WriteLine($"... {simulation.Warnings.Count - 20} more warnings in JSON output.");
     }
+
+    return 0;
+}
+
+
+static async Task<int> RunEvaluateMonteCarloModel(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    LeagueProfile? profile = await LoadProfileByKeyOrLeagueAsync(parsed);
+    MonteCarloConfig monteCarlo = profile?.MonteCarlo ?? new MonteCarloConfig();
+
+    var seasons = new List<string>();
+    if (parsed.Has("season-id"))
+        seasons.Add(parsed.RequiredString("season-id"));
+    if (parsed.Has("seasons"))
+        seasons.AddRange(parsed.RequiredString("seasons").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+    if (parsed.Has("test-seasons"))
+        seasons.AddRange(parsed.RequiredString("test-seasons").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+    if (seasons.Count == 0 && profile?.CurrentSeasonId > 0)
+        seasons.Add(profile.CurrentSeasonId.ToString(CultureInfo.InvariantCulture));
+
+    IReadOnlyList<double> stateMinutes = ParseDoubleList(
+        parsed.String("minutes", parsed.String("state-minutes", "45,50,55,60,65,70,75,80,85")),
+        [45, 50, 55, 60, 65, 70, 75, 80, 85]);
+
+    IReadOnlyList<double> lines = ParseDoubleList(
+        parsed.String("lines", profile is null ? string.Join(',', new[] { 2.5, 3.5 }) : string.Join(',', profile.TargetLines)),
+        profile?.TargetLines.Count > 0 ? profile.TargetLines : [2.5, 3.5]);
+
+    int simulationCount = parsed.Int("sims", parsed.Int("simulation-count", monteCarlo.SimulationCount > 0 ? monteCarlo.SimulationCount : 5000));
+    double stepMinutes = parsed.Double("step", parsed.Double("step-minutes", monteCarlo.StepMinutes > 0 ? monteCarlo.StepMinutes : 0.25));
+    int? seed = parsed.Has("seed") ? parsed.Int("seed", 0) : monteCarlo.RandomSeed;
+    double effectiveEnd = parsed.Double("effective-end", monteCarlo.DefaultEffectiveEnd2H > 0 ? monteCarlo.DefaultEffectiveEnd2H : 96.0);
+    double assumedOdds = parsed.Double("assumed-odds", 1.85);
+
+    var options = new MonteCarloModelEvaluationOptions
+    {
+        League = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty),
+        Seasons = seasons,
+        StateMinutes = stateMinutes,
+        Lines = lines,
+        IncludeSettledLines = parsed.Bool("include-settled-lines", false),
+        CurvesPath = GetPathArgument(parsed, profile?.StateWeibullCurvesPath, "outputs/calibration/state-weibull-curves.json", "curves", "in", "input"),
+        SideModelPath = GetPathArgument(parsed, profile?.NextGoalSideModelPath, "outputs/calibration/next-goal-side-model.json", "side-model", "model"),
+        OutputPath = GetPathArgument(parsed, profile?.LiveMonteCarloEvaluationSummaryPath, "outputs/validation/mc-evaluation-summary.json", "out", "output", "summary"),
+        SimulationCount = simulationCount,
+        StepMinutes = stepMinutes,
+        RandomSeed = seed,
+        EffectiveEndMinute = effectiveEnd,
+        AssumedOverOdds = parsed.Double("assumed-over-odds", parsed.Double("over-odds", assumedOdds)),
+        AssumedUnderOdds = parsed.Double("assumed-under-odds", parsed.Double("under-odds", assumedOdds)),
+        MinEdge = parsed.Double("min-edge", profile?.EdgeThreshold ?? 0.05),
+        MaxStates = parsed.Int("max-states", 0),
+        ProgressEvery = parsed.Int("progress-every", 100)
+    };
+
+    IConfiguration configuration = BuildConfiguration();
+    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
+
+    var evaluator = new MonteCarloModelEvaluator(dbContext, Console.Out);
+    MonteCarloModelEvaluationCommandResult result = await evaluator.EvaluateAsync(options, CancellationToken.None);
+    MonteCarloModelEvaluationSummary summary = result.Summary;
+
+    Console.WriteLine("Monte Carlo model evaluation");
+    Console.WriteLine($"League: {summary.League}");
+    Console.WriteLine($"Seasons: {(summary.Seasons.Count == 0 ? "<all>" : string.Join(',', summary.Seasons))}");
+    Console.WriteLine($"Rows evaluated: {summary.Dataset.RowsEvaluated}");
+    Console.WriteLine($"Matches used: {summary.Dataset.MatchesUsed}/{summary.Dataset.MatchesLoaded}");
+    Console.WriteLine($"MAE remaining: {summary.Overall.Mae.ToString("0.####", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"RMSE remaining: {summary.Overall.Rmse.ToString("0.####", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Bias remaining: {summary.Overall.Bias.ToString("+0.####;-0.####;0", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Brier over: {summary.Overall.OverUnder.BrierOver.ToString("0.####", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"LogLoss over: {summary.Overall.OverUnder.LogLossOver.ToString("0.####", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Bets: {summary.Betting.Bets}, ROI: {summary.Betting.Roi.ToString("0.00%", CultureInfo.InvariantCulture)}, Profit: {summary.Betting.Profit.ToString("0.##", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Static MAE: {summary.StaticClockComparison.StaticMae.ToString("0.####", CultureInfo.InvariantCulture)}; MC minus static MAE: {summary.StaticClockComparison.McMaeMinusStaticMae.ToString("+0.####;-0.####;0", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Summary written: {result.OutputPath}");
 
     return 0;
 }
@@ -1268,6 +1348,21 @@ static void PrintWarningsAndFailures(IReadOnlyCollection<string> warnings, IRead
     }
 }
 
+static IReadOnlyList<double> ParseDoubleList(string value, IReadOnlyList<double> fallback)
+{
+    if (string.IsNullOrWhiteSpace(value))
+        return fallback;
+
+    var result = new List<double>();
+    foreach (string token in value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+    {
+        if (double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+            result.Add(parsed);
+    }
+
+    return result.Count == 0 ? fallback : result;
+}
+
 internal sealed class FlashscoreImportResult
 {
     public int RoundsImported { get; set; }
@@ -1278,3 +1373,4 @@ internal sealed class FlashscoreImportResult
     public List<string> Warnings { get; } = [];
     public List<string> Failures { get; } = [];
 }
+

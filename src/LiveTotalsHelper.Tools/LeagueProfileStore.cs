@@ -110,6 +110,7 @@ public sealed class LeagueProfile
     public string NextGoalSideSummaryPath { get; set; } = string.Empty;
     public string LiveMonteCarloOutputPath { get; set; } = string.Empty;
     public string LiveMonteCarloPathsOutputPath { get; set; } = string.Empty;
+    public string LiveMonteCarloEvaluationSummaryPath { get; set; } = string.Empty;
 
     public List<string> StateWeibullTimeBuckets { get; set; } = [];
     public StateWeibullCurveFitProfileSettings StateWeibullCurveFit { get; set; } = new();
@@ -287,6 +288,7 @@ public sealed class LeagueProfileStore
         profile.NextGoalSideSummaryPath = ValueOrDefault(profile.NextGoalSideSummaryPath, reportFolder, $"{key}-next-goal-side-summary.csv");
         profile.LiveMonteCarloOutputPath = ValueOrDefault(profile.LiveMonteCarloOutputPath, reportFolder, $"{key}-live-total-mc.json");
         profile.LiveMonteCarloPathsOutputPath = ValueOrDefault(profile.LiveMonteCarloPathsOutputPath, reportFolder, $"{key}-live-total-mc-paths.csv");
+        profile.LiveMonteCarloEvaluationSummaryPath = ValueOrDefault(profile.LiveMonteCarloEvaluationSummaryPath, reportFolder, $"{key}-mc-evaluation-summary.json");
     }
 
     private static string ValueOrDefault(string value, string folder, string fileName)

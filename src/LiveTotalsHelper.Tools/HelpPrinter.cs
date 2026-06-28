@@ -22,6 +22,7 @@ public static class HelpPrinter
         Console.WriteLine("  fit-next-goal-side-model            Fit next-goal scorer-side probabilities with fallback hierarchy.");
         Console.WriteLine("  debug-next-goal-side                Resolve P(home/away next goal) for one live score/minute.");
         Console.WriteLine("  simulate-live-total                 Run single-fixture Monte Carlo live total simulation.");
+        Console.WriteLine("  evaluate-monte-carlo-model         Build historical live states in memory and write MC validation summary JSON.");
         Console.WriteLine();
         Console.WriteLine("Profile file:");
         Console.WriteLine("  Default: config/league-profiles.json");
@@ -39,6 +40,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-next-goal-side-model --profile npl-victoria");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-next-goal-side --profile npl-victoria --score 2-0 --minute 49");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- simulate-live-total --profile npl-victoria --score 2-0 --minute 49 --line 3.5 --under-odds 2.20");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-monte-carlo-model --profile npl-victoria --seasons 2026 --sims 5000");
         Console.WriteLine();
         Console.WriteLine("Common arguments:");
         Console.WriteLine("  --profile                         Profile key/name from config/league-profiles.json.");
@@ -68,6 +70,12 @@ public static class HelpPrinter
         Console.WriteLine("  --sims                            Monte Carlo simulation count. Default from profile/global config.");
         Console.WriteLine("  --seed                            Monte Carlo random seed. Default from profile/global config.");
         Console.WriteLine("  --line                            Live total line for simulate-live-total.");
+        Console.WriteLine("  --lines                           Comma-separated lines for evaluate-monte-carlo-model. Default: profile targetLines.");
+        Console.WriteLine("  --minutes                         Comma-separated historical state minutes for evaluation. Default: 45,50,55,60,65,70,75,80,85.");
+        Console.WriteLine("  --assumed-odds                    Assumed flat odds for evaluation betting metrics. Default: 1.85.");
+        Console.WriteLine("  --assumed-over-odds / --assumed-under-odds  Side-specific assumed odds for evaluation metrics.");
+        Console.WriteLine("  --min-edge                        Minimum edge for evaluation betting metrics. Default: profile edgeThreshold.");
+        Console.WriteLine("  --max-states                      Optional cap on evaluated rows for quick tests.");
         Console.WriteLine("  --over-odds / --under-odds        Optional book odds for edge calculation.");
         Console.WriteLine("  --paths-out                       Optional CSV trace of early simulated goal paths.");
         Console.WriteLine("  --trace-paths                     Number of simulated paths to trace when --paths-out is provided. Default: 200.");
