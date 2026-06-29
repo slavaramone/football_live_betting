@@ -41,6 +41,17 @@ public sealed class CompetingHazardCurveFitterOptions
     public double GoalDrawMinMultiplier { get; init; } = 0.55;
     public double GoalDrawMaxMultiplier { get; init; } = 1.0;
     public double GoalDrawMinExpectedGoalsForStableFactor { get; init; } = 8.0;
+
+    public bool MarketBaselineEnabled { get; init; } = true;
+    public double MarketBaselineOddsSensitivityGoals { get; init; } = 1.25;
+    public double MarketBaselineMultiplierShrink { get; init; } = 0.65;
+    public double? MarketBaselineLowTotalMultiplierShrink { get; init; }
+    public double? MarketBaselineHighTotalMultiplierShrink { get; init; }
+    public double MarketBaselineMinMultiplier { get; init; } = 0.75;
+    public double MarketBaselineMaxMultiplier { get; init; } = 1.25;
+    public double MarketBaselineMinMarketExpectedTotalGoals { get; init; } = 1.0;
+    public double MarketBaselineMaxMarketExpectedTotalGoals { get; init; } = 6.0;
+    public double MarketBaselineModelBaselineExpectedTotalGoals { get; init; }
 }
 
 public sealed class CompetingHazardCurveFitResult
@@ -346,6 +357,19 @@ public sealed class CompetingHazardCurveFitter
             AfterGoalFactors = afterGoalFactors,
             GoalDrawSuppressionSettings = goalDrawSettings,
             GoalDrawSuppressionFactors = goalDrawSuppressionFactors,
+            MarketBaselineSettings = new CompetingHazardMarketBaselineSettings
+            {
+                Enabled = options.MarketBaselineEnabled,
+                OddsSensitivityGoals = options.MarketBaselineOddsSensitivityGoals,
+                MultiplierShrink = options.MarketBaselineMultiplierShrink,
+                LowTotalMultiplierShrink = options.MarketBaselineLowTotalMultiplierShrink,
+                HighTotalMultiplierShrink = options.MarketBaselineHighTotalMultiplierShrink,
+                MinMultiplier = options.MarketBaselineMinMultiplier,
+                MaxMultiplier = options.MarketBaselineMaxMultiplier,
+                MinMarketExpectedTotalGoals = options.MarketBaselineMinMarketExpectedTotalGoals,
+                MaxMarketExpectedTotalGoals = options.MarketBaselineMaxMarketExpectedTotalGoals,
+                ModelBaselineExpectedTotalGoals = options.MarketBaselineModelBaselineExpectedTotalGoals
+            },
             Curves = curves
                 .OrderBy(x => x.BucketStartMinute)
                 .ThenBy(x => x.DirectionalScoreBucket)

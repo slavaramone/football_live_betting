@@ -28,6 +28,7 @@ public sealed class LiveTotalMonteCarloCommandOptions
     public double? PregameTotalLine { get; init; }
     public double? PregameOverOdds { get; init; }
     public double? PregameUnderOdds { get; init; }
+    public bool UsePregameMarketBaseline { get; init; } = true;
     public double? MarketBaselineLowTotalShrink { get; init; }
     public double? MarketBaselineHighTotalShrink { get; init; }
     public double? MarketBaselineMinMultiplier { get; init; }
@@ -93,6 +94,7 @@ public sealed class LiveTotalMonteCarloSimulatorCommand
             PregameTotalLine = options.PregameTotalLine,
             PregameOverOdds = options.PregameOverOdds,
             PregameUnderOdds = options.PregameUnderOdds,
+            UseMarketBaseline = options.UsePregameMarketBaseline,
             MarketBaselineLowTotalShrink = options.MarketBaselineLowTotalShrink,
             MarketBaselineHighTotalShrink = options.MarketBaselineHighTotalShrink,
             MarketBaselineMinMultiplier = options.MarketBaselineMinMultiplier,

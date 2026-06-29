@@ -14,6 +14,7 @@ public sealed class LeagueProfilesConfig
     public MonteCarloConfig MonteCarlo { get; set; } = new();
     public StateWeibullCurveFitProfileSettings StateWeibullCurveFit { get; set; } = new();
     public NextGoalSideFitProfileSettings NextGoalSideFit { get; set; } = new();
+    public MarketBaselineProfileSettings MarketBaseline { get; set; } = new();
     public List<LeagueProfile> Profiles { get; set; } = [];
 }
 
@@ -80,6 +81,55 @@ public sealed class NextGoalSideFitProfileSettings
     }
 }
 
+public sealed class MarketBaselineProfileSettings
+{
+    public bool? Enabled { get; set; }
+    public double? OddsSensitivityGoals { get; set; }
+    public double? MultiplierShrink { get; set; }
+    public double? LowTotalMultiplierShrink { get; set; }
+    public double? HighTotalMultiplierShrink { get; set; }
+    public double? MinMultiplier { get; set; }
+    public double? MaxMultiplier { get; set; }
+    public double? MinMarketExpectedTotalGoals { get; set; }
+    public double? MaxMarketExpectedTotalGoals { get; set; }
+    public double? ModelBaselineExpectedTotalGoals { get; set; }
+
+    public MarketBaselineProfileSettings WithDefaultsFrom(MarketBaselineProfileSettings fallback)
+    {
+        return new MarketBaselineProfileSettings
+        {
+            Enabled = Enabled ?? fallback.Enabled ?? true,
+            OddsSensitivityGoals = PositiveOrFallback(OddsSensitivityGoals, fallback.OddsSensitivityGoals, 1.25),
+            MultiplierShrink = NonNegativeOrFallback(MultiplierShrink, fallback.MultiplierShrink, 0.65),
+            LowTotalMultiplierShrink = NonNegativeOrFallback(LowTotalMultiplierShrink, fallback.LowTotalMultiplierShrink, null),
+            HighTotalMultiplierShrink = NonNegativeOrFallback(HighTotalMultiplierShrink, fallback.HighTotalMultiplierShrink, null),
+            MinMultiplier = PositiveOrFallback(MinMultiplier, fallback.MinMultiplier, 0.75),
+            MaxMultiplier = PositiveOrFallback(MaxMultiplier, fallback.MaxMultiplier, 1.25),
+            MinMarketExpectedTotalGoals = PositiveOrFallback(MinMarketExpectedTotalGoals, fallback.MinMarketExpectedTotalGoals, 1.0),
+            MaxMarketExpectedTotalGoals = PositiveOrFallback(MaxMarketExpectedTotalGoals, fallback.MaxMarketExpectedTotalGoals, 6.0),
+            ModelBaselineExpectedTotalGoals = PositiveOrFallback(ModelBaselineExpectedTotalGoals, fallback.ModelBaselineExpectedTotalGoals, null)
+        };
+    }
+
+    private static double? PositiveOrFallback(double? value, double? fallback, double? defaultValue)
+    {
+        if (value.HasValue && value.Value > 0)
+            return value.Value;
+        if (fallback.HasValue && fallback.Value > 0)
+            return fallback.Value;
+        return defaultValue;
+    }
+
+    private static double? NonNegativeOrFallback(double? value, double? fallback, double? defaultValue)
+    {
+        if (value.HasValue && value.Value >= 0)
+            return value.Value;
+        if (fallback.HasValue && fallback.Value >= 0)
+            return fallback.Value;
+        return defaultValue;
+    }
+}
+
 public sealed class LeagueProfile
 {
     public string Key { get; set; } = string.Empty;
@@ -122,6 +172,7 @@ public sealed class LeagueProfile
     public StateWeibullCurveFitProfileSettings StateWeibullCurveFit { get; set; } = new();
     public NextGoalSideFitProfileSettings NextGoalSideFit { get; set; } = new();
     public MonteCarloConfig MonteCarlo { get; set; } = new();
+    public MarketBaselineProfileSettings MarketBaseline { get; set; } = new();
 
     public double EdgeThreshold { get; set; } = 0.05;
     public bool UseProbabilityMoveFilter { get; set; }
@@ -263,6 +314,7 @@ public sealed class LeagueProfileStore
             profile.MonteCarlo = profile.MonteCarlo.WithDefaultsFrom(config.MonteCarlo);
             profile.StateWeibullCurveFit = profile.StateWeibullCurveFit.WithDefaultsFrom(config.StateWeibullCurveFit);
             profile.NextGoalSideFit = profile.NextGoalSideFit.WithDefaultsFrom(config.NextGoalSideFit);
+            profile.MarketBaseline = profile.MarketBaseline.WithDefaultsFrom(config.MarketBaseline);
 
             string modelFolder = profile.ModelFolder;
             if (string.IsNullOrWhiteSpace(modelFolder) && !string.IsNullOrWhiteSpace(config.ModelRoot))

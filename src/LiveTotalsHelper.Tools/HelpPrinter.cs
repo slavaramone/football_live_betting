@@ -90,11 +90,11 @@ public static class HelpPrinter
         Console.WriteLine("  --pregame-total                  Direct pregame expected total override for v3 market baseline.");
         Console.WriteLine("  --disable-pregame-market-baseline Disable automatic DB pregame-odds baseline in v3 evaluation.");
         Console.WriteLine("  --pregame-odds-bookmaker         Optional bookmaker filter for v3 evaluation pregame total odds.");
-        Console.WriteLine("  --market-baseline-low-shrink     Override v3 market-baseline shrink when market total is below model baseline.");
-        Console.WriteLine("  --market-baseline-high-shrink    Override v3 market-baseline shrink when market total is above model baseline.");
+        Console.WriteLine("  --market-baseline-low-shrink     Override profile marketBaseline.lowTotalMultiplierShrink.");
+        Console.WriteLine("  --market-baseline-high-shrink    Override profile marketBaseline.highTotalMultiplierShrink.");
         Console.WriteLine("  --low-shrink-grid / --high-shrink-grid  Comma-separated grids for tune-market-baseline.");
-        Console.WriteLine("  --market-baseline-min-multiplier / --market-baseline-max-multiplier  Clamp tuned market-baseline multiplier.");
-        Console.WriteLine("  --market-baseline-odds-sensitivity  Goals added/subtracted from pregame total line by O/U price imbalance.");
+        Console.WriteLine("  --market-baseline-min-multiplier / --market-baseline-max-multiplier  Override profile marketBaseline clamp.");
+        Console.WriteLine("  --market-baseline-odds-sensitivity  Override profile marketBaseline.oddsSensitivityGoals.");
         Console.WriteLine("  --lines                           Comma-separated lines for evaluate-monte-carlo-model. Default: profile targetLines.");
         Console.WriteLine("  --minutes                         Comma-separated historical state minutes for evaluation. Default: 45,50,55,60,65,70,75,80,85.");
         Console.WriteLine("  --assumed-odds                    Assumed flat odds for evaluation betting metrics. Default: 1.85.");

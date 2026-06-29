@@ -125,6 +125,15 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
                 Line = line,
                 OverOdds = overOdds,
                 UnderOdds = underOdds,
+                PregameTotalLine = input.StartingLine > 0 ? input.StartingLine : null,
+                PregameOverOdds = input.StartingOverOdds > 1 ? input.StartingOverOdds : null,
+                PregameUnderOdds = input.StartingUnderOdds > 1 ? input.StartingUnderOdds : null,
+                UseMarketBaseline = profile.MarketBaseline.Enabled ?? true,
+                MarketBaselineLowTotalShrink = profile.MarketBaseline.LowTotalMultiplierShrink,
+                MarketBaselineHighTotalShrink = profile.MarketBaseline.HighTotalMultiplierShrink,
+                MarketBaselineMinMultiplier = profile.MarketBaseline.MinMultiplier,
+                MarketBaselineMaxMultiplier = profile.MarketBaseline.MaxMultiplier,
+                MarketBaselineOddsSensitivityGoals = profile.MarketBaseline.OddsSensitivityGoals,
                 SimulationCount = profile.MonteCarlo.SimulationCount,
                 StepMinutes = profile.MonteCarlo.StepMinutes,
                 RandomSeed = profile.MonteCarlo.RandomSeed
@@ -371,7 +380,11 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         if (!profile.MonteCarlo.Enabled)
             return baseNotes;
 
-        return $"MC enabled. {baseNotes}";
+        string marketBaseline = profile.MarketBaseline.Enabled ?? true
+            ? $" Market baseline: low shrink {FormatNullable(profile.MarketBaseline.LowTotalMultiplierShrink)}, high shrink {FormatNullable(profile.MarketBaseline.HighTotalMultiplierShrink)}."
+            : " Market baseline disabled.";
+
+        return $"MC enabled.{marketBaseline} {baseNotes}";
     }
 
     private static double GetMinimumEdge(LeagueProfile profile)
@@ -427,6 +440,9 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
 
     private static string FormatLine(double line)
         => line.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static string FormatNullable(double? value)
+        => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "profile/default";
 
     private static string FormatNullableOdds(double? value)
         => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-";

@@ -402,7 +402,6 @@ static async Task<int> RunFitCompetingHazardCurves(string[] args)
     string league = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty);
     StateWeibullCurveFitProfileSettings totalFit = profile?.StateWeibullCurveFit ?? new StateWeibullCurveFitProfileSettings();
     NextGoalSideFitProfileSettings sideFit = profile?.NextGoalSideFit ?? new NextGoalSideFitProfileSettings();
-
     var options = new CompetingHazardCurveFitterOptions
     {
         InputPath = GetPathArgument(parsed, profile?.StateWeibullExposuresPath, "outputs/calibration/state-weibull-exposures.csv", "in", "input"),
@@ -434,7 +433,17 @@ static async Task<int> RunFitCompetingHazardCurves(string[] args)
         GoalDrawPriorExpectedGoals = parsed.Double("goal-draw-prior-xg", 35.0),
         GoalDrawMinMultiplier = parsed.Double("goal-draw-min-multiplier", 0.55),
         GoalDrawMaxMultiplier = parsed.Double("goal-draw-max-multiplier", 1.0),
-        GoalDrawMinExpectedGoalsForStableFactor = parsed.Double("goal-draw-min-stable-xg", 8.0)
+        GoalDrawMinExpectedGoalsForStableFactor = parsed.Double("goal-draw-min-stable-xg", 8.0),
+        MarketBaselineEnabled = ResolveUsePregameMarketBaseline(parsed, profile, true),
+        MarketBaselineOddsSensitivityGoals = ResolveMarketBaselineDouble(parsed, profile, x => x.OddsSensitivityGoals, "market-baseline-odds-sensitivity", "odds-sensitivity-goals") ?? 1.25,
+        MarketBaselineMultiplierShrink = ResolveMarketBaselineDouble(parsed, profile, x => x.MultiplierShrink, "market-baseline-shrink", "market-baseline-multiplier-shrink") ?? 0.65,
+        MarketBaselineLowTotalMultiplierShrink = ResolveMarketBaselineDouble(parsed, profile, x => x.LowTotalMultiplierShrink, "market-baseline-low-shrink", "low-shrink", "down-shrink"),
+        MarketBaselineHighTotalMultiplierShrink = ResolveMarketBaselineDouble(parsed, profile, x => x.HighTotalMultiplierShrink, "market-baseline-high-shrink", "high-shrink", "up-shrink"),
+        MarketBaselineMinMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MinMultiplier, "market-baseline-min-multiplier", "min-market-baseline-multiplier") ?? 0.75,
+        MarketBaselineMaxMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MaxMultiplier, "market-baseline-max-multiplier", "max-market-baseline-multiplier") ?? 1.25,
+        MarketBaselineMinMarketExpectedTotalGoals = ResolveMarketBaselineDouble(parsed, profile, x => x.MinMarketExpectedTotalGoals, "market-baseline-min-total", "min-market-expected-total") ?? 1.0,
+        MarketBaselineMaxMarketExpectedTotalGoals = ResolveMarketBaselineDouble(parsed, profile, x => x.MaxMarketExpectedTotalGoals, "market-baseline-max-total", "max-market-expected-total") ?? 6.0,
+        MarketBaselineModelBaselineExpectedTotalGoals = ResolveMarketBaselineDouble(parsed, profile, x => x.ModelBaselineExpectedTotalGoals, "market-baseline-model-total", "model-baseline-expected-total") ?? 0.0
     };
 
     var fitter = new CompetingHazardCurveFitter();
@@ -708,11 +717,12 @@ static async Task<int> RunSimulateLiveTotal(string[] args)
         PregameTotalLine = requestForEnd.PregameTotalLine,
         PregameOverOdds = requestForEnd.PregameOverOdds,
         PregameUnderOdds = requestForEnd.PregameUnderOdds,
-        MarketBaselineLowTotalShrink = OptionalDouble(parsed, "market-baseline-low-shrink", "low-shrink", "down-shrink"),
-        MarketBaselineHighTotalShrink = OptionalDouble(parsed, "market-baseline-high-shrink", "high-shrink", "up-shrink"),
-        MarketBaselineMinMultiplier = OptionalDouble(parsed, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
-        MarketBaselineMaxMultiplier = OptionalDouble(parsed, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
-        MarketBaselineOddsSensitivityGoals = OptionalDouble(parsed, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
+        UsePregameMarketBaseline = ResolveUsePregameMarketBaseline(parsed, profile, true),
+        MarketBaselineLowTotalShrink = ResolveMarketBaselineDouble(parsed, profile, x => x.LowTotalMultiplierShrink, "market-baseline-low-shrink", "low-shrink", "down-shrink"),
+        MarketBaselineHighTotalShrink = ResolveMarketBaselineDouble(parsed, profile, x => x.HighTotalMultiplierShrink, "market-baseline-high-shrink", "high-shrink", "up-shrink"),
+        MarketBaselineMinMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MinMultiplier, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
+        MarketBaselineMaxMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MaxMultiplier, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
+        MarketBaselineOddsSensitivityGoals = ResolveMarketBaselineDouble(parsed, profile, x => x.OddsSensitivityGoals, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
         SimulationCount = simulationCount,
         StepMinutes = stepMinutes,
         RandomSeed = seed,
@@ -841,11 +851,12 @@ static async Task<int> RunSimulateLiveTotalV3(string[] args)
         PregameTotalLine = requestForEnd.PregameTotalLine,
         PregameOverOdds = requestForEnd.PregameOverOdds,
         PregameUnderOdds = requestForEnd.PregameUnderOdds,
-        MarketBaselineLowTotalShrink = OptionalDouble(parsed, "market-baseline-low-shrink", "low-shrink", "down-shrink"),
-        MarketBaselineHighTotalShrink = OptionalDouble(parsed, "market-baseline-high-shrink", "high-shrink", "up-shrink"),
-        MarketBaselineMinMultiplier = OptionalDouble(parsed, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
-        MarketBaselineMaxMultiplier = OptionalDouble(parsed, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
-        MarketBaselineOddsSensitivityGoals = OptionalDouble(parsed, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
+        UsePregameMarketBaseline = ResolveUsePregameMarketBaseline(parsed, profile, true),
+        MarketBaselineLowTotalShrink = ResolveMarketBaselineDouble(parsed, profile, x => x.LowTotalMultiplierShrink, "market-baseline-low-shrink", "low-shrink", "down-shrink"),
+        MarketBaselineHighTotalShrink = ResolveMarketBaselineDouble(parsed, profile, x => x.HighTotalMultiplierShrink, "market-baseline-high-shrink", "high-shrink", "up-shrink"),
+        MarketBaselineMinMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MinMultiplier, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
+        MarketBaselineMaxMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MaxMultiplier, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
+        MarketBaselineOddsSensitivityGoals = ResolveMarketBaselineDouble(parsed, profile, x => x.OddsSensitivityGoals, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
         SimulationCount = simulationCount,
         StepMinutes = stepMinutes,
         RandomSeed = seed,
@@ -947,13 +958,13 @@ static async Task<int> RunEvaluateMonteCarloModel(string[] args)
         AssumedOverOdds = parsed.Double("assumed-over-odds", parsed.Double("over-odds", assumedOdds)),
         AssumedUnderOdds = parsed.Double("assumed-under-odds", parsed.Double("under-odds", assumedOdds)),
         MinEdge = parsed.Double("min-edge", profile?.EdgeThreshold ?? 0.05),
-        UsePregameMarketBaseline = useV3 && !parsed.Bool("disable-pregame-market-baseline", false) && parsed.Bool("use-pregame-market-baseline", true),
+        UsePregameMarketBaseline = ResolveUsePregameMarketBaseline(parsed, profile, useV3),
         PregameOddsBookmaker = parsed.String("pregame-odds-bookmaker", parsed.String("bookmaker", string.Empty)),
-        MarketBaselineLowTotalShrink = OptionalDouble(parsed, "market-baseline-low-shrink", "low-shrink", "down-shrink"),
-        MarketBaselineHighTotalShrink = OptionalDouble(parsed, "market-baseline-high-shrink", "high-shrink", "up-shrink"),
-        MarketBaselineMinMultiplier = OptionalDouble(parsed, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
-        MarketBaselineMaxMultiplier = OptionalDouble(parsed, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
-        MarketBaselineOddsSensitivityGoals = OptionalDouble(parsed, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
+        MarketBaselineLowTotalShrink = ResolveMarketBaselineDouble(parsed, profile, x => x.LowTotalMultiplierShrink, "market-baseline-low-shrink", "low-shrink", "down-shrink"),
+        MarketBaselineHighTotalShrink = ResolveMarketBaselineDouble(parsed, profile, x => x.HighTotalMultiplierShrink, "market-baseline-high-shrink", "high-shrink", "up-shrink"),
+        MarketBaselineMinMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MinMultiplier, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
+        MarketBaselineMaxMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MaxMultiplier, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
+        MarketBaselineOddsSensitivityGoals = ResolveMarketBaselineDouble(parsed, profile, x => x.OddsSensitivityGoals, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
         MaxStates = parsed.Int("max-states", 0),
         ProgressEvery = parsed.Int("progress-every", 100)
     };
@@ -1046,11 +1057,11 @@ static async Task<int> RunTuneMarketBaseline(string[] args)
         AssumedOverOdds = parsed.Double("assumed-over-odds", parsed.Double("over-odds", assumedOdds)),
         AssumedUnderOdds = parsed.Double("assumed-under-odds", parsed.Double("under-odds", assumedOdds)),
         MinEdge = parsed.Double("min-edge", profile?.EdgeThreshold ?? 0.05),
-        UsePregameMarketBaseline = !parsed.Bool("disable-pregame-market-baseline", false) && parsed.Bool("use-pregame-market-baseline", true),
+        UsePregameMarketBaseline = ResolveUsePregameMarketBaseline(parsed, profile, true),
         PregameOddsBookmaker = parsed.String("pregame-odds-bookmaker", parsed.String("bookmaker", string.Empty)),
-        MarketBaselineMinMultiplier = OptionalDouble(parsed, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
-        MarketBaselineMaxMultiplier = OptionalDouble(parsed, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
-        MarketBaselineOddsSensitivityGoals = OptionalDouble(parsed, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
+        MarketBaselineMinMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MinMultiplier, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
+        MarketBaselineMaxMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MaxMultiplier, "market-baseline-max-multiplier"),
+        MarketBaselineOddsSensitivityGoals = ResolveMarketBaselineDouble(parsed, profile, x => x.OddsSensitivityGoals, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
         MaxStates = parsed.Int("max-states", 0),
         ProgressEvery = parsed.Int("progress-every", 0),
         SuppressSummaryWrite = true
@@ -1858,6 +1869,32 @@ static void PrintWarningsAndFailures(IReadOnlyCollection<string> warnings, IRead
         foreach (string failure in failures)
             Console.WriteLine($"- {failure}");
     }
+}
+
+
+static bool ResolveUsePregameMarketBaseline(ParsedArgs parsed, LeagueProfile? profile, bool modelSupportsMarketBaseline)
+{
+    if (!modelSupportsMarketBaseline)
+        return false;
+    if (parsed.Bool("disable-pregame-market-baseline", false))
+        return false;
+
+    bool defaultValue = profile?.MarketBaseline.Enabled ?? true;
+    return parsed.Bool("use-pregame-market-baseline", defaultValue);
+}
+
+static double? ResolveMarketBaselineDouble(
+    ParsedArgs parsed,
+    LeagueProfile? profile,
+    Func<MarketBaselineProfileSettings, double?> selector,
+    params string[] names)
+{
+    double? overrideValue = OptionalDouble(parsed, names);
+    if (overrideValue.HasValue)
+        return overrideValue.Value;
+
+    MarketBaselineProfileSettings? settings = profile?.MarketBaseline;
+    return settings is null ? null : selector(settings);
 }
 
 static double? OptionalDouble(ParsedArgs parsed, params string[] names)
