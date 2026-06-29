@@ -234,7 +234,8 @@ static async Task<int> RunDebugEffectiveEnd(string[] args)
         AwayRedCards = parsed.Int("ar", parsed.Int("away-red-cards", 0)),
         LastGoalMinute = parsed.Has("last-goal-minute")
             ? parsed.Double("last-goal-minute", 0.0)
-            : null
+            : null,
+        LastGoalSide = parsed.String("last-goal-side", string.Empty)
     };
 
     MonteCarloConfig config = profile?.MonteCarlo ?? new MonteCarloConfig();
@@ -420,7 +421,12 @@ static async Task<int> RunFitCompetingHazardCurves(string[] args)
         MinNeutralScoreTimeGoals = parsed.Int("min-neutral-score-time-goals", sideFit.MinNeutralScoreTimeGoals),
         MinTimeGoals = parsed.Int("min-time-goals", sideFit.MinTimeGoals),
         MinLeagueGoals = parsed.Int("min-league-goals", sideFit.MinLeagueGoals),
-        PriorWeightGoals = parsed.Double("prior-weight-goals", sideFit.PriorWeightGoals)
+        PriorWeightGoals = parsed.Double("prior-weight-goals", sideFit.PriorWeightGoals),
+        AfterGoalFactorsEnabled = parsed.Has("disable-after-goal-factors") ? false : parsed.Bool("after-goal-factors", true),
+        AfterGoalPriorExpectedGoals = parsed.Double("after-goal-prior-xg", 40.0),
+        AfterGoalMinMultiplier = parsed.Double("after-goal-min-multiplier", 0.55),
+        AfterGoalMaxMultiplier = parsed.Double("after-goal-max-multiplier", 1.65),
+        AfterGoalMinExpectedGoalsForStableFactor = parsed.Double("after-goal-min-stable-xg", 8.0)
     };
 
     var fitter = new CompetingHazardCurveFitter();
@@ -442,6 +448,7 @@ static async Task<int> RunFitCompetingHazardCurves(string[] args)
     Console.WriteLine($"Scorer-share time fallback: {result.ScorerShareTimeFallback}");
     Console.WriteLine($"Scorer-share league fallback: {result.ScorerShareLeagueFallback}");
     Console.WriteLine($"Scorer-share rule-based fallback: {result.ScorerShareRuleBasedFallback}");
+    Console.WriteLine($"After-goal factors written: {result.AfterGoalFactorsWritten}");
     Console.WriteLine($"Output written: {result.OutputPath}");
     Console.WriteLine($"Summary written: {result.SummaryPath}");
 
@@ -636,6 +643,7 @@ static async Task<int> RunSimulateLiveTotal(string[] args)
         HomeRedCards = parsed.Int("hr", parsed.Int("home-red-cards", 0)),
         AwayRedCards = parsed.Int("ar", parsed.Int("away-red-cards", 0)),
         LastGoalMinute = lastGoalMinute,
+        LastGoalSide = parsed.String("last-goal-side", string.Empty),
         Line = parsed.RequiredDouble("line"),
         OverOdds = parsed.Has("over-odds") ? parsed.Double("over-odds", 0.0) : null,
         UnderOdds = parsed.Has("under-odds") ? parsed.Double("under-odds", 0.0) : null,
@@ -664,6 +672,7 @@ static async Task<int> RunSimulateLiveTotal(string[] args)
         HomeRedCards = requestForEnd.HomeRedCards,
         AwayRedCards = requestForEnd.AwayRedCards,
         LastGoalMinute = lastGoalMinute,
+        LastGoalSide = requestForEnd.LastGoalSide,
         Line = requestForEnd.Line,
         OverOdds = requestForEnd.OverOdds,
         UnderOdds = requestForEnd.UnderOdds,
@@ -742,6 +751,7 @@ static async Task<int> RunSimulateLiveTotalV3(string[] args)
         HomeRedCards = parsed.Int("hr", parsed.Int("home-red-cards", 0)),
         AwayRedCards = parsed.Int("ar", parsed.Int("away-red-cards", 0)),
         LastGoalMinute = lastGoalMinute,
+        LastGoalSide = parsed.String("last-goal-side", string.Empty),
         Line = parsed.RequiredDouble("line"),
         OverOdds = parsed.Has("over-odds") ? parsed.Double("over-odds", 0.0) : null,
         UnderOdds = parsed.Has("under-odds") ? parsed.Double("under-odds", 0.0) : null,
@@ -769,6 +779,7 @@ static async Task<int> RunSimulateLiveTotalV3(string[] args)
         HomeRedCards = requestForEnd.HomeRedCards,
         AwayRedCards = requestForEnd.AwayRedCards,
         LastGoalMinute = lastGoalMinute,
+        LastGoalSide = requestForEnd.LastGoalSide,
         Line = requestForEnd.Line,
         OverOdds = requestForEnd.OverOdds,
         UnderOdds = requestForEnd.UnderOdds,

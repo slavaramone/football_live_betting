@@ -77,6 +77,9 @@ public sealed class LiveMonteCarloPathEvent
     public double ProbabilityHomeNextGoal { get; init; }
     public double ExpectedGoalsInStep { get; init; }
     public double GoalProbabilityInStep { get; init; }
+    public string AfterGoalBucket { get; init; } = string.Empty;
+    public double AfterGoalHomeMultiplier { get; init; } = 1.0;
+    public double AfterGoalAwayMultiplier { get; init; } = 1.0;
 }
 
 public sealed class LiveHazardMonteCarloSimulator

@@ -2,9 +2,9 @@ namespace LiveTotalsHelper.Core.MonteCarlo;
 
 public sealed class CompetingHazardCurveSet
 {
-    public string Version { get; init; } = "competing-hazard-curves-v2";
+    public string Version { get; init; } = "competing-hazard-curves-v3-after-goal";
     public DateTimeOffset GeneratedUtc { get; init; } = DateTimeOffset.UtcNow;
-    public string Strategy { get; init; } = "total_state_weibull_x_directional_scorer_share";
+    public string Strategy { get; init; } = "total_state_weibull_x_directional_scorer_share_x_after_goal_hazard_factors";
     public string SourceExposureFile { get; init; } = string.Empty;
     public string League { get; init; } = string.Empty;
     public List<string> ScoreBuckets { get; init; } = [];
@@ -18,6 +18,8 @@ public sealed class CompetingHazardCurveSet
     public List<NextGoalSideAggregate> PressureTimeScorerShares { get; init; } = [];
     public List<NextGoalSideAggregate> NeutralScoreTimeScorerShares { get; init; } = [];
     public List<NextGoalSideAggregate> TimeScorerShares { get; init; } = [];
+    public CompetingHazardAfterGoalSettings AfterGoalSettings { get; init; } = new();
+    public List<CompetingHazardAfterGoalFactor> AfterGoalFactors { get; init; } = [];
     public List<CompetingHazardCurve> Curves { get; init; } = [];
 }
 
@@ -25,7 +27,52 @@ public sealed class CompetingHazardFitSettings
 {
     public StateWeibullCurveFitSettings TotalHazardFit { get; init; } = new();
     public NextGoalSideModelSettings ScorerShareFit { get; init; } = new();
-    public string Strategy { get; init; } = "Fit total goal hazard by neutral score/time bucket, then split it by directional next-goal scorer share.";
+    public string Strategy { get; init; } = "Fit total goal hazard by neutral score/time bucket, split it by directional next-goal scorer share, then apply fitted after-goal hazard factors during simulation.";
+}
+
+public sealed class CompetingHazardAfterGoalSettings
+{
+    public bool Enabled { get; init; } = true;
+    public double PriorExpectedGoals { get; init; } = 40.0;
+    public double MinMultiplier { get; init; } = 0.55;
+    public double MaxMultiplier { get; init; } = 1.65;
+    public double MinExpectedGoalsForStableFactor { get; init; } = 8.0;
+    public string Strategy { get; init; } = "Fit multiplicative residual factors against base competing hazards by minutes since previous goal; side-aware same-team and opponent-response factors are used when last-goal side is known.";
+    public List<CompetingHazardAfterGoalBucket> Buckets { get; init; } = [];
+}
+
+public sealed class CompetingHazardAfterGoalBucket
+{
+    public string Key { get; init; } = string.Empty;
+    public double StartMinutesSinceGoal { get; init; }
+    public double EndMinutesSinceGoal { get; init; }
+}
+
+public sealed class CompetingHazardAfterGoalFactor
+{
+    public string Key { get; init; } = string.Empty;
+    public double StartMinutesSinceGoal { get; init; }
+    public double EndMinutesSinceGoal { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public int ExposureRows { get; init; }
+    public double ExposureMinutes { get; init; }
+
+    public int TotalObservedGoals { get; init; }
+    public double TotalExpectedGoals { get; init; }
+    public double TotalRawMultiplier { get; init; } = 1.0;
+    public double TotalMultiplier { get; init; } = 1.0;
+
+    public int SameTeamObservedGoals { get; init; }
+    public double SameTeamExpectedGoals { get; init; }
+    public double SameTeamRawMultiplier { get; init; } = 1.0;
+    public double SameTeamMultiplier { get; init; } = 1.0;
+
+    public int OpponentObservedGoals { get; init; }
+    public double OpponentExpectedGoals { get; init; }
+    public double OpponentRawMultiplier { get; init; } = 1.0;
+    public double OpponentMultiplier { get; init; } = 1.0;
+
+    public string Warning { get; init; } = string.Empty;
 }
 
 public sealed class CompetingHazardCurve

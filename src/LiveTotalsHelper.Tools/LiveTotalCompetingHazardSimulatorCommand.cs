@@ -18,6 +18,7 @@ public sealed class LiveTotalCompetingHazardCommandOptions
     public int HomeRedCards { get; init; }
     public int AwayRedCards { get; init; }
     public double? LastGoalMinute { get; init; }
+    public string LastGoalSide { get; init; } = string.Empty;
     public double Line { get; init; }
     public double? OverOdds { get; init; }
     public double? UnderOdds { get; init; }
@@ -69,6 +70,7 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             HomeRedCards = options.HomeRedCards,
             AwayRedCards = options.AwayRedCards,
             LastGoalMinute = options.LastGoalMinute,
+            LastGoalSide = options.LastGoalSide,
             Line = options.Line,
             OverOdds = options.OverOdds,
             UnderOdds = options.UnderOdds,
@@ -137,7 +139,7 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             Directory.CreateDirectory(directory);
 
         var builder = new StringBuilder();
-        builder.AppendLine("simulation,goal_index,goal_minute,scorer,score_before,score_after,score_bucket_before,score_bucket_after,time_bucket,curve_status,curve_source,side_probability_source,p_home_next_goal,expected_goals_in_step,p_goal_in_step");
+        builder.AppendLine("simulation,goal_index,goal_minute,scorer,score_before,score_after,score_bucket_before,score_bucket_after,time_bucket,curve_status,curve_source,side_probability_source,p_home_next_goal,expected_goals_in_step,p_goal_in_step,after_goal_bucket,after_goal_home_multiplier,after_goal_away_multiplier");
 
         foreach (LiveMonteCarloPathEvent item in events)
         {
@@ -155,7 +157,10 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             builder.Append(Csv(item.SideProbabilitySource)); builder.Append(',');
             builder.Append(Format(item.ProbabilityHomeNextGoal)); builder.Append(',');
             builder.Append(Format(item.ExpectedGoalsInStep)); builder.Append(',');
-            builder.Append(Format(item.GoalProbabilityInStep));
+            builder.Append(Format(item.GoalProbabilityInStep)); builder.Append(',');
+            builder.Append(Csv(item.AfterGoalBucket)); builder.Append(',');
+            builder.Append(Format(item.AfterGoalHomeMultiplier)); builder.Append(',');
+            builder.Append(Format(item.AfterGoalAwayMultiplier));
             builder.AppendLine();
         }
 

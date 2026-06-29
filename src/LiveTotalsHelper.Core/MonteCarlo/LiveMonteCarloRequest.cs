@@ -12,6 +12,7 @@ public sealed class LiveMonteCarloRequest
     public int AwayRedCards { get; init; }
 
     public double? LastGoalMinute { get; init; }
+    public string LastGoalSide { get; init; } = string.Empty;
 
     public double Line { get; init; }
     public double? OverOdds { get; init; }

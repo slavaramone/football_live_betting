@@ -49,6 +49,7 @@ public sealed class MonteCarloModelEvaluationSummary
     public string CurvesPath { get; init; } = string.Empty;
     public string SideModelPath { get; init; } = string.Empty;
     public string CompetingHazardCurvesPath { get; init; } = string.Empty;
+    public IReadOnlyList<CompetingHazardAfterGoalFactor> AfterGoalFactors { get; init; } = [];
     public int SimulationCount { get; init; }
     public double StepMinutes { get; init; }
     public int? RandomSeed { get; init; }
@@ -231,6 +232,7 @@ public sealed class MonteCarloModelEvaluator
                 HomeRedCards = 0,
                 AwayRedCards = 0,
                 LastGoalMinute = row.LastGoalMinute,
+                LastGoalSide = row.LastGoalSide,
                 Line = row.Line,
                 OverOdds = options.AssumedOverOdds,
                 UnderOdds = options.AssumedUnderOdds,
@@ -313,7 +315,9 @@ public sealed class MonteCarloModelEvaluator
         MonteCarloModelEvaluationSummary summary = new()
         {
             GeneratedUtc = DateTimeOffset.UtcNow,
-            ModelVersion = useV3 ? "v3-competing-hazard" : "v2-total-hazard",
+            ModelVersion = useV3
+                ? (competingCurves!.AfterGoalSettings.Enabled && competingCurves.AfterGoalFactors.Count > 0 ? "v3-competing-hazard-after-goal" : "v3-competing-hazard")
+                : "v2-total-hazard",
             League = options.League,
             Seasons = options.Seasons.ToList(),
             StateMinutes = options.StateMinutes.ToList(),
@@ -321,6 +325,7 @@ public sealed class MonteCarloModelEvaluator
             CurvesPath = string.IsNullOrWhiteSpace(options.CurvesPath) ? string.Empty : Path.GetFullPath(options.CurvesPath),
             SideModelPath = string.IsNullOrWhiteSpace(options.SideModelPath) ? string.Empty : Path.GetFullPath(options.SideModelPath),
             CompetingHazardCurvesPath = string.IsNullOrWhiteSpace(options.CompetingHazardCurvesPath) ? string.Empty : Path.GetFullPath(options.CompetingHazardCurvesPath),
+            AfterGoalFactors = useV3 ? competingCurves!.AfterGoalFactors : [],
             SimulationCount = options.SimulationCount,
             StepMinutes = options.StepMinutes,
             RandomSeed = options.RandomSeed,
@@ -471,7 +476,7 @@ public sealed class MonteCarloModelEvaluator
                 if (minute >= options.EffectiveEndMinute - Epsilon)
                     continue;
 
-                (int homeAtMinute, int awayAtMinute, double? lastGoalMinute) = ScoreAtMinute(goals, minute);
+                (int homeAtMinute, int awayAtMinute, double? lastGoalMinute, string lastGoalSide) = ScoreAtMinute(goals, minute);
                 int currentGoals = homeAtMinute + awayAtMinute;
                 int actualRemaining = Math.Max(0, finalHomeGoals + finalAwayGoals - currentGoals);
                 double minutesSinceLastGoal = lastGoalMinute.HasValue ? Math.Max(0.0, minute - lastGoalMinute.Value) : minute;
@@ -497,6 +502,7 @@ public sealed class MonteCarloModelEvaluator
                         FinalHomeGoals = finalHomeGoals,
                         FinalAwayGoals = finalAwayGoals,
                         LastGoalMinute = lastGoalMinute,
+                        LastGoalSide = lastGoalSide,
                         MinutesSinceLastGoal = minutesSinceLastGoal,
                         ActualRemainingGoals = actualRemaining
                     });
@@ -507,11 +513,12 @@ public sealed class MonteCarloModelEvaluator
         return dataset;
     }
 
-    private static (int HomeGoals, int AwayGoals, double? LastGoalMinute) ScoreAtMinute(IReadOnlyList<GoalSnapshot> goals, double minute)
+    private static (int HomeGoals, int AwayGoals, double? LastGoalMinute, string LastGoalSide) ScoreAtMinute(IReadOnlyList<GoalSnapshot> goals, double minute)
     {
         int homeGoals = 0;
         int awayGoals = 0;
         double? lastGoalMinute = null;
+        string lastGoalSide = string.Empty;
 
         foreach (GoalSnapshot goal in goals)
         {
@@ -520,6 +527,7 @@ public sealed class MonteCarloModelEvaluator
                 homeGoals = goal.HomeScore;
                 awayGoals = goal.AwayScore;
                 lastGoalMinute = goal.Minute;
+                lastGoalSide = goal.IsHome ? "home" : "away";
             }
             else
             {
@@ -527,7 +535,7 @@ public sealed class MonteCarloModelEvaluator
             }
         }
 
-        return (homeGoals, awayGoals, lastGoalMinute);
+        return (homeGoals, awayGoals, lastGoalMinute, lastGoalSide);
     }
 
     private static double CalculateStaticExpectedRemaining(
@@ -804,6 +812,7 @@ public sealed class MonteCarloModelEvaluator
         public int FinalAwayGoals { get; init; }
         public int FinalGoals => FinalHomeGoals + FinalAwayGoals;
         public double? LastGoalMinute { get; init; }
+        public string LastGoalSide { get; init; } = string.Empty;
         public double MinutesSinceLastGoal { get; init; }
         public int ActualRemainingGoals { get; init; }
         public bool ActualOver => FinalGoals > Line;
