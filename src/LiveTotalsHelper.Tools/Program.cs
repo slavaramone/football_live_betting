@@ -34,6 +34,7 @@ try
         "debug-effective-end" => await RunDebugEffectiveEnd(commandArgs),
         "build-state-weibull-exposures" => await RunBuildStateWeibullExposures(commandArgs),
         "fit-state-weibull-curves" => await RunFitStateWeibullCurves(commandArgs),
+        "fit-competing-hazard-curves" => await RunFitCompetingHazardCurves(commandArgs),
         "debug-state-weibull-clock" => await RunDebugStateWeibullClock(commandArgs),
         "fit-next-goal-side-model" => await RunFitNextGoalSideModel(commandArgs),
         "debug-next-goal-side" => await RunDebugNextGoalSide(commandArgs),
@@ -387,6 +388,50 @@ static async Task<int> RunFitStateWeibullCurves(string[] args)
 }
 
 
+
+
+static async Task<int> RunFitCompetingHazardCurves(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    string league = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty);
+    StateWeibullCurveFitProfileSettings fit = profile?.CompetingHazardCurveFit ?? profile?.StateWeibullCurveFit ?? new StateWeibullCurveFitProfileSettings();
+
+    var options = new CompetingHazardCurveFitterOptions
+    {
+        InputPath = GetPathArgument(parsed, profile?.StateWeibullExposuresPath, "outputs/calibration/state-weibull-exposures.csv", "in", "input"),
+        OutputPath = GetPathArgument(parsed, profile?.CompetingHazardCurvesPath, "outputs/calibration/competing-hazard-curves.json", "out", "output"),
+        SummaryPath = GetPathArgument(parsed, profile?.CompetingHazardCurvesSummaryPath, "outputs/calibration/competing-hazard-curves-summary.csv", "summary"),
+        League = league,
+        MinMuFullBucketExposures = parsed.Double("min-mu-full-exposures", fit.MinMuFullBucketExposures),
+        MinMuGoals = parsed.Int("min-mu-goals", fit.MinMuGoals),
+        MinKFullBucketExposures = parsed.Double("min-k-full-exposures", fit.MinKFullBucketExposures),
+        MinKGoals = parsed.Int("min-k-goals", fit.MinKGoals),
+        MinK = parsed.Double("min-k", fit.MinK),
+        MaxK = parsed.Double("max-k", fit.MaxK),
+        KStep = parsed.Double("k-step", fit.KStep),
+        DefaultK = parsed.Double("default-k", fit.DefaultK)
+    };
+
+    var fitter = new CompetingHazardCurveFitter();
+    CompetingHazardCurveFitResult result = await fitter.FitAsync(options, CancellationToken.None);
+
+    Console.WriteLine("Competing home/away hazard curves fitted");
+    Console.WriteLine($"Input rows read: {result.ExposureRowsRead}");
+    Console.WriteLine($"Goal rows read: {result.GoalRowsRead}");
+    Console.WriteLine($"Directional/time curves written: {result.CurvesWritten}");
+    Console.WriteLine($"Side curves written: {result.SideCurvesWritten}");
+    Console.WriteLine($"Exact supported side curves: {result.ExactSupported}");
+    Console.WriteLine($"Partial supported side curves: {result.PartialSupported}");
+    Console.WriteLine($"Unsupported sparse side curves: {result.UnsupportedSparse}");
+    Console.WriteLine($"Time fallbacks written: {result.TimeFallbacksWritten}");
+    Console.WriteLine($"Neutral/time fallbacks written: {result.NeutralTimeFallbacksWritten}");
+    Console.WriteLine($"Output written: {result.OutputPath}");
+    Console.WriteLine($"Summary written: {result.SummaryPath}");
+
+    return 0;
+}
 
 static async Task<int> RunDebugStateWeibullClock(string[] args)
 {

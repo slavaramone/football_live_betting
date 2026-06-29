@@ -18,6 +18,7 @@ public static class HelpPrinter
         Console.WriteLine("  debug-effective-end                 Estimate effective match end/remaining time for a live state.");
         Console.WriteLine("  build-state-weibull-exposures       Build score/time exposure CSV for fitting state Weibull curves.");
         Console.WriteLine("  fit-state-weibull-curves            Fit state/time Weibull curves from exposure CSV.");
+        Console.WriteLine("  fit-competing-hazard-curves         Fit v3 competing home/away hazard curves from exposure CSV.");
         Console.WriteLine("  debug-state-weibull-clock           Export fitted state Weibull curve rows for one live score/minute.");
         Console.WriteLine("  fit-next-goal-side-model            Fit next-goal scorer-side probabilities with fallback hierarchy.");
         Console.WriteLine("  debug-next-goal-side                Resolve P(home/away next goal) for one live score/minute.");
@@ -36,6 +37,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db --league \"Superettan\" --season-id 2026");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-state-weibull-exposures --profile npl-victoria");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-state-weibull-curves --profile npl-victoria");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-competing-hazard-curves --profile npl-victoria");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-state-weibull-clock --profile npl-victoria --score 2-0 --minute 49 --until 96 --out outputs/debug/npl-victoria-2-0-49-clock.csv");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-next-goal-side-model --profile npl-victoria");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-next-goal-side --profile npl-victoria --score 2-0 --minute 49");
