@@ -2,9 +2,9 @@ namespace LiveTotalsHelper.Core.MonteCarlo;
 
 public sealed class CompetingHazardCurveSet
 {
-    public string Version { get; init; } = "competing-hazard-curves-v3-after-goal-goal-draw";
+    public string Version { get; init; } = "competing-hazard-curves-v3-after-goal-goal-draw-market-baseline";
     public DateTimeOffset GeneratedUtc { get; init; } = DateTimeOffset.UtcNow;
-    public string Strategy { get; init; } = "total_state_weibull_x_directional_scorer_share_x_after_goal_hazard_factors_x_goal_draw_suppression";
+    public string Strategy { get; init; } = "total_state_weibull_x_directional_scorer_share_x_after_goal_hazard_factors_x_goal_draw_suppression_x_market_baseline";
     public string SourceExposureFile { get; init; } = string.Empty;
     public string League { get; init; } = string.Empty;
     public List<string> ScoreBuckets { get; init; } = [];
@@ -22,6 +22,7 @@ public sealed class CompetingHazardCurveSet
     public List<CompetingHazardAfterGoalFactor> AfterGoalFactors { get; init; } = [];
     public CompetingHazardGoalDrawSuppressionSettings GoalDrawSuppressionSettings { get; init; } = new();
     public List<CompetingHazardGoalDrawSuppressionFactor> GoalDrawSuppressionFactors { get; init; } = [];
+    public CompetingHazardMarketBaselineSettings MarketBaselineSettings { get; init; } = new();
     public List<CompetingHazardCurve> Curves { get; init; } = [];
 }
 
@@ -29,7 +30,7 @@ public sealed class CompetingHazardFitSettings
 {
     public StateWeibullCurveFitSettings TotalHazardFit { get; init; } = new();
     public NextGoalSideModelSettings ScorerShareFit { get; init; } = new();
-    public string Strategy { get; init; } = "Fit total goal hazard by neutral score/time bucket, split it by directional next-goal scorer share, then apply fitted after-goal and goal-draw suppression factors during simulation.";
+    public string Strategy { get; init; } = "Fit total goal hazard by neutral score/time bucket, split it by directional next-goal scorer share, then apply fitted after-goal, goal-draw suppression, and optional pregame market baseline factors during simulation.";
 }
 
 public sealed class CompetingHazardAfterGoalSettings
@@ -103,6 +104,58 @@ public sealed class CompetingHazardGoalDrawSuppressionFactor
     public double RawMultiplier { get; init; } = 1.0;
     public double Multiplier { get; init; } = 1.0;
     public string Warning { get; init; } = string.Empty;
+}
+
+
+public sealed class CompetingHazardMarketBaselineSettings
+{
+    public bool Enabled { get; init; } = true;
+    public double OddsSensitivityGoals { get; init; } = 1.25;
+    public double MultiplierShrink { get; init; } = 0.65;
+    public double MinMultiplier { get; init; } = 0.75;
+    public double MaxMultiplier { get; init; } = 1.25;
+    public double MinMarketExpectedTotalGoals { get; init; } = 1.0;
+    public double MaxMarketExpectedTotalGoals { get; init; } = 6.0;
+    public double ModelBaselineExpectedTotalGoals { get; init; }
+    public string Strategy { get; init; } = "Use pregame total line and over/under odds to infer a match-specific expected total, compare it with the fitted league baseline, and apply a shrunk/clamped multiplicative factor to both competing hazards.";
+}
+
+public sealed class LiveMarketBaselineAdjustment
+{
+    public bool Enabled { get; init; }
+    public bool Applied { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public string Source { get; init; } = string.Empty;
+    public double? PregameTotalLine { get; init; }
+    public double? PregameOverOdds { get; init; }
+    public double? PregameUnderOdds { get; init; }
+    public double? NoVigPOver { get; init; }
+    public double? MarketExpectedTotalGoals { get; init; }
+    public double ModelBaselineExpectedTotalGoals { get; init; }
+    public double RawMultiplier { get; init; } = 1.0;
+    public double Multiplier { get; init; } = 1.0;
+    public string Warning { get; init; } = string.Empty;
+
+    public static LiveMarketBaselineAdjustment Disabled => new()
+    {
+        Enabled = false,
+        Applied = false,
+        Status = "Disabled",
+        Source = "disabled",
+        Multiplier = 1.0,
+        RawMultiplier = 1.0
+    };
+
+    public static LiveMarketBaselineAdjustment Neutral(string status, string source = "none", string warning = "") => new()
+    {
+        Enabled = true,
+        Applied = false,
+        Status = status,
+        Source = source,
+        Multiplier = 1.0,
+        RawMultiplier = 1.0,
+        Warning = warning
+    };
 }
 
 

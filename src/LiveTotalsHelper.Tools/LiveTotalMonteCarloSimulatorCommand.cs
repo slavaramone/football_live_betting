@@ -25,6 +25,9 @@ public sealed class LiveTotalMonteCarloCommandOptions
     public double? UnderOdds { get; init; }
     public double? MarketTotal { get; init; }
     public double? PregameTotal { get; init; }
+    public double? PregameTotalLine { get; init; }
+    public double? PregameOverOdds { get; init; }
+    public double? PregameUnderOdds { get; init; }
     public int SimulationCount { get; init; } = 20_000;
     public double StepMinutes { get; init; } = 0.25;
     public int? RandomSeed { get; init; } = 12_345;
@@ -82,6 +85,9 @@ public sealed class LiveTotalMonteCarloSimulatorCommand
             UnderOdds = options.UnderOdds,
             MarketTotal = options.MarketTotal,
             PregameTotal = options.PregameTotal,
+            PregameTotalLine = options.PregameTotalLine,
+            PregameOverOdds = options.PregameOverOdds,
+            PregameUnderOdds = options.PregameUnderOdds,
             SimulationCount = options.SimulationCount,
             StepMinutes = options.StepMinutes,
             RandomSeed = options.RandomSeed

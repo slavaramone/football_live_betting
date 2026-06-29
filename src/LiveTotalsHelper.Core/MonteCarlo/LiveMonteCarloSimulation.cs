@@ -44,6 +44,8 @@ public sealed class LiveMonteCarloSimulationResult
     public double? OverEdge { get; init; }
     public double? UnderEdge { get; init; }
 
+    public LiveMarketBaselineAdjustment MarketBaseline { get; init; } = LiveMarketBaselineAdjustment.Neutral("NotUsed");
+
     public string Explanation { get; init; } = string.Empty;
     public IReadOnlyList<string> Warnings { get; init; } = [];
     public IReadOnlyList<LiveMonteCarloPathEvent> TraceEvents { get; init; } = [];
@@ -82,7 +84,9 @@ public sealed class LiveMonteCarloPathEvent
     public double AfterGoalAwayMultiplier { get; init; } = 1.0;
     public string GoalDrawFactorKey { get; init; } = string.Empty;
     public double GoalDrawMultiplier { get; init; } = 1.0;
+    public double MarketBaselineMultiplier { get; init; } = 1.0;
 }
+
 
 public sealed class LiveHazardMonteCarloSimulator
 {

@@ -24,6 +24,9 @@ public sealed class LiveTotalCompetingHazardCommandOptions
     public double? UnderOdds { get; init; }
     public double? MarketTotal { get; init; }
     public double? PregameTotal { get; init; }
+    public double? PregameTotalLine { get; init; }
+    public double? PregameOverOdds { get; init; }
+    public double? PregameUnderOdds { get; init; }
     public int SimulationCount { get; init; } = 20_000;
     public double StepMinutes { get; init; } = 0.25;
     public int? RandomSeed { get; init; } = 12_345;
@@ -76,6 +79,9 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             UnderOdds = options.UnderOdds,
             MarketTotal = options.MarketTotal,
             PregameTotal = options.PregameTotal,
+            PregameTotalLine = options.PregameTotalLine,
+            PregameOverOdds = options.PregameOverOdds,
+            PregameUnderOdds = options.PregameUnderOdds,
             SimulationCount = options.SimulationCount,
             StepMinutes = options.StepMinutes,
             RandomSeed = options.RandomSeed
@@ -139,7 +145,7 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             Directory.CreateDirectory(directory);
 
         var builder = new StringBuilder();
-        builder.AppendLine("simulation,goal_index,goal_minute,scorer,score_before,score_after,score_bucket_before,score_bucket_after,time_bucket,curve_status,curve_source,side_probability_source,p_home_next_goal,expected_goals_in_step,p_goal_in_step,after_goal_bucket,after_goal_home_multiplier,after_goal_away_multiplier");
+        builder.AppendLine("simulation,goal_index,goal_minute,scorer,score_before,score_after,score_bucket_before,score_bucket_after,time_bucket,curve_status,curve_source,side_probability_source,p_home_next_goal,expected_goals_in_step,p_goal_in_step,after_goal_bucket,after_goal_home_multiplier,after_goal_away_multiplier,goal_draw_factor,goal_draw_multiplier,market_baseline_multiplier");
 
         foreach (LiveMonteCarloPathEvent item in events)
         {
@@ -160,7 +166,10 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             builder.Append(Format(item.GoalProbabilityInStep)); builder.Append(',');
             builder.Append(Csv(item.AfterGoalBucket)); builder.Append(',');
             builder.Append(Format(item.AfterGoalHomeMultiplier)); builder.Append(',');
-            builder.Append(Format(item.AfterGoalAwayMultiplier));
+            builder.Append(Format(item.AfterGoalAwayMultiplier)); builder.Append(',');
+            builder.Append(Csv(item.GoalDrawFactorKey)); builder.Append(',');
+            builder.Append(Format(item.GoalDrawMultiplier)); builder.Append(',');
+            builder.Append(Format(item.MarketBaselineMultiplier));
             builder.AppendLine();
         }
 

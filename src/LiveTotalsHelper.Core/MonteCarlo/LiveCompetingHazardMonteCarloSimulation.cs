@@ -45,6 +45,10 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
         if (options.Curves.GoalDrawSuppressionSettings.Enabled && options.Curves.GoalDrawSuppressionFactors.Count == 0)
             warnings.Add("Goal-draw suppression is enabled but the competing-hazard model contains no goal-draw factor rows; neutral multiplier 1.0 used.");
 
+        LiveMarketBaselineAdjustment marketBaseline = ResolveMarketBaselineAdjustment(options.Curves, request, effectiveEnd, warnings);
+        if (!string.IsNullOrWhiteSpace(marketBaseline.Warning))
+            warnings.Add($"market_baseline: {marketBaseline.Warning}");
+
         var afterGoalFactors = options.Curves.AfterGoalFactors
             .ToDictionary(x => x.Key, StringComparer.OrdinalIgnoreCase);
         var goalDrawFactors = options.Curves.GoalDrawSuppressionFactors
@@ -116,6 +120,9 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
                 homeExpectedGoalsInStep *= goalDraw.Multiplier;
                 awayExpectedGoalsInStep *= goalDraw.Multiplier;
 
+                homeExpectedGoalsInStep *= marketBaseline.Multiplier;
+                awayExpectedGoalsInStep *= marketBaseline.Multiplier;
+
                 double expectedGoalsInStep = homeExpectedGoalsInStep + awayExpectedGoalsInStep;
                 double pGoal = 1.0 - Math.Exp(-expectedGoalsInStep);
 
@@ -167,7 +174,8 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
                             AfterGoalHomeMultiplier = afterGoal.HomeMultiplier,
                             AfterGoalAwayMultiplier = afterGoal.AwayMultiplier,
                             GoalDrawFactorKey = goalDraw.FactorKey,
-                            GoalDrawMultiplier = goalDraw.Multiplier
+                            GoalDrawMultiplier = goalDraw.Multiplier,
+                            MarketBaselineMultiplier = marketBaseline.Multiplier
                         });
                     }
 
@@ -252,7 +260,8 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
             FairUnderOdds = fairUnder,
             OverEdge = request.OverOdds.HasValue && request.OverOdds.Value > 0 ? pOver - 1.0 / request.OverOdds.Value : null,
             UnderEdge = request.UnderOdds.HasValue && request.UnderOdds.Value > 0 ? pUnder - 1.0 / request.UnderOdds.Value : null,
-            Explanation = BuildExplanation(request, pOver, pUnder, pPush, fairOver, fairUnder, neededGoalsForOver, options.Curves.AfterGoalSettings.Enabled && options.Curves.AfterGoalFactors.Count > 0, options.Curves.GoalDrawSuppressionSettings.Enabled && options.Curves.GoalDrawSuppressionFactors.Count > 0),
+            MarketBaseline = marketBaseline,
+            Explanation = BuildExplanation(request, pOver, pUnder, pPush, fairOver, fairUnder, neededGoalsForOver, options.Curves.AfterGoalSettings.Enabled && options.Curves.AfterGoalFactors.Count > 0, options.Curves.GoalDrawSuppressionSettings.Enabled && options.Curves.GoalDrawSuppressionFactors.Count > 0, marketBaseline),
             Warnings = warnings.Take(50).ToList(),
             TraceEvents = traceEvents
         };
@@ -275,7 +284,10 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
     {
         bool afterGoal = curves.AfterGoalSettings.Enabled && curves.AfterGoalFactors.Count > 0;
         bool goalDraw = curves.GoalDrawSuppressionSettings.Enabled && curves.GoalDrawSuppressionFactors.Count > 0;
+        bool marketBaseline = curves.MarketBaselineSettings.Enabled;
 
+        if (afterGoal && goalDraw && marketBaseline)
+            return "v3-competing-hazard-after-goal-goal-draw-market-baseline";
         if (afterGoal && goalDraw)
             return "v3-competing-hazard-after-goal-goal-draw";
         if (afterGoal)
@@ -283,6 +295,137 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
         if (goalDraw)
             return "v3-competing-hazard-goal-draw";
         return "v3-competing-hazard";
+    }
+
+
+    private static LiveMarketBaselineAdjustment ResolveMarketBaselineAdjustment(
+        CompetingHazardCurveSet curveSet,
+        LiveMonteCarloRequest request,
+        double effectiveEnd,
+        SortedSet<string> warnings)
+    {
+        CompetingHazardMarketBaselineSettings settings = curveSet.MarketBaselineSettings;
+        if (!request.UseMarketBaseline || !settings.Enabled)
+            return LiveMarketBaselineAdjustment.Disabled;
+
+        MarketExpectedTotalInput input = ResolveMarketExpectedTotal(settings, request);
+        if (!input.ExpectedTotal.HasValue)
+            return LiveMarketBaselineAdjustment.Neutral("NoPregameInput", "none", "No pregame total input was supplied; market baseline multiplier 1.0 used.");
+
+        double modelBaseline = settings.ModelBaselineExpectedTotalGoals > Epsilon
+            ? settings.ModelBaselineExpectedTotalGoals
+            : EstimateModelBaselineExpectedTotal(curveSet, effectiveEnd);
+        if (modelBaseline <= Epsilon)
+        {
+            return LiveMarketBaselineAdjustment.Neutral(
+                "MissingModelBaseline",
+                input.Source,
+                "Could not estimate fitted model pregame baseline expected total; market baseline multiplier 1.0 used.");
+        }
+
+        double marketExpected = Math.Clamp(
+            input.ExpectedTotal.Value,
+            Math.Max(settings.MinMarketExpectedTotalGoals, Epsilon),
+            Math.Max(settings.MaxMarketExpectedTotalGoals, settings.MinMarketExpectedTotalGoals + Epsilon));
+        double rawMultiplier = marketExpected / modelBaseline;
+        double shrink = Math.Clamp(settings.MultiplierShrink, 0.0, 1.0);
+        double shrunkMultiplier = 1.0 + (rawMultiplier - 1.0) * shrink;
+        double minMultiplier = Math.Max(Epsilon, settings.MinMultiplier);
+        double maxMultiplier = Math.Max(minMultiplier, settings.MaxMultiplier);
+        double multiplier = Math.Clamp(shrunkMultiplier, minMultiplier, maxMultiplier);
+
+        if (Math.Abs(multiplier - 1.0) > 0.0001)
+        {
+            warnings.Add($"market_baseline: source={input.Source}, market expected total {Format(marketExpected)}, model baseline {Format(modelBaseline)}, raw x{rawMultiplier.ToString("0.###", CultureInfo.InvariantCulture)}, applied x{multiplier.ToString("0.###", CultureInfo.InvariantCulture)}.");
+        }
+
+        return new LiveMarketBaselineAdjustment
+        {
+            Enabled = true,
+            Applied = true,
+            Status = "Applied",
+            Source = input.Source,
+            PregameTotalLine = input.PregameTotalLine,
+            PregameOverOdds = input.PregameOverOdds,
+            PregameUnderOdds = input.PregameUnderOdds,
+            NoVigPOver = input.NoVigPOver,
+            MarketExpectedTotalGoals = marketExpected,
+            ModelBaselineExpectedTotalGoals = modelBaseline,
+            RawMultiplier = rawMultiplier,
+            Multiplier = multiplier,
+            Warning = input.Warning
+        };
+    }
+
+    private static MarketExpectedTotalInput ResolveMarketExpectedTotal(
+        CompetingHazardMarketBaselineSettings settings,
+        LiveMonteCarloRequest request)
+    {
+        if (request.PregameTotal.HasValue && request.PregameTotal.Value > 0)
+        {
+            return new MarketExpectedTotalInput(
+                request.PregameTotal.Value,
+                "pregame_total_direct",
+                null,
+                null,
+                null,
+                null,
+                string.Empty);
+        }
+
+        if (request.PregameTotalLine.HasValue && request.PregameTotalLine.Value > 0
+            && request.PregameOverOdds.HasValue && request.PregameOverOdds.Value > 1.0
+            && request.PregameUnderOdds.HasValue && request.PregameUnderOdds.Value > 1.0)
+        {
+            double impliedOver = 1.0 / request.PregameOverOdds.Value;
+            double impliedUnder = 1.0 / request.PregameUnderOdds.Value;
+            double noVigPOver = impliedOver / (impliedOver + impliedUnder);
+            double expected = request.PregameTotalLine.Value + (noVigPOver - 0.5) * Math.Max(0.0, settings.OddsSensitivityGoals);
+            return new MarketExpectedTotalInput(
+                expected,
+                "pregame_total_line_odds",
+                request.PregameTotalLine,
+                request.PregameOverOdds,
+                request.PregameUnderOdds,
+                noVigPOver,
+                string.Empty);
+        }
+
+        if (request.MarketTotal.HasValue && request.MarketTotal.Value > 0)
+        {
+            return new MarketExpectedTotalInput(
+                request.MarketTotal.Value,
+                "market_total_direct",
+                null,
+                null,
+                null,
+                null,
+                "MarketTotal was used as a direct expected-total baseline because no pregame total line/odds were supplied.");
+        }
+
+        return new MarketExpectedTotalInput(null, "none", null, null, null, null, string.Empty);
+    }
+
+    private static double EstimateModelBaselineExpectedTotal(CompetingHazardCurveSet curveSet, double effectiveEnd)
+    {
+        double current = 0.0;
+        double total = 0.0;
+        double maxEnd = curveSet.Curves.Count == 0 ? effectiveEnd : curveSet.Curves.Max(x => x.BucketEndMinute);
+        double end = Math.Min(effectiveEnd, maxEnd);
+
+        while (current < end - Epsilon)
+        {
+            CompetingHazardCurve? curve = ResolveCurve(curveSet, "draw_0_0", current);
+            if (curve is null)
+                break;
+
+            double segmentEnd = Math.Min(end, curve.BucketEndMinute);
+            total += ExpectedGoalsBetween(curve, curve.Home, current, segmentEnd)
+                     + ExpectedGoalsBetween(curve, curve.Away, current, segmentEnd);
+            current = segmentEnd;
+        }
+
+        return total;
     }
 
     private static GoalDrawStepAdjustment ResolveGoalDrawAdjustment(
@@ -406,7 +549,8 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
         double? fairUnder,
         int neededGoalsForOver,
         bool afterGoalEnabled,
-        bool goalDrawEnabled)
+        bool goalDrawEnabled,
+        LiveMarketBaselineAdjustment marketBaseline)
     {
         string overNeed = neededGoalsForOver <= 0
             ? "Over is already winning at the current score"
@@ -417,6 +561,8 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
             features.Add("after-goal hazard factors");
         if (goalDrawEnabled)
             features.Add("goal-draw suppression");
+        if (marketBaseline.Applied)
+            features.Add($"market baseline x{marketBaseline.Multiplier.ToString("0.###", CultureInfo.InvariantCulture)}");
 
         string suffix = features.Count > 0 ? " with " + string.Join(" and ", features) : string.Empty;
         return $"{overNeed}. MC v3 competing hazards{suffix} POver={FormatProbability(pOver)}, PUnder={FormatProbability(pUnder)}, PPush={FormatProbability(pPush)}. Fair Over odds={FormatOdds(fairOver)}, fair Under odds={FormatOdds(fairUnder)}.";
@@ -455,6 +601,15 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
 
     private static string FormatOdds(double? value)
         => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "<none>";
+
+    private sealed record MarketExpectedTotalInput(
+        double? ExpectedTotal,
+        string Source,
+        double? PregameTotalLine,
+        double? PregameOverOdds,
+        double? PregameUnderOdds,
+        double? NoVigPOver,
+        string Warning);
 
     private sealed record AfterGoalStepAdjustment(
         string BucketKey,

@@ -27,6 +27,8 @@ public sealed class MonteCarloModelEvaluationOptions
     public double AssumedOverOdds { get; init; } = 1.85;
     public double AssumedUnderOdds { get; init; } = 1.85;
     public double MinEdge { get; init; } = 0.05;
+    public bool UsePregameMarketBaseline { get; init; }
+    public string PregameOddsBookmaker { get; init; } = string.Empty;
     public int MaxStates { get; init; }
     public int ProgressEvery { get; init; } = 100;
 }
@@ -51,6 +53,7 @@ public sealed class MonteCarloModelEvaluationSummary
     public string CompetingHazardCurvesPath { get; init; } = string.Empty;
     public IReadOnlyList<CompetingHazardAfterGoalFactor> AfterGoalFactors { get; init; } = [];
     public IReadOnlyList<CompetingHazardGoalDrawSuppressionFactor> GoalDrawSuppressionFactors { get; init; } = [];
+    public MonteCarloMarketBaselineMetrics MarketBaseline { get; init; } = new();
     public int SimulationCount { get; init; }
     public double StepMinutes { get; init; }
     public int? RandomSeed { get; init; }
@@ -64,6 +67,20 @@ public sealed class MonteCarloModelEvaluationSummary
     public MonteCarloBettingMetrics Betting { get; init; } = new();
     public IReadOnlyList<MonteCarloSliceSummary> Slices { get; init; } = [];
     public IReadOnlyList<MonteCarloWarningCount> TopWarnings { get; init; } = [];
+}
+
+public sealed class MonteCarloMarketBaselineMetrics
+{
+    public bool Enabled { get; init; }
+    public int Rows { get; init; }
+    public int AppliedRows { get; init; }
+    public int MissingRows { get; init; }
+    public double AverageMarketExpectedTotalGoals { get; init; }
+    public double AverageModelBaselineExpectedTotalGoals { get; init; }
+    public double AverageRawMultiplier { get; init; }
+    public double AverageAppliedMultiplier { get; init; }
+    public double MinAppliedMultiplier { get; init; }
+    public double MaxAppliedMultiplier { get; init; }
 }
 
 public sealed class MonteCarloDatasetSummary
@@ -195,6 +212,7 @@ public sealed class MonteCarloModelEvaluator
         var sliceAccumulators = new Dictionary<string, EvaluationAccumulator>(StringComparer.OrdinalIgnoreCase);
         var sliceBetting = new Dictionary<string, BettingAccumulator>(StringComparer.OrdinalIgnoreCase);
         var warningCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var marketBaselineAccumulator = new MarketBaselineAccumulator(options.UsePregameMarketBaseline);
 
         int evaluated = 0;
         int skippedSettledLine = 0;
@@ -239,7 +257,11 @@ public sealed class MonteCarloModelEvaluator
                 UnderOdds = options.AssumedUnderOdds,
                 SimulationCount = options.SimulationCount,
                 StepMinutes = options.StepMinutes,
-                RandomSeed = options.RandomSeed.HasValue ? options.RandomSeed.Value + rowIndex * 7919 : null
+                RandomSeed = options.RandomSeed.HasValue ? options.RandomSeed.Value + rowIndex * 7919 : null,
+                PregameTotalLine = options.UsePregameMarketBaseline ? row.PregameTotalLine : null,
+                PregameOverOdds = options.UsePregameMarketBaseline ? row.PregameOverOdds : null,
+                PregameUnderOdds = options.UsePregameMarketBaseline ? row.PregameUnderOdds : null,
+                UseMarketBaseline = options.UsePregameMarketBaseline
             };
 
             LiveMonteCarloSimulationResult simulation;
@@ -275,8 +297,10 @@ public sealed class MonteCarloModelEvaluator
 
             evaluated++;
             double staticExpected = useV3
-                ? CalculateStaticExpectedRemaining(competingCurves!, row.HomeGoals, row.AwayGoals, row.Minute, simulation.EffectiveEndMinute)
+                ? CalculateStaticExpectedRemaining(competingCurves!, row.HomeGoals, row.AwayGoals, row.Minute, simulation.EffectiveEndMinute) * simulation.MarketBaseline.Multiplier
                 : CalculateStaticExpectedRemaining(curves!, row.HomeGoals, row.AwayGoals, row.Minute, simulation.EffectiveEndMinute);
+            if (useV3)
+                marketBaselineAccumulator.Add(simulation.MarketBaseline);
             EvaluationRecord record = EvaluationRecord.From(row, simulation, staticExpected);
 
             overall.Add(record);
@@ -328,6 +352,7 @@ public sealed class MonteCarloModelEvaluator
             CompetingHazardCurvesPath = string.IsNullOrWhiteSpace(options.CompetingHazardCurvesPath) ? string.Empty : Path.GetFullPath(options.CompetingHazardCurvesPath),
             AfterGoalFactors = useV3 ? competingCurves!.AfterGoalFactors : [],
             GoalDrawSuppressionFactors = useV3 ? competingCurves!.GoalDrawSuppressionFactors : [],
+            MarketBaseline = useV3 ? marketBaselineAccumulator.ToMetrics() : new MonteCarloMarketBaselineMetrics(),
             SimulationCount = options.SimulationCount,
             StepMinutes = options.StepMinutes,
             RandomSeed = options.RandomSeed,
@@ -412,7 +437,8 @@ public sealed class MonteCarloModelEvaluator
     {
         IQueryable<MatchEntity> query = _db.Matches
             .AsNoTracking()
-            .Include(x => x.Events);
+            .Include(x => x.Events)
+            .Include(x => x.FlashscoreOdds);
 
         if (!string.IsNullOrWhiteSpace(options.League))
         {
@@ -473,6 +499,10 @@ public sealed class MonteCarloModelEvaluator
             }
 
             dataset.MatchesUsed++;
+            PregameTotalOddsInput? pregameTotalOdds = options.UsePregameMarketBaseline
+                ? ResolvePregameTotalOdds(match.FlashscoreOdds, options.PregameOddsBookmaker)
+                : null;
+
             foreach (double minute in options.StateMinutes.OrderBy(x => x))
             {
                 if (minute >= options.EffectiveEndMinute - Epsilon)
@@ -506,7 +536,12 @@ public sealed class MonteCarloModelEvaluator
                         LastGoalMinute = lastGoalMinute,
                         LastGoalSide = lastGoalSide,
                         MinutesSinceLastGoal = minutesSinceLastGoal,
-                        ActualRemainingGoals = actualRemaining
+                        ActualRemainingGoals = actualRemaining,
+                        PregameTotalBookmaker = pregameTotalOdds?.Bookmaker ?? string.Empty,
+                        PregameTotalLine = pregameTotalOdds?.Line,
+                        PregameOverOdds = pregameTotalOdds?.OverOdds,
+                        PregameUnderOdds = pregameTotalOdds?.UnderOdds,
+                        PregameNoVigPOver = pregameTotalOdds?.NoVigPOver
                     });
                 }
             }
@@ -514,6 +549,65 @@ public sealed class MonteCarloModelEvaluator
 
         return dataset;
     }
+
+    private static PregameTotalOddsInput? ResolvePregameTotalOdds(
+        IReadOnlyCollection<FlashscoreOddsEntity> oddsRows,
+        string bookmakerFilter)
+    {
+        IEnumerable<FlashscoreOddsEntity> candidates = oddsRows
+            .Where(x => x.Line.HasValue
+                        && x.Odds > 1.0
+                        && x.Market.Contains("OVER/UNDER", StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(bookmakerFilter))
+        {
+            string wanted = bookmakerFilter.Trim();
+            candidates = candidates.Where(x => x.Bookmaker.Equals(wanted, StringComparison.OrdinalIgnoreCase)
+                                                || x.Bookmaker.Contains(wanted, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var pairs = candidates
+            .GroupBy(x => new { Bookmaker = x.Bookmaker.Trim(), Line = Math.Round(x.Line!.Value, 4) })
+            .Select(group =>
+            {
+                double? overOdds = group
+                    .Where(x => IsOverSelection(x.Selection))
+                    .OrderBy(x => Math.Abs(x.Odds - 1.90))
+                    .Select(x => (double?)x.Odds)
+                    .FirstOrDefault();
+                double? underOdds = group
+                    .Where(x => IsUnderSelection(x.Selection))
+                    .OrderBy(x => Math.Abs(x.Odds - 1.90))
+                    .Select(x => (double?)x.Odds)
+                    .FirstOrDefault();
+                if (!overOdds.HasValue || !underOdds.HasValue)
+                    return null;
+
+                double impliedOver = 1.0 / overOdds.Value;
+                double impliedUnder = 1.0 / underOdds.Value;
+                double noVigPOver = impliedOver / (impliedOver + impliedUnder);
+                return new PregameTotalOddsInput(
+                    group.Key.Bookmaker,
+                    group.Key.Line,
+                    overOdds.Value,
+                    underOdds.Value,
+                    noVigPOver);
+            })
+            .Where(x => x is not null)
+            .Cast<PregameTotalOddsInput>()
+            .OrderBy(x => Math.Abs(x.NoVigPOver - 0.5))
+            .ThenBy(x => Math.Abs(x.Line - 2.5))
+            .ThenBy(x => x.Bookmaker, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return pairs.FirstOrDefault();
+    }
+
+    private static bool IsOverSelection(string selection)
+        => selection.Contains("over", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsUnderSelection(string selection)
+        => selection.Contains("under", StringComparison.OrdinalIgnoreCase);
 
     private static (int HomeGoals, int AwayGoals, double? LastGoalMinute, string LastGoalSide) ScoreAtMinute(IReadOnlyList<GoalSnapshot> goals, double minute)
     {
@@ -650,6 +744,14 @@ public sealed class MonteCarloModelEvaluator
             slices.Add("late_75_plus");
         if (row.CurrentGoals >= 2)
             slices.Add("current_goals_2_plus");
+        if (row.PregameTotalLine.HasValue)
+        {
+            slices.Add("pregame_market_available");
+            if (row.PregameTotalLine.Value >= 3.5)
+                slices.Add("pregame_total_3_5_plus");
+            else if (row.PregameTotalLine.Value <= 2.5)
+                slices.Add("pregame_total_2_5_or_lower");
+        }
         if (row.LastGoalMinute.HasValue && row.MinutesSinceLastGoal <= 5.0)
             slices.Add("after_goal_0_5");
         else if (row.LastGoalMinute.HasValue && row.MinutesSinceLastGoal <= 10.0)
@@ -771,7 +873,10 @@ public sealed class MonteCarloModelEvaluator
     {
         bool afterGoal = curves.AfterGoalSettings.Enabled && curves.AfterGoalFactors.Count > 0;
         bool goalDraw = curves.GoalDrawSuppressionSettings.Enabled && curves.GoalDrawSuppressionFactors.Count > 0;
+        bool marketBaseline = curves.MarketBaselineSettings.Enabled;
 
+        if (afterGoal && goalDraw && marketBaseline)
+            return "v3-competing-hazard-after-goal-goal-draw-market-baseline";
         if (afterGoal && goalDraw)
             return "v3-competing-hazard-after-goal-goal-draw";
         if (afterGoal)
@@ -788,7 +893,8 @@ public sealed class MonteCarloModelEvaluator
            || modelVersion.Equals("v3-competing-hazard", StringComparison.OrdinalIgnoreCase)
            || modelVersion.Equals("v3-competing-hazard-after-goal", StringComparison.OrdinalIgnoreCase)
            || modelVersion.Equals("v3-competing-hazard-goal-draw", StringComparison.OrdinalIgnoreCase)
-           || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw", StringComparison.OrdinalIgnoreCase);
+           || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw", StringComparison.OrdinalIgnoreCase)
+           || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw-market-baseline", StringComparison.OrdinalIgnoreCase);
 
     private static double SafeDivide(double numerator, double denominator)
         => denominator <= 0 ? 0.0 : numerator / denominator;
@@ -798,6 +904,13 @@ public sealed class MonteCarloModelEvaluator
 
     private static string FormatLine(double value)
         => value.ToString("0.##", CultureInfo.InvariantCulture).Replace('.', '_');
+
+    private sealed record PregameTotalOddsInput(
+        string Bookmaker,
+        double Line,
+        double OverOdds,
+        double UnderOdds,
+        double NoVigPOver);
 
     private sealed record GoalSnapshot(int EventRowId, double Minute, bool IsHome, int HomeScore, int AwayScore);
 
@@ -834,6 +947,11 @@ public sealed class MonteCarloModelEvaluator
         public string LastGoalSide { get; init; } = string.Empty;
         public double MinutesSinceLastGoal { get; init; }
         public int ActualRemainingGoals { get; init; }
+        public string PregameTotalBookmaker { get; init; } = string.Empty;
+        public double? PregameTotalLine { get; init; }
+        public double? PregameOverOdds { get; init; }
+        public double? PregameUnderOdds { get; init; }
+        public double? PregameNoVigPOver { get; init; }
         public bool ActualOver => FinalGoals > Line;
         public bool ActualUnder => FinalGoals < Line;
         public bool ActualPush => Math.Abs(FinalGoals - Line) <= Epsilon;
@@ -987,6 +1105,61 @@ public sealed class MonteCarloModelEvaluator
                 StaticRmse = Math.Sqrt(SafeDivide(_staticSqErrorSum, _rows)),
                 McMaeMinusStaticMae = mc.Mae - SafeDivide(_staticAbsErrorSum, _rows),
                 McRmseMinusStaticRmse = mc.Rmse - Math.Sqrt(SafeDivide(_staticSqErrorSum, _rows))
+            };
+        }
+    }
+
+    private sealed class MarketBaselineAccumulator
+    {
+        private readonly bool _enabled;
+        private int _rows;
+        private int _appliedRows;
+        private int _missingRows;
+        private double _marketExpectedTotalSum;
+        private double _modelBaselineSum;
+        private double _rawMultiplierSum;
+        private double _appliedMultiplierSum;
+        private double _minMultiplier = double.MaxValue;
+        private double _maxMultiplier = double.MinValue;
+
+        public MarketBaselineAccumulator(bool enabled)
+        {
+            _enabled = enabled;
+        }
+
+        public void Add(LiveMarketBaselineAdjustment adjustment)
+        {
+            _rows++;
+            if (adjustment.Applied)
+            {
+                _appliedRows++;
+                _marketExpectedTotalSum += adjustment.MarketExpectedTotalGoals ?? 0.0;
+                _modelBaselineSum += adjustment.ModelBaselineExpectedTotalGoals;
+                _rawMultiplierSum += adjustment.RawMultiplier;
+                _appliedMultiplierSum += adjustment.Multiplier;
+                _minMultiplier = Math.Min(_minMultiplier, adjustment.Multiplier);
+                _maxMultiplier = Math.Max(_maxMultiplier, adjustment.Multiplier);
+            }
+            else
+            {
+                _missingRows++;
+            }
+        }
+
+        public MonteCarloMarketBaselineMetrics ToMetrics()
+        {
+            return new MonteCarloMarketBaselineMetrics
+            {
+                Enabled = _enabled,
+                Rows = _rows,
+                AppliedRows = _appliedRows,
+                MissingRows = _missingRows,
+                AverageMarketExpectedTotalGoals = SafeDivide(_marketExpectedTotalSum, _appliedRows),
+                AverageModelBaselineExpectedTotalGoals = SafeDivide(_modelBaselineSum, _appliedRows),
+                AverageRawMultiplier = SafeDivide(_rawMultiplierSum, _appliedRows),
+                AverageAppliedMultiplier = SafeDivide(_appliedMultiplierSum, _appliedRows),
+                MinAppliedMultiplier = _appliedRows == 0 ? 0.0 : _minMultiplier,
+                MaxAppliedMultiplier = _appliedRows == 0 ? 0.0 : _maxMultiplier
             };
         }
     }

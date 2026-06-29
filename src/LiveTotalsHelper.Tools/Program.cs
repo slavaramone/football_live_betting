@@ -640,6 +640,21 @@ static async Task<int> RunSimulateLiveTotal(string[] args)
     double? lastGoalMinute = parsed.Has("last-goal-minute")
         ? parsed.Double("last-goal-minute", 0.0)
         : null;
+    double? pregameTotalLine = parsed.Has("pregame-total-line")
+        ? parsed.Double("pregame-total-line", 0.0)
+        : parsed.Has("pre-total-line")
+            ? parsed.Double("pre-total-line", 0.0)
+            : null;
+    double? pregameOverOdds = parsed.Has("pregame-over-odds")
+        ? parsed.Double("pregame-over-odds", 0.0)
+        : parsed.Has("pre-over-odds")
+            ? parsed.Double("pre-over-odds", 0.0)
+            : null;
+    double? pregameUnderOdds = parsed.Has("pregame-under-odds")
+        ? parsed.Double("pregame-under-odds", 0.0)
+        : parsed.Has("pre-under-odds")
+            ? parsed.Double("pre-under-odds", 0.0)
+            : null;
 
     var requestForEnd = new LiveMonteCarloRequest
     {
@@ -656,6 +671,9 @@ static async Task<int> RunSimulateLiveTotal(string[] args)
         UnderOdds = parsed.Has("under-odds") ? parsed.Double("under-odds", 0.0) : null,
         MarketTotal = parsed.Has("market-total") ? parsed.Double("market-total", 0.0) : null,
         PregameTotal = parsed.Has("pregame-total") ? parsed.Double("pregame-total", 0.0) : null,
+        PregameTotalLine = pregameTotalLine,
+        PregameOverOdds = pregameOverOdds,
+        PregameUnderOdds = pregameUnderOdds,
         SimulationCount = simulationCount,
         StepMinutes = stepMinutes,
         RandomSeed = seed
@@ -685,6 +703,9 @@ static async Task<int> RunSimulateLiveTotal(string[] args)
         UnderOdds = requestForEnd.UnderOdds,
         MarketTotal = requestForEnd.MarketTotal,
         PregameTotal = requestForEnd.PregameTotal,
+        PregameTotalLine = requestForEnd.PregameTotalLine,
+        PregameOverOdds = requestForEnd.PregameOverOdds,
+        PregameUnderOdds = requestForEnd.PregameUnderOdds,
         SimulationCount = simulationCount,
         StepMinutes = stepMinutes,
         RandomSeed = seed,
@@ -748,6 +769,21 @@ static async Task<int> RunSimulateLiveTotalV3(string[] args)
     double? lastGoalMinute = parsed.Has("last-goal-minute")
         ? parsed.Double("last-goal-minute", 0.0)
         : null;
+    double? pregameTotalLine = parsed.Has("pregame-total-line")
+        ? parsed.Double("pregame-total-line", 0.0)
+        : parsed.Has("pre-total-line")
+            ? parsed.Double("pre-total-line", 0.0)
+            : null;
+    double? pregameOverOdds = parsed.Has("pregame-over-odds")
+        ? parsed.Double("pregame-over-odds", 0.0)
+        : parsed.Has("pre-over-odds")
+            ? parsed.Double("pre-over-odds", 0.0)
+            : null;
+    double? pregameUnderOdds = parsed.Has("pregame-under-odds")
+        ? parsed.Double("pregame-under-odds", 0.0)
+        : parsed.Has("pre-under-odds")
+            ? parsed.Double("pre-under-odds", 0.0)
+            : null;
 
     var requestForEnd = new LiveMonteCarloRequest
     {
@@ -764,6 +800,9 @@ static async Task<int> RunSimulateLiveTotalV3(string[] args)
         UnderOdds = parsed.Has("under-odds") ? parsed.Double("under-odds", 0.0) : null,
         MarketTotal = parsed.Has("market-total") ? parsed.Double("market-total", 0.0) : null,
         PregameTotal = parsed.Has("pregame-total") ? parsed.Double("pregame-total", 0.0) : null,
+        PregameTotalLine = pregameTotalLine,
+        PregameOverOdds = pregameOverOdds,
+        PregameUnderOdds = pregameUnderOdds,
         SimulationCount = simulationCount,
         StepMinutes = stepMinutes,
         RandomSeed = seed
@@ -792,6 +831,9 @@ static async Task<int> RunSimulateLiveTotalV3(string[] args)
         UnderOdds = requestForEnd.UnderOdds,
         MarketTotal = requestForEnd.MarketTotal,
         PregameTotal = requestForEnd.PregameTotal,
+        PregameTotalLine = requestForEnd.PregameTotalLine,
+        PregameOverOdds = requestForEnd.PregameOverOdds,
+        PregameUnderOdds = requestForEnd.PregameUnderOdds,
         SimulationCount = simulationCount,
         StepMinutes = stepMinutes,
         RandomSeed = seed,
@@ -811,6 +853,8 @@ static async Task<int> RunSimulateLiveTotalV3(string[] args)
     Console.WriteLine($"Simulations: {simulation.SimulationCount}");
     Console.WriteLine($"Step minutes: {simulation.StepMinutes.ToString("0.####", CultureInfo.InvariantCulture)}");
     Console.WriteLine($"Expected remaining goals: {simulation.ExpectedRemainingGoals.ToString("0.####", CultureInfo.InvariantCulture)}");
+    if (simulation.MarketBaseline.Applied)
+        Console.WriteLine($"Market baseline: {simulation.MarketBaseline.Source}, expected total {FormatNullable(simulation.MarketBaseline.MarketExpectedTotalGoals)}, model base {simulation.MarketBaseline.ModelBaselineExpectedTotalGoals.ToString("0.###", CultureInfo.InvariantCulture)}, multiplier x{simulation.MarketBaseline.Multiplier.ToString("0.###", CultureInfo.InvariantCulture)}");
     if (simulation.ExpectedHomeRemainingGoals.HasValue || simulation.ExpectedAwayRemainingGoals.HasValue)
         Console.WriteLine($"Home/Away expected remaining: {FormatNullable(simulation.ExpectedHomeRemainingGoals)} / {FormatNullable(simulation.ExpectedAwayRemainingGoals)}");
     Console.WriteLine($"Distribution: P0={simulation.Distribution.P0.ToString("0.00%", CultureInfo.InvariantCulture)}, P1={simulation.Distribution.P1.ToString("0.00%", CultureInfo.InvariantCulture)}, P2={simulation.Distribution.P2.ToString("0.00%", CultureInfo.InvariantCulture)}, P3+={simulation.Distribution.P3Plus.ToString("0.00%", CultureInfo.InvariantCulture)}");
@@ -891,6 +935,8 @@ static async Task<int> RunEvaluateMonteCarloModel(string[] args)
         AssumedOverOdds = parsed.Double("assumed-over-odds", parsed.Double("over-odds", assumedOdds)),
         AssumedUnderOdds = parsed.Double("assumed-under-odds", parsed.Double("under-odds", assumedOdds)),
         MinEdge = parsed.Double("min-edge", profile?.EdgeThreshold ?? 0.05),
+        UsePregameMarketBaseline = useV3 && !parsed.Bool("disable-pregame-market-baseline", false) && parsed.Bool("use-pregame-market-baseline", true),
+        PregameOddsBookmaker = parsed.String("pregame-odds-bookmaker", parsed.String("bookmaker", string.Empty)),
         MaxStates = parsed.Int("max-states", 0),
         ProgressEvery = parsed.Int("progress-every", 100)
     };
@@ -915,6 +961,8 @@ static async Task<int> RunEvaluateMonteCarloModel(string[] args)
     Console.WriteLine($"LogLoss over: {summary.Overall.OverUnder.LogLossOver.ToString("0.####", CultureInfo.InvariantCulture)}");
     Console.WriteLine($"Bets: {summary.Betting.Bets}, ROI: {summary.Betting.Roi.ToString("0.00%", CultureInfo.InvariantCulture)}, Profit: {summary.Betting.Profit.ToString("0.##", CultureInfo.InvariantCulture)}");
     Console.WriteLine($"Static MAE: {summary.StaticClockComparison.StaticMae.ToString("0.####", CultureInfo.InvariantCulture)}; MC minus static MAE: {summary.StaticClockComparison.McMaeMinusStaticMae.ToString("+0.####;-0.####;0", CultureInfo.InvariantCulture)}");
+    if (summary.MarketBaseline.Enabled)
+        Console.WriteLine($"Pregame market baseline: applied {summary.MarketBaseline.AppliedRows}/{summary.MarketBaseline.Rows}, avg multiplier x{summary.MarketBaseline.AverageAppliedMultiplier.ToString("0.###", CultureInfo.InvariantCulture)}");
     Console.WriteLine($"Summary written: {result.OutputPath}");
 
     return 0;
@@ -1234,7 +1282,8 @@ static bool IsV3ModelVersion(string modelVersion)
        || modelVersion.Equals("v3-competing-hazard", StringComparison.OrdinalIgnoreCase)
        || modelVersion.Equals("v3-competing-hazard-after-goal", StringComparison.OrdinalIgnoreCase)
        || modelVersion.Equals("v3-competing-hazard-goal-draw", StringComparison.OrdinalIgnoreCase)
-       || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw", StringComparison.OrdinalIgnoreCase);
+       || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw", StringComparison.OrdinalIgnoreCase)
+       || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw-market-baseline", StringComparison.OrdinalIgnoreCase);
 
 static IConfiguration BuildConfiguration()
 {

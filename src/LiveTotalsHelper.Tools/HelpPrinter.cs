@@ -20,10 +20,10 @@ public static class HelpPrinter
         Console.WriteLine("  fit-state-weibull-curves            Fit state/time Weibull curves from exposure CSV.");
         Console.WriteLine("  debug-state-weibull-clock           Export fitted state Weibull curve rows for one live score/minute.");
         Console.WriteLine("  fit-next-goal-side-model            Fit next-goal scorer-side probabilities with fallback hierarchy.");
-        Console.WriteLine("  fit-competing-hazard-curves         Fit v3 curves: total state-Weibull hazard split by directional scorer share plus after-goal and goal-draw factors.");
+        Console.WriteLine("  fit-competing-hazard-curves         Fit v3 curves: total state-Weibull hazard split by directional scorer share plus after-goal, goal-draw and market-baseline settings.");
         Console.WriteLine("  debug-next-goal-side                Resolve P(home/away next goal) for one live score/minute.");
         Console.WriteLine("  simulate-live-total                 Run v2 single-fixture Monte Carlo live total simulation.");
-        Console.WriteLine("  simulate-live-total-v3              Run v3 competing-hazard single-fixture MC simulation with after-goal and goal-draw factors when fitted.");
+        Console.WriteLine("  simulate-live-total-v3              Run v3 competing-hazard single-fixture MC simulation with after-goal, goal-draw and pregame market-baseline factors.");
         Console.WriteLine("  evaluate-monte-carlo-model         Build historical live states in memory and write MC validation summary JSON; use --model-version v3 for competing hazards.");
         Console.WriteLine();
         Console.WriteLine("Profile file:");
@@ -43,7 +43,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-competing-hazard-curves --profile npl-victoria");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-next-goal-side --profile npl-victoria --score 2-0 --minute 49");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- simulate-live-total --profile npl-victoria --score 2-0 --minute 49 --line 3.5 --under-odds 2.20");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- simulate-live-total-v3 --profile npl-victoria --score 2-0 --minute 49 --last-goal-minute 48 --last-goal-side home --line 3.5 --under-odds 2.20");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- simulate-live-total-v3 --profile npl-victoria --score 2-0 --minute 49 --last-goal-minute 48 --last-goal-side home --line 3.5 --under-odds 2.20 --pregame-total-line 3.5 --pregame-over-odds 1.95 --pregame-under-odds 1.85");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-monte-carlo-model --profile npl-victoria --seasons 2026 --sims 5000");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-monte-carlo-model --profile npl-victoria --model-version v3 --seasons 2026 --sims 5000");
         Console.WriteLine();
@@ -83,6 +83,11 @@ public static class HelpPrinter
         Console.WriteLine("  --disable-after-goal-factors       Fit v3 competing curves without after-goal factors.");
         Console.WriteLine("  --disable-goal-draw-suppression   Fit v3 competing curves without draw_1_1_plus suppression factors.");
         Console.WriteLine("  --goal-draw-score-bucket          Score bucket to suppress. Default: draw_1_1_plus.");
+        Console.WriteLine("  --pregame-total-line             Pregame total line for v3 market-baseline multiplier.");
+        Console.WriteLine("  --pregame-over-odds / --pregame-under-odds  Pregame O/U odds used with --pregame-total-line.");
+        Console.WriteLine("  --pregame-total                  Direct pregame expected total override for v3 market baseline.");
+        Console.WriteLine("  --disable-pregame-market-baseline Disable automatic DB pregame-odds baseline in v3 evaluation.");
+        Console.WriteLine("  --pregame-odds-bookmaker         Optional bookmaker filter for v3 evaluation pregame total odds.");
         Console.WriteLine("  --lines                           Comma-separated lines for evaluate-monte-carlo-model. Default: profile targetLines.");
         Console.WriteLine("  --minutes                         Comma-separated historical state minutes for evaluation. Default: 45,50,55,60,65,70,75,80,85.");
         Console.WriteLine("  --assumed-odds                    Assumed flat odds for evaluation betting metrics. Default: 1.85.");
