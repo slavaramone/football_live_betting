@@ -44,6 +44,8 @@ try
         "evaluate-monte-carlo-model" => await RunEvaluateMonteCarloModel(commandArgs),
         "evaluate-live-monte-carlo" => await RunEvaluateMonteCarloModel(commandArgs),
         "backtest-monte-carlo-model" => await RunEvaluateMonteCarloModel(commandArgs),
+        "tune-market-baseline" => await RunTuneMarketBaseline(commandArgs),
+        "tune-pregame-market-baseline" => await RunTuneMarketBaseline(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -706,6 +708,11 @@ static async Task<int> RunSimulateLiveTotal(string[] args)
         PregameTotalLine = requestForEnd.PregameTotalLine,
         PregameOverOdds = requestForEnd.PregameOverOdds,
         PregameUnderOdds = requestForEnd.PregameUnderOdds,
+        MarketBaselineLowTotalShrink = OptionalDouble(parsed, "market-baseline-low-shrink", "low-shrink", "down-shrink"),
+        MarketBaselineHighTotalShrink = OptionalDouble(parsed, "market-baseline-high-shrink", "high-shrink", "up-shrink"),
+        MarketBaselineMinMultiplier = OptionalDouble(parsed, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
+        MarketBaselineMaxMultiplier = OptionalDouble(parsed, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
+        MarketBaselineOddsSensitivityGoals = OptionalDouble(parsed, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
         SimulationCount = simulationCount,
         StepMinutes = stepMinutes,
         RandomSeed = seed,
@@ -834,6 +841,11 @@ static async Task<int> RunSimulateLiveTotalV3(string[] args)
         PregameTotalLine = requestForEnd.PregameTotalLine,
         PregameOverOdds = requestForEnd.PregameOverOdds,
         PregameUnderOdds = requestForEnd.PregameUnderOdds,
+        MarketBaselineLowTotalShrink = OptionalDouble(parsed, "market-baseline-low-shrink", "low-shrink", "down-shrink"),
+        MarketBaselineHighTotalShrink = OptionalDouble(parsed, "market-baseline-high-shrink", "high-shrink", "up-shrink"),
+        MarketBaselineMinMultiplier = OptionalDouble(parsed, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
+        MarketBaselineMaxMultiplier = OptionalDouble(parsed, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
+        MarketBaselineOddsSensitivityGoals = OptionalDouble(parsed, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
         SimulationCount = simulationCount,
         StepMinutes = stepMinutes,
         RandomSeed = seed,
@@ -937,6 +949,11 @@ static async Task<int> RunEvaluateMonteCarloModel(string[] args)
         MinEdge = parsed.Double("min-edge", profile?.EdgeThreshold ?? 0.05),
         UsePregameMarketBaseline = useV3 && !parsed.Bool("disable-pregame-market-baseline", false) && parsed.Bool("use-pregame-market-baseline", true),
         PregameOddsBookmaker = parsed.String("pregame-odds-bookmaker", parsed.String("bookmaker", string.Empty)),
+        MarketBaselineLowTotalShrink = OptionalDouble(parsed, "market-baseline-low-shrink", "low-shrink", "down-shrink"),
+        MarketBaselineHighTotalShrink = OptionalDouble(parsed, "market-baseline-high-shrink", "high-shrink", "up-shrink"),
+        MarketBaselineMinMultiplier = OptionalDouble(parsed, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
+        MarketBaselineMaxMultiplier = OptionalDouble(parsed, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
+        MarketBaselineOddsSensitivityGoals = OptionalDouble(parsed, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
         MaxStates = parsed.Int("max-states", 0),
         ProgressEvery = parsed.Int("progress-every", 100)
     };
@@ -966,6 +983,247 @@ static async Task<int> RunEvaluateMonteCarloModel(string[] args)
     Console.WriteLine($"Summary written: {result.OutputPath}");
 
     return 0;
+}
+
+
+static async Task<int> RunTuneMarketBaseline(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    LeagueProfile? profile = await LoadProfileByKeyOrLeagueAsync(parsed);
+    MonteCarloConfig monteCarlo = profile?.MonteCarlo ?? new MonteCarloConfig();
+
+    var seasons = new List<string>();
+    if (parsed.Has("season-id"))
+        seasons.Add(parsed.RequiredString("season-id"));
+    if (parsed.Has("seasons"))
+        seasons.AddRange(parsed.RequiredString("seasons").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+    if (parsed.Has("test-seasons"))
+        seasons.AddRange(parsed.RequiredString("test-seasons").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+    if (seasons.Count == 0 && profile?.CurrentSeasonId > 0)
+        seasons.Add(profile.CurrentSeasonId.ToString(CultureInfo.InvariantCulture));
+
+    IReadOnlyList<double> stateMinutes = ParseDoubleList(
+        parsed.String("minutes", parsed.String("state-minutes", "45,50,55,60,65,70,75,80,85")),
+        [45, 50, 55, 60, 65, 70, 75, 80, 85]);
+
+    IReadOnlyList<double> lines = ParseDoubleList(
+        parsed.String("lines", profile is null ? string.Join(',', new[] { 2.5, 3.5 }) : string.Join(',', profile.TargetLines)),
+        profile?.TargetLines.Count > 0 ? profile.TargetLines : [2.5, 3.5]);
+
+    IReadOnlyList<double> lowShrinkGrid = ParseDoubleList(
+        parsed.String("low-shrink-grid", parsed.String("down-shrink-grid", "0.45,0.55,0.65,0.8")),
+        [0.45, 0.55, 0.65, 0.8]);
+    IReadOnlyList<double> highShrinkGrid = ParseDoubleList(
+        parsed.String("high-shrink-grid", parsed.String("up-shrink-grid", "0.65,0.8,1.0")),
+        [0.65, 0.8, 1.0]);
+
+    int simulationCount = parsed.Int("sims", parsed.Int("simulation-count", monteCarlo.SimulationCount > 0 ? monteCarlo.SimulationCount : 3000));
+    double stepMinutes = parsed.Double("step", parsed.Double("step-minutes", monteCarlo.StepMinutes > 0 ? monteCarlo.StepMinutes : 0.25));
+    int? seed = parsed.Has("seed") ? parsed.Int("seed", 0) : monteCarlo.RandomSeed;
+    double effectiveEnd = parsed.Double("effective-end", monteCarlo.DefaultEffectiveEnd2H > 0 ? monteCarlo.DefaultEffectiveEnd2H : 96.0);
+    double assumedOdds = parsed.Double("assumed-odds", 1.85);
+
+    string outputDefault = profile?.LiveMonteCarloV3MarketBaselineTuningPath ?? "outputs/validation/mc-v3-market-baseline-tuning-summary.json";
+    string outputPath = GetPathArgument(parsed, outputDefault, "outputs/validation/mc-v3-market-baseline-tuning-summary.json", "out", "output", "summary");
+
+    var baseOptions = new MonteCarloModelEvaluationOptions
+    {
+        League = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty),
+        Seasons = seasons,
+        StateMinutes = stateMinutes,
+        Lines = lines,
+        IncludeSettledLines = parsed.Bool("include-settled-lines", false),
+        ModelVersion = "v3",
+        CurvesPath = GetPathArgument(parsed, profile?.StateWeibullCurvesPath, "outputs/calibration/state-weibull-curves.json", "state-curves", "state-weibull-curves"),
+        SideModelPath = GetPathArgument(parsed, profile?.NextGoalSideModelPath, "outputs/calibration/next-goal-side-model.json", "side-model", "model"),
+        CompetingHazardCurvesPath = GetPathArgument(parsed, profile?.CompetingHazardCurvesPath, "outputs/calibration/competing-hazard-curves.json", "competing-curves", "curves-v3", "curves", "in", "input"),
+        OutputPath = outputPath,
+        SimulationCount = simulationCount,
+        StepMinutes = stepMinutes,
+        RandomSeed = seed,
+        EffectiveEndMinute = effectiveEnd,
+        AssumedOverOdds = parsed.Double("assumed-over-odds", parsed.Double("over-odds", assumedOdds)),
+        AssumedUnderOdds = parsed.Double("assumed-under-odds", parsed.Double("under-odds", assumedOdds)),
+        MinEdge = parsed.Double("min-edge", profile?.EdgeThreshold ?? 0.05),
+        UsePregameMarketBaseline = !parsed.Bool("disable-pregame-market-baseline", false) && parsed.Bool("use-pregame-market-baseline", true),
+        PregameOddsBookmaker = parsed.String("pregame-odds-bookmaker", parsed.String("bookmaker", string.Empty)),
+        MarketBaselineMinMultiplier = OptionalDouble(parsed, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
+        MarketBaselineMaxMultiplier = OptionalDouble(parsed, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
+        MarketBaselineOddsSensitivityGoals = OptionalDouble(parsed, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
+        MaxStates = parsed.Int("max-states", 0),
+        ProgressEvery = parsed.Int("progress-every", 0),
+        SuppressSummaryWrite = true
+    };
+
+    IConfiguration configuration = BuildConfiguration();
+    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
+    var evaluator = new MonteCarloModelEvaluator(dbContext, Console.Out);
+
+    var candidates = new List<MarketBaselineTuningCandidate>();
+    int totalRuns = lowShrinkGrid.Count * highShrinkGrid.Count;
+    int runIndex = 0;
+    foreach (double lowShrink in lowShrinkGrid)
+    {
+        foreach (double highShrink in highShrinkGrid)
+        {
+            runIndex++;
+            double low = Math.Clamp(lowShrink, 0.0, 1.0);
+            double high = Math.Clamp(highShrink, 0.0, 1.0);
+            Console.WriteLine($"[{runIndex}/{totalRuns}] low-total shrink={low.ToString("0.###", CultureInfo.InvariantCulture)}, high-total shrink={high.ToString("0.###", CultureInfo.InvariantCulture)}...");
+
+            MonteCarloModelEvaluationOptions options = CloneForMarketBaselineTuning(baseOptions, low, high);
+            MonteCarloModelEvaluationSummary evaluated = (await evaluator.EvaluateAsync(options, CancellationToken.None)).Summary;
+            MarketBaselineTuningCandidate candidate = BuildMarketBaselineTuningCandidate(evaluated, low, high);
+            candidates.Add(candidate);
+
+            Console.WriteLine($"    MAE={candidate.Overall.Mae.ToString("0.####", CultureInfo.InvariantCulture)}, RMSE={candidate.Overall.Rmse.ToString("0.####", CultureInfo.InvariantCulture)}, Brier={candidate.Overall.OverUnder.BrierOver.ToString("0.####", CultureInfo.InvariantCulture)}, over bias={candidate.Overall.OverUnder.OverProbabilityBias.ToString("+0.00%;-0.00%;0.00%", CultureInfo.InvariantCulture)}, score={candidate.BalancedScore.ToString("0.####", CultureInfo.InvariantCulture)}");
+        }
+    }
+
+    MarketBaselineTuningSummary summary = new()
+    {
+        GeneratedUtc = DateTimeOffset.UtcNow,
+        League = baseOptions.League,
+        Seasons = baseOptions.Seasons.ToList(),
+        StateMinutes = baseOptions.StateMinutes.ToList(),
+        Lines = baseOptions.Lines.ToList(),
+        SimulationCount = baseOptions.SimulationCount,
+        StepMinutes = baseOptions.StepMinutes,
+        RandomSeed = baseOptions.RandomSeed,
+        EffectiveEndMinute = baseOptions.EffectiveEndMinute,
+        LowShrinkGrid = lowShrinkGrid.Select(x => Math.Clamp(x, 0.0, 1.0)).Distinct().ToList(),
+        HighShrinkGrid = highShrinkGrid.Select(x => Math.Clamp(x, 0.0, 1.0)).Distinct().ToList(),
+        Candidates = candidates.OrderBy(x => x.BalancedScore).ToList(),
+        BestByMae = candidates.OrderBy(x => x.Overall.Mae).ThenBy(x => Math.Abs(x.Overall.Bias)).FirstOrDefault(),
+        BestByRmse = candidates.OrderBy(x => x.Overall.Rmse).ThenBy(x => Math.Abs(x.Overall.Bias)).FirstOrDefault(),
+        BestByBrier = candidates.OrderBy(x => x.Overall.OverUnder.BrierOver).ThenBy(x => Math.Abs(x.Overall.OverUnder.OverProbabilityBias)).FirstOrDefault(),
+        BestByLogLoss = candidates.OrderBy(x => x.Overall.OverUnder.LogLossOver).ThenBy(x => Math.Abs(x.Overall.OverUnder.OverProbabilityBias)).FirstOrDefault(),
+        BestBalanced = candidates.OrderBy(x => x.BalancedScore).FirstOrDefault()
+    };
+
+    string fullOutput = Path.GetFullPath(outputPath);
+    string? directory = Path.GetDirectoryName(fullOutput);
+    if (!string.IsNullOrWhiteSpace(directory))
+        Directory.CreateDirectory(directory);
+
+    await File.WriteAllTextAsync(fullOutput, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8, CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Market baseline tuning done.");
+    if (summary.BestBalanced is not null)
+    {
+        Console.WriteLine("Best balanced:");
+        PrintMarketBaselineTuningCandidate(summary.BestBalanced);
+    }
+    if (summary.BestByBrier is not null && !ReferenceEquals(summary.BestByBrier, summary.BestBalanced))
+    {
+        Console.WriteLine("Best Brier:");
+        PrintMarketBaselineTuningCandidate(summary.BestByBrier);
+    }
+    Console.WriteLine($"Summary written: {fullOutput}");
+
+    return 0;
+}
+
+static MonteCarloModelEvaluationOptions CloneForMarketBaselineTuning(
+    MonteCarloModelEvaluationOptions source,
+    double lowShrink,
+    double highShrink)
+{
+    return new MonteCarloModelEvaluationOptions
+    {
+        League = source.League,
+        Seasons = source.Seasons.ToList(),
+        StateMinutes = source.StateMinutes.ToList(),
+        Lines = source.Lines.ToList(),
+        IncludeSettledLines = source.IncludeSettledLines,
+        ModelVersion = source.ModelVersion,
+        CurvesPath = source.CurvesPath,
+        SideModelPath = source.SideModelPath,
+        CompetingHazardCurvesPath = source.CompetingHazardCurvesPath,
+        OutputPath = source.OutputPath,
+        SimulationCount = source.SimulationCount,
+        StepMinutes = source.StepMinutes,
+        RandomSeed = source.RandomSeed,
+        EffectiveEndMinute = source.EffectiveEndMinute,
+        AssumedOverOdds = source.AssumedOverOdds,
+        AssumedUnderOdds = source.AssumedUnderOdds,
+        MinEdge = source.MinEdge,
+        UsePregameMarketBaseline = source.UsePregameMarketBaseline,
+        PregameOddsBookmaker = source.PregameOddsBookmaker,
+        MarketBaselineLowTotalShrink = lowShrink,
+        MarketBaselineHighTotalShrink = highShrink,
+        MarketBaselineMinMultiplier = source.MarketBaselineMinMultiplier,
+        MarketBaselineMaxMultiplier = source.MarketBaselineMaxMultiplier,
+        MarketBaselineOddsSensitivityGoals = source.MarketBaselineOddsSensitivityGoals,
+        SuppressSummaryWrite = true,
+        MaxStates = source.MaxStates,
+        ProgressEvery = source.ProgressEvery
+    };
+}
+
+static MarketBaselineTuningCandidate BuildMarketBaselineTuningCandidate(
+    MonteCarloModelEvaluationSummary summary,
+    double lowShrink,
+    double highShrink)
+{
+    MonteCarloPredictionMetrics? line25 = FindSlicePrediction(summary, "line_2_5");
+    MonteCarloPredictionMetrics? line35 = FindSlicePrediction(summary, "line_3_5");
+    MonteCarloPredictionMetrics? pregameLow = FindSlicePrediction(summary, "pregame_total_2_5_or_lower");
+    MonteCarloPredictionMetrics? pregameHigh = FindSlicePrediction(summary, "pregame_total_3_5_plus");
+
+    return new MarketBaselineTuningCandidate
+    {
+        LowTotalShrink = lowShrink,
+        HighTotalShrink = highShrink,
+        BalancedScore = CalculateMarketBaselineTuningScore(summary, line25, line35, pregameLow, pregameHigh),
+        Overall = summary.Overall,
+        StaticClockComparison = summary.StaticClockComparison,
+        Betting = summary.Betting,
+        MarketBaseline = summary.MarketBaseline,
+        Line25 = line25,
+        Line35 = line35,
+        PregameLowTotal = pregameLow,
+        PregameHighTotal = pregameHigh
+    };
+}
+
+static MonteCarloPredictionMetrics? FindSlicePrediction(MonteCarloModelEvaluationSummary summary, string name)
+    => summary.Slices.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase))?.Prediction;
+
+static double CalculateMarketBaselineTuningScore(
+    MonteCarloModelEvaluationSummary summary,
+    MonteCarloPredictionMetrics? line25,
+    MonteCarloPredictionMetrics? line35,
+    MonteCarloPredictionMetrics? pregameLow,
+    MonteCarloPredictionMetrics? pregameHigh)
+{
+    double score = summary.Overall.Mae;
+    score += summary.Overall.OverUnder.BrierOver * 0.35;
+    score += Math.Abs(summary.Overall.Bias) * 0.20;
+    score += Math.Abs(summary.Overall.OverUnder.OverProbabilityBias) * 0.35;
+
+    if (line25 is not null)
+        score += Math.Abs(line25.OverUnder.OverProbabilityBias) * 0.20;
+    if (line35 is not null)
+        score += Math.Abs(line35.OverUnder.OverProbabilityBias) * 0.20;
+    if (pregameLow is not null)
+        score += Math.Abs(pregameLow.Bias) * 0.08;
+    if (pregameHigh is not null)
+        score += Math.Abs(pregameHigh.Bias) * 0.08;
+
+    return score;
+}
+
+static void PrintMarketBaselineTuningCandidate(MarketBaselineTuningCandidate candidate)
+{
+    Console.WriteLine($"  low shrink={candidate.LowTotalShrink.ToString("0.###", CultureInfo.InvariantCulture)}, high shrink={candidate.HighTotalShrink.ToString("0.###", CultureInfo.InvariantCulture)}, balanced score={candidate.BalancedScore.ToString("0.####", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"  MAE={candidate.Overall.Mae.ToString("0.####", CultureInfo.InvariantCulture)}, RMSE={candidate.Overall.Rmse.ToString("0.####", CultureInfo.InvariantCulture)}, bias={candidate.Overall.Bias.ToString("+0.####;-0.####;0", CultureInfo.InvariantCulture)}, Brier={candidate.Overall.OverUnder.BrierOver.ToString("0.####", CultureInfo.InvariantCulture)}, over bias={candidate.Overall.OverUnder.OverProbabilityBias.ToString("+0.00%;-0.00%;0.00%", CultureInfo.InvariantCulture)}");
+    if (candidate.Line25 is not null)
+        Console.WriteLine($"  line 2.5 over bias={candidate.Line25.OverUnder.OverProbabilityBias.ToString("+0.00%;-0.00%;0.00%", CultureInfo.InvariantCulture)}");
+    if (candidate.Line35 is not null)
+        Console.WriteLine($"  line 3.5 over bias={candidate.Line35.OverUnder.OverProbabilityBias.ToString("+0.00%;-0.00%;0.00%", CultureInfo.InvariantCulture)}");
 }
 
 static async Task<int> RunValidateDb(string[] args)
@@ -1602,6 +1860,17 @@ static void PrintWarningsAndFailures(IReadOnlyCollection<string> warnings, IRead
     }
 }
 
+static double? OptionalDouble(ParsedArgs parsed, params string[] names)
+{
+    foreach (string name in names)
+    {
+        if (parsed.Has(name))
+            return parsed.Double(name, 0.0);
+    }
+
+    return null;
+}
+
 static IReadOnlyList<double> ParseDoubleList(string value, IReadOnlyList<double> fallback)
 {
     if (string.IsNullOrWhiteSpace(value))
@@ -1615,6 +1884,43 @@ static IReadOnlyList<double> ParseDoubleList(string value, IReadOnlyList<double>
     }
 
     return result.Count == 0 ? fallback : result;
+}
+
+internal sealed class MarketBaselineTuningSummary
+{
+    public string Version { get; init; } = "market-baseline-tuning-v1";
+    public DateTimeOffset GeneratedUtc { get; init; } = DateTimeOffset.UtcNow;
+    public string League { get; init; } = string.Empty;
+    public IReadOnlyList<string> Seasons { get; init; } = [];
+    public IReadOnlyList<double> StateMinutes { get; init; } = [];
+    public IReadOnlyList<double> Lines { get; init; } = [];
+    public int SimulationCount { get; init; }
+    public double StepMinutes { get; init; }
+    public int? RandomSeed { get; init; }
+    public double EffectiveEndMinute { get; init; }
+    public IReadOnlyList<double> LowShrinkGrid { get; init; } = [];
+    public IReadOnlyList<double> HighShrinkGrid { get; init; } = [];
+    public MarketBaselineTuningCandidate? BestByMae { get; init; }
+    public MarketBaselineTuningCandidate? BestByRmse { get; init; }
+    public MarketBaselineTuningCandidate? BestByBrier { get; init; }
+    public MarketBaselineTuningCandidate? BestByLogLoss { get; init; }
+    public MarketBaselineTuningCandidate? BestBalanced { get; init; }
+    public IReadOnlyList<MarketBaselineTuningCandidate> Candidates { get; init; } = [];
+}
+
+internal sealed class MarketBaselineTuningCandidate
+{
+    public double LowTotalShrink { get; init; }
+    public double HighTotalShrink { get; init; }
+    public double BalancedScore { get; init; }
+    public MonteCarloPredictionMetrics Overall { get; init; } = new();
+    public MonteCarloStaticComparison StaticClockComparison { get; init; } = new();
+    public MonteCarloBettingMetrics Betting { get; init; } = new();
+    public MonteCarloMarketBaselineMetrics MarketBaseline { get; init; } = new();
+    public MonteCarloPredictionMetrics? Line25 { get; init; }
+    public MonteCarloPredictionMetrics? Line35 { get; init; }
+    public MonteCarloPredictionMetrics? PregameLowTotal { get; init; }
+    public MonteCarloPredictionMetrics? PregameHighTotal { get; init; }
 }
 
 internal sealed class FlashscoreImportResult

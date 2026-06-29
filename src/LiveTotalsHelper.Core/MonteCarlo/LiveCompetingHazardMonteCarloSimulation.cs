@@ -328,10 +328,13 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
             Math.Max(settings.MinMarketExpectedTotalGoals, Epsilon),
             Math.Max(settings.MaxMarketExpectedTotalGoals, settings.MinMarketExpectedTotalGoals + Epsilon));
         double rawMultiplier = marketExpected / modelBaseline;
-        double shrink = Math.Clamp(settings.MultiplierShrink, 0.0, 1.0);
+        double defaultShrink = Math.Clamp(settings.MultiplierShrink, 0.0, 1.0);
+        double lowTotalShrink = Math.Clamp(request.MarketBaselineLowTotalShrink ?? settings.LowTotalMultiplierShrink ?? defaultShrink, 0.0, 1.0);
+        double highTotalShrink = Math.Clamp(request.MarketBaselineHighTotalShrink ?? settings.HighTotalMultiplierShrink ?? defaultShrink, 0.0, 1.0);
+        double shrink = rawMultiplier < 1.0 ? lowTotalShrink : highTotalShrink;
         double shrunkMultiplier = 1.0 + (rawMultiplier - 1.0) * shrink;
-        double minMultiplier = Math.Max(Epsilon, settings.MinMultiplier);
-        double maxMultiplier = Math.Max(minMultiplier, settings.MaxMultiplier);
+        double minMultiplier = Math.Max(Epsilon, request.MarketBaselineMinMultiplier ?? settings.MinMultiplier);
+        double maxMultiplier = Math.Max(minMultiplier, request.MarketBaselineMaxMultiplier ?? settings.MaxMultiplier);
         double multiplier = Math.Clamp(shrunkMultiplier, minMultiplier, maxMultiplier);
 
         if (Math.Abs(multiplier - 1.0) > 0.0001)
@@ -380,7 +383,8 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
             double impliedOver = 1.0 / request.PregameOverOdds.Value;
             double impliedUnder = 1.0 / request.PregameUnderOdds.Value;
             double noVigPOver = impliedOver / (impliedOver + impliedUnder);
-            double expected = request.PregameTotalLine.Value + (noVigPOver - 0.5) * Math.Max(0.0, settings.OddsSensitivityGoals);
+            double oddsSensitivityGoals = Math.Max(0.0, request.MarketBaselineOddsSensitivityGoals ?? settings.OddsSensitivityGoals);
+            double expected = request.PregameTotalLine.Value + (noVigPOver - 0.5) * oddsSensitivityGoals;
             return new MarketExpectedTotalInput(
                 expected,
                 "pregame_total_line_odds",

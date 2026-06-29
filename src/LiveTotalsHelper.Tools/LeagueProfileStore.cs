@@ -116,6 +116,7 @@ public sealed class LeagueProfile
     public string LiveMonteCarloV3OutputPath { get; set; } = string.Empty;
     public string LiveMonteCarloV3PathsOutputPath { get; set; } = string.Empty;
     public string LiveMonteCarloV3EvaluationSummaryPath { get; set; } = string.Empty;
+    public string LiveMonteCarloV3MarketBaselineTuningPath { get; set; } = string.Empty;
 
     public List<string> StateWeibullTimeBuckets { get; set; } = [];
     public StateWeibullCurveFitProfileSettings StateWeibullCurveFit { get; set; } = new();
@@ -299,6 +300,7 @@ public sealed class LeagueProfileStore
         profile.LiveMonteCarloV3OutputPath = ValueOrDefault(profile.LiveMonteCarloV3OutputPath, reportFolder, $"{key}-live-total-mc-v3.json");
         profile.LiveMonteCarloV3PathsOutputPath = ValueOrDefault(profile.LiveMonteCarloV3PathsOutputPath, reportFolder, $"{key}-live-total-mc-v3-paths.csv");
         profile.LiveMonteCarloV3EvaluationSummaryPath = ValueOrDefault(profile.LiveMonteCarloV3EvaluationSummaryPath, reportFolder, $"{key}-mc-v3-evaluation-summary.json");
+        profile.LiveMonteCarloV3MarketBaselineTuningPath = ValueOrDefault(profile.LiveMonteCarloV3MarketBaselineTuningPath, reportFolder, $"{key}-mc-v3-market-baseline-tuning-summary.json");
     }
 
     private static string ValueOrDefault(string value, string folder, string fileName)

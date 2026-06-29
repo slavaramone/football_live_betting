@@ -27,6 +27,11 @@ public sealed class LiveTotalCompetingHazardCommandOptions
     public double? PregameTotalLine { get; init; }
     public double? PregameOverOdds { get; init; }
     public double? PregameUnderOdds { get; init; }
+    public double? MarketBaselineLowTotalShrink { get; init; }
+    public double? MarketBaselineHighTotalShrink { get; init; }
+    public double? MarketBaselineMinMultiplier { get; init; }
+    public double? MarketBaselineMaxMultiplier { get; init; }
+    public double? MarketBaselineOddsSensitivityGoals { get; init; }
     public int SimulationCount { get; init; } = 20_000;
     public double StepMinutes { get; init; } = 0.25;
     public int? RandomSeed { get; init; } = 12_345;
@@ -82,6 +87,11 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             PregameTotalLine = options.PregameTotalLine,
             PregameOverOdds = options.PregameOverOdds,
             PregameUnderOdds = options.PregameUnderOdds,
+            MarketBaselineLowTotalShrink = options.MarketBaselineLowTotalShrink,
+            MarketBaselineHighTotalShrink = options.MarketBaselineHighTotalShrink,
+            MarketBaselineMinMultiplier = options.MarketBaselineMinMultiplier,
+            MarketBaselineMaxMultiplier = options.MarketBaselineMaxMultiplier,
+            MarketBaselineOddsSensitivityGoals = options.MarketBaselineOddsSensitivityGoals,
             SimulationCount = options.SimulationCount,
             StepMinutes = options.StepMinutes,
             RandomSeed = options.RandomSeed

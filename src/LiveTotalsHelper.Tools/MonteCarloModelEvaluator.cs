@@ -29,6 +29,12 @@ public sealed class MonteCarloModelEvaluationOptions
     public double MinEdge { get; init; } = 0.05;
     public bool UsePregameMarketBaseline { get; init; }
     public string PregameOddsBookmaker { get; init; } = string.Empty;
+    public double? MarketBaselineLowTotalShrink { get; init; }
+    public double? MarketBaselineHighTotalShrink { get; init; }
+    public double? MarketBaselineMinMultiplier { get; init; }
+    public double? MarketBaselineMaxMultiplier { get; init; }
+    public double? MarketBaselineOddsSensitivityGoals { get; init; }
+    public bool SuppressSummaryWrite { get; init; }
     public int MaxStates { get; init; }
     public int ProgressEvery { get; init; } = 100;
 }
@@ -54,6 +60,7 @@ public sealed class MonteCarloModelEvaluationSummary
     public IReadOnlyList<CompetingHazardAfterGoalFactor> AfterGoalFactors { get; init; } = [];
     public IReadOnlyList<CompetingHazardGoalDrawSuppressionFactor> GoalDrawSuppressionFactors { get; init; } = [];
     public MonteCarloMarketBaselineMetrics MarketBaseline { get; init; } = new();
+    public MonteCarloMarketBaselineOverrideSettings MarketBaselineOverrides { get; init; } = new();
     public int SimulationCount { get; init; }
     public double StepMinutes { get; init; }
     public int? RandomSeed { get; init; }
@@ -81,6 +88,15 @@ public sealed class MonteCarloMarketBaselineMetrics
     public double AverageAppliedMultiplier { get; init; }
     public double MinAppliedMultiplier { get; init; }
     public double MaxAppliedMultiplier { get; init; }
+}
+
+public sealed class MonteCarloMarketBaselineOverrideSettings
+{
+    public double? LowTotalShrink { get; init; }
+    public double? HighTotalShrink { get; init; }
+    public double? MinMultiplier { get; init; }
+    public double? MaxMultiplier { get; init; }
+    public double? OddsSensitivityGoals { get; init; }
 }
 
 public sealed class MonteCarloDatasetSummary
@@ -261,7 +277,12 @@ public sealed class MonteCarloModelEvaluator
                 PregameTotalLine = options.UsePregameMarketBaseline ? row.PregameTotalLine : null,
                 PregameOverOdds = options.UsePregameMarketBaseline ? row.PregameOverOdds : null,
                 PregameUnderOdds = options.UsePregameMarketBaseline ? row.PregameUnderOdds : null,
-                UseMarketBaseline = options.UsePregameMarketBaseline
+                UseMarketBaseline = options.UsePregameMarketBaseline,
+                MarketBaselineLowTotalShrink = options.MarketBaselineLowTotalShrink,
+                MarketBaselineHighTotalShrink = options.MarketBaselineHighTotalShrink,
+                MarketBaselineMinMultiplier = options.MarketBaselineMinMultiplier,
+                MarketBaselineMaxMultiplier = options.MarketBaselineMaxMultiplier,
+                MarketBaselineOddsSensitivityGoals = options.MarketBaselineOddsSensitivityGoals
             };
 
             LiveMonteCarloSimulationResult simulation;
@@ -353,6 +374,14 @@ public sealed class MonteCarloModelEvaluator
             AfterGoalFactors = useV3 ? competingCurves!.AfterGoalFactors : [],
             GoalDrawSuppressionFactors = useV3 ? competingCurves!.GoalDrawSuppressionFactors : [],
             MarketBaseline = useV3 ? marketBaselineAccumulator.ToMetrics() : new MonteCarloMarketBaselineMetrics(),
+            MarketBaselineOverrides = new MonteCarloMarketBaselineOverrideSettings
+            {
+                LowTotalShrink = options.MarketBaselineLowTotalShrink,
+                HighTotalShrink = options.MarketBaselineHighTotalShrink,
+                MinMultiplier = options.MarketBaselineMinMultiplier,
+                MaxMultiplier = options.MarketBaselineMaxMultiplier,
+                OddsSensitivityGoals = options.MarketBaselineOddsSensitivityGoals
+            },
             SimulationCount = options.SimulationCount,
             StepMinutes = options.StepMinutes,
             RandomSeed = options.RandomSeed,
@@ -395,7 +424,9 @@ public sealed class MonteCarloModelEvaluator
                 .ToList()
         };
 
-        string outputPath = await WriteSummaryAsync(options.OutputPath, summary, cancellationToken);
+        string outputPath = options.SuppressSummaryWrite
+            ? string.Empty
+            : await WriteSummaryAsync(options.OutputPath, summary, cancellationToken);
         return new MonteCarloModelEvaluationCommandResult
         {
             Summary = summary,

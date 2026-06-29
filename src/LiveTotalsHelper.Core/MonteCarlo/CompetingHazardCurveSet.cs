@@ -112,12 +112,14 @@ public sealed class CompetingHazardMarketBaselineSettings
     public bool Enabled { get; init; } = true;
     public double OddsSensitivityGoals { get; init; } = 1.25;
     public double MultiplierShrink { get; init; } = 0.65;
+    public double? LowTotalMultiplierShrink { get; init; }
+    public double? HighTotalMultiplierShrink { get; init; }
     public double MinMultiplier { get; init; } = 0.75;
     public double MaxMultiplier { get; init; } = 1.25;
     public double MinMarketExpectedTotalGoals { get; init; } = 1.0;
     public double MaxMarketExpectedTotalGoals { get; init; } = 6.0;
     public double ModelBaselineExpectedTotalGoals { get; init; }
-    public string Strategy { get; init; } = "Use pregame total line and over/under odds to infer a match-specific expected total, compare it with the fitted league baseline, and apply a shrunk/clamped multiplicative factor to both competing hazards.";
+    public string Strategy { get; init; } = "Use pregame total line and over/under odds to infer a match-specific expected total, compare it with the fitted league baseline, and apply asymmetric shrunk/clamped multiplicative factors to both competing hazards.";
 }
 
 public sealed class LiveMarketBaselineAdjustment

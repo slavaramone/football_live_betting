@@ -24,6 +24,11 @@ public sealed class LiveMonteCarloRequest
     public double? PregameOverOdds { get; init; }
     public double? PregameUnderOdds { get; init; }
     public bool UseMarketBaseline { get; init; } = true;
+    public double? MarketBaselineLowTotalShrink { get; init; }
+    public double? MarketBaselineHighTotalShrink { get; init; }
+    public double? MarketBaselineMinMultiplier { get; init; }
+    public double? MarketBaselineMaxMultiplier { get; init; }
+    public double? MarketBaselineOddsSensitivityGoals { get; init; }
 
     public int SimulationCount { get; init; }
     public double StepMinutes { get; init; }
