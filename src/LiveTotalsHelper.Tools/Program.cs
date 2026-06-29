@@ -389,14 +389,14 @@ static async Task<int> RunFitStateWeibullCurves(string[] args)
 
 
 
-
 static async Task<int> RunFitCompetingHazardCurves(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
 
     LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
     string league = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty);
-    StateWeibullCurveFitProfileSettings fit = profile?.CompetingHazardCurveFit ?? profile?.StateWeibullCurveFit ?? new StateWeibullCurveFitProfileSettings();
+    StateWeibullCurveFitProfileSettings totalFit = profile?.StateWeibullCurveFit ?? new StateWeibullCurveFitProfileSettings();
+    NextGoalSideFitProfileSettings sideFit = profile?.NextGoalSideFit ?? new NextGoalSideFitProfileSettings();
 
     var options = new CompetingHazardCurveFitterOptions
     {
@@ -404,34 +404,48 @@ static async Task<int> RunFitCompetingHazardCurves(string[] args)
         OutputPath = GetPathArgument(parsed, profile?.CompetingHazardCurvesPath, "outputs/calibration/competing-hazard-curves.json", "out", "output"),
         SummaryPath = GetPathArgument(parsed, profile?.CompetingHazardCurvesSummaryPath, "outputs/calibration/competing-hazard-curves-summary.csv", "summary"),
         League = league,
-        MinMuFullBucketExposures = parsed.Double("min-mu-full-exposures", fit.MinMuFullBucketExposures),
-        MinMuGoals = parsed.Int("min-mu-goals", fit.MinMuGoals),
-        MinKFullBucketExposures = parsed.Double("min-k-full-exposures", fit.MinKFullBucketExposures),
-        MinKGoals = parsed.Int("min-k-goals", fit.MinKGoals),
-        MinK = parsed.Double("min-k", fit.MinK),
-        MaxK = parsed.Double("max-k", fit.MaxK),
-        KStep = parsed.Double("k-step", fit.KStep),
-        DefaultK = parsed.Double("default-k", fit.DefaultK)
+        MinMuFullBucketExposures = parsed.Double("min-mu-full-exposures", totalFit.MinMuFullBucketExposures),
+        MinMuGoals = parsed.Int("min-mu-goals", totalFit.MinMuGoals),
+        MinKFullBucketExposures = parsed.Double("min-k-full-exposures", totalFit.MinKFullBucketExposures),
+        MinKGoals = parsed.Int("min-k-goals", totalFit.MinKGoals),
+        MinK = parsed.Double("min-k", totalFit.MinK),
+        MaxK = parsed.Double("max-k", totalFit.MaxK),
+        KStep = parsed.Double("k-step", totalFit.KStep),
+        DefaultK = parsed.Double("default-k", totalFit.DefaultK),
+        MinExactGoals = parsed.Int("min-exact-goals", sideFit.MinExactGoals),
+        MinDirectionalOverallGoals = parsed.Int("min-directional-overall-goals", sideFit.MinDirectionalOverallGoals),
+        MinPressureTimeGoals = parsed.Int("min-pressure-time-goals", sideFit.MinPressureTimeGoals),
+        MinNeutralScoreTimeGoals = parsed.Int("min-neutral-score-time-goals", sideFit.MinNeutralScoreTimeGoals),
+        MinTimeGoals = parsed.Int("min-time-goals", sideFit.MinTimeGoals),
+        MinLeagueGoals = parsed.Int("min-league-goals", sideFit.MinLeagueGoals),
+        PriorWeightGoals = parsed.Double("prior-weight-goals", sideFit.PriorWeightGoals)
     };
 
     var fitter = new CompetingHazardCurveFitter();
     CompetingHazardCurveFitResult result = await fitter.FitAsync(options, CancellationToken.None);
 
-    Console.WriteLine("Competing home/away hazard curves fitted");
+    Console.WriteLine("Competing hazard curves fitted");
+    Console.WriteLine("Strategy: total state-Weibull hazard × directional scorer-share");
     Console.WriteLine($"Input rows read: {result.ExposureRowsRead}");
     Console.WriteLine($"Goal rows read: {result.GoalRowsRead}");
-    Console.WriteLine($"Directional/time curves written: {result.CurvesWritten}");
-    Console.WriteLine($"Side curves written: {result.SideCurvesWritten}");
-    Console.WriteLine($"Exact supported side curves: {result.ExactSupported}");
-    Console.WriteLine($"Partial supported side curves: {result.PartialSupported}");
-    Console.WriteLine($"Unsupported sparse side curves: {result.UnsupportedSparse}");
-    Console.WriteLine($"Time fallbacks written: {result.TimeFallbacksWritten}");
-    Console.WriteLine($"Neutral/time fallbacks written: {result.NeutralTimeFallbacksWritten}");
+    Console.WriteLine($"Total hazard curves written: {result.TotalCurvesWritten}");
+    Console.WriteLine($"Combined competing curves written: {result.CurvesWritten}");
+    Console.WriteLine($"Total exact supported: {result.TotalExactSupported}");
+    Console.WriteLine($"Total partial supported: {result.TotalPartialSupported}");
+    Console.WriteLine($"Total unsupported sparse: {result.TotalUnsupportedSparse}");
+    Console.WriteLine($"Scorer-share exact supported: {result.ScorerShareExactSupported}");
+    Console.WriteLine($"Scorer-share directional fallback: {result.ScorerShareDirectionalFallback}");
+    Console.WriteLine($"Scorer-share pressure-time fallback: {result.ScorerSharePressureTimeFallback}");
+    Console.WriteLine($"Scorer-share neutral-score/time fallback: {result.ScorerShareNeutralTimeFallback}");
+    Console.WriteLine($"Scorer-share time fallback: {result.ScorerShareTimeFallback}");
+    Console.WriteLine($"Scorer-share league fallback: {result.ScorerShareLeagueFallback}");
+    Console.WriteLine($"Scorer-share rule-based fallback: {result.ScorerShareRuleBasedFallback}");
     Console.WriteLine($"Output written: {result.OutputPath}");
     Console.WriteLine($"Summary written: {result.SummaryPath}");
 
     return 0;
 }
+
 
 static async Task<int> RunDebugStateWeibullClock(string[] args)
 {

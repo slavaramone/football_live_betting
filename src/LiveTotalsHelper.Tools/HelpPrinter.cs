@@ -18,9 +18,9 @@ public static class HelpPrinter
         Console.WriteLine("  debug-effective-end                 Estimate effective match end/remaining time for a live state.");
         Console.WriteLine("  build-state-weibull-exposures       Build score/time exposure CSV for fitting state Weibull curves.");
         Console.WriteLine("  fit-state-weibull-curves            Fit state/time Weibull curves from exposure CSV.");
-        Console.WriteLine("  fit-competing-hazard-curves         Fit v3 competing home/away hazard curves from exposure CSV.");
         Console.WriteLine("  debug-state-weibull-clock           Export fitted state Weibull curve rows for one live score/minute.");
         Console.WriteLine("  fit-next-goal-side-model            Fit next-goal scorer-side probabilities with fallback hierarchy.");
+        Console.WriteLine("  fit-competing-hazard-curves         Fit v3 curves: total state-Weibull hazard split by directional scorer share.");
         Console.WriteLine("  debug-next-goal-side                Resolve P(home/away next goal) for one live score/minute.");
         Console.WriteLine("  simulate-live-total                 Run single-fixture Monte Carlo live total simulation.");
         Console.WriteLine("  evaluate-monte-carlo-model         Build historical live states in memory and write MC validation summary JSON.");
@@ -37,9 +37,9 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db --league \"Superettan\" --season-id 2026");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-state-weibull-exposures --profile npl-victoria");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-state-weibull-curves --profile npl-victoria");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-competing-hazard-curves --profile npl-victoria");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-state-weibull-clock --profile npl-victoria --score 2-0 --minute 49 --until 96 --out outputs/debug/npl-victoria-2-0-49-clock.csv");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-next-goal-side-model --profile npl-victoria");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-competing-hazard-curves --profile npl-victoria");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-next-goal-side --profile npl-victoria --score 2-0 --minute 49");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- simulate-live-total --profile npl-victoria --score 2-0 --minute 49 --line 3.5 --under-odds 2.20");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-monte-carlo-model --profile npl-victoria --seasons 2026 --sims 5000");
@@ -66,6 +66,7 @@ public static class HelpPrinter
         Console.WriteLine("  --summary                         Optional override for profile summary CSV path.");
         Console.WriteLine("  --curves                          Optional override for profile fitted state Weibull curves JSON path.");
         Console.WriteLine("  --model                           Optional override for profile fitted next-goal-side JSON path.");
+        Console.WriteLine("  --out / --output                  Optional output path for fitted/debug/evaluation commands.");
         Console.WriteLine("  --side-model                      Optional override for profile fitted next-goal-side JSON path.");
         Console.WriteLine("  --until                           End minute for debug-state-weibull-clock output. Default: last fitted bucket end.");
         Console.WriteLine("  --step                            Minute step for debug/simulation commands. Debug default: 1; MC default from profile.");

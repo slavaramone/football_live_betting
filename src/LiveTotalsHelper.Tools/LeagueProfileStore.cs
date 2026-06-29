@@ -14,7 +14,6 @@ public sealed class LeagueProfilesConfig
     public MonteCarloConfig MonteCarlo { get; set; } = new();
     public StateWeibullCurveFitProfileSettings StateWeibullCurveFit { get; set; } = new();
     public NextGoalSideFitProfileSettings NextGoalSideFit { get; set; } = new();
-    public StateWeibullCurveFitProfileSettings CompetingHazardCurveFit { get; set; } = new();
     public List<LeagueProfile> Profiles { get; set; } = [];
 }
 
@@ -109,16 +108,15 @@ public sealed class LeagueProfile
     public string StateWeibullCurvesSummaryPath { get; set; } = string.Empty;
     public string NextGoalSideModelPath { get; set; } = string.Empty;
     public string NextGoalSideSummaryPath { get; set; } = string.Empty;
+    public string CompetingHazardCurvesPath { get; set; } = string.Empty;
+    public string CompetingHazardCurvesSummaryPath { get; set; } = string.Empty;
     public string LiveMonteCarloOutputPath { get; set; } = string.Empty;
     public string LiveMonteCarloPathsOutputPath { get; set; } = string.Empty;
     public string LiveMonteCarloEvaluationSummaryPath { get; set; } = string.Empty;
-    public string CompetingHazardCurvesPath { get; set; } = string.Empty;
-    public string CompetingHazardCurvesSummaryPath { get; set; } = string.Empty;
 
     public List<string> StateWeibullTimeBuckets { get; set; } = [];
     public StateWeibullCurveFitProfileSettings StateWeibullCurveFit { get; set; } = new();
     public NextGoalSideFitProfileSettings NextGoalSideFit { get; set; } = new();
-    public StateWeibullCurveFitProfileSettings CompetingHazardCurveFit { get; set; } = new();
     public MonteCarloConfig MonteCarlo { get; set; } = new();
 
     public double EdgeThreshold { get; set; } = 0.05;
@@ -261,7 +259,6 @@ public sealed class LeagueProfileStore
             profile.MonteCarlo = profile.MonteCarlo.WithDefaultsFrom(config.MonteCarlo);
             profile.StateWeibullCurveFit = profile.StateWeibullCurveFit.WithDefaultsFrom(config.StateWeibullCurveFit);
             profile.NextGoalSideFit = profile.NextGoalSideFit.WithDefaultsFrom(config.NextGoalSideFit);
-            profile.CompetingHazardCurveFit = profile.CompetingHazardCurveFit.WithDefaultsFrom(config.CompetingHazardCurveFit);
 
             string modelFolder = profile.ModelFolder;
             if (string.IsNullOrWhiteSpace(modelFolder) && !string.IsNullOrWhiteSpace(config.ModelRoot))
@@ -291,11 +288,11 @@ public sealed class LeagueProfileStore
         profile.StateWeibullCurvesSummaryPath = ValueOrDefault(profile.StateWeibullCurvesSummaryPath, reportFolder, $"{key}-state-weibull-curves-summary.csv");
         profile.NextGoalSideModelPath = ValueOrDefault(profile.NextGoalSideModelPath, modelFolder, $"{key}-next-goal-side-model.json");
         profile.NextGoalSideSummaryPath = ValueOrDefault(profile.NextGoalSideSummaryPath, reportFolder, $"{key}-next-goal-side-summary.csv");
+        profile.CompetingHazardCurvesPath = ValueOrDefault(profile.CompetingHazardCurvesPath, modelFolder, $"{key}-competing-hazard-curves.json");
+        profile.CompetingHazardCurvesSummaryPath = ValueOrDefault(profile.CompetingHazardCurvesSummaryPath, reportFolder, $"{key}-competing-hazard-curves-summary.csv");
         profile.LiveMonteCarloOutputPath = ValueOrDefault(profile.LiveMonteCarloOutputPath, reportFolder, $"{key}-live-total-mc.json");
         profile.LiveMonteCarloPathsOutputPath = ValueOrDefault(profile.LiveMonteCarloPathsOutputPath, reportFolder, $"{key}-live-total-mc-paths.csv");
         profile.LiveMonteCarloEvaluationSummaryPath = ValueOrDefault(profile.LiveMonteCarloEvaluationSummaryPath, reportFolder, $"{key}-mc-evaluation-summary.json");
-        profile.CompetingHazardCurvesPath = ValueOrDefault(profile.CompetingHazardCurvesPath, modelFolder, $"{key}-competing-hazard-curves.json");
-        profile.CompetingHazardCurvesSummaryPath = ValueOrDefault(profile.CompetingHazardCurvesSummaryPath, reportFolder, $"{key}-competing-hazard-curves-summary.csv");
     }
 
     private static string ValueOrDefault(string value, string folder, string fileName)

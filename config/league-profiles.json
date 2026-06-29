@@ -1,30 +1,10 @@
 {
   "modelRoot": "C:\\Temp\\football_data\\models",
   "reportRoot": "C:\\Temp\\football_data\\reports",
-  "defaultCalibrationSeasonIds": [
-    2023,
-    2024,
-    2025
-  ],
-  "defaultStateWeibullTimeBuckets": [
-    "0-20",
-    "20-35",
-    "35-45",
-    "45-60",
-    "60-70",
-    "70-80",
-    "80-90",
-    "90-96"
-  ],
-  "defaultTargetLines": [
-    2.5,
-    3.5
-  ],
-  "defaultAllowedLines": [
-    2.5,
-    3.5,
-    4.5
-  ],
+  "defaultCalibrationSeasonIds": [2023, 2024, 2025],
+  "defaultStateWeibullTimeBuckets": ["0-20", "20-35", "35-45", "45-60", "60-70", "70-80", "80-90", "90-96"],
+  "defaultTargetLines": [2.5, 3.5],
+  "defaultAllowedLines": [2.5, 3.5, 4.5],
   "monteCarlo": {
     "enabled": false,
     "simulationCount": 20000,
@@ -69,12 +49,7 @@
       "flashscoreCountry": "Australia",
       "flashscoreCountryCode": "AUS",
       "currentSeasonId": 2026,
-      "calibrationSeasonIds": [
-        2022,
-        2023,
-        2024,
-        2025
-      ],
+      "calibrationSeasonIds": [2022, 2023, 2024, 2025],
       "monteCarlo": {
         "enabled": true,
         "simulationCount": 20000,
@@ -82,15 +57,8 @@
         "randomSeed": 12345
       },
       "edgeThreshold": 0.05,
-      "targetLines": [
-        2.5,
-        3.5
-      ],
-      "allowedLines": [
-        2.5,
-        3.5,
-        4.5
-      ],
+      "targetLines": [2.5, 3.5],
+      "allowedLines": [2.5, 3.5, 4.5],
       "riskLevel": "MC paper test",
       "notes": "Primary state-Weibull Monte Carlo paper-test profile. Fitted on 2022-2025; current season 2026."
     },
@@ -102,21 +70,10 @@
       "flashscoreCountry": "Australia",
       "flashscoreCountryCode": "AUS",
       "currentSeasonId": 2026,
-      "calibrationSeasonIds": [
-        2023,
-        2024,
-        2025
-      ],
+      "calibrationSeasonIds": [2023, 2024, 2025],
       "edgeThreshold": 0.05,
-      "targetLines": [
-        2.5,
-        3.5
-      ],
-      "allowedLines": [
-        2.5,
-        3.5,
-        4.5
-      ],
+      "targetLines": [2.5, 3.5],
+      "allowedLines": [2.5, 3.5, 4.5],
       "riskLevel": "Needs MC calibration",
       "notes": "Profile shell ready for state-Weibull MC calibration. Monte Carlo disabled until curves and next-goal-side model are fitted."
     },
@@ -129,21 +86,10 @@
       "flashscoreCountry": "Australia",
       "flashscoreCountryCode": "AUS",
       "currentSeasonId": 2026,
-      "calibrationSeasonIds": [
-        2023,
-        2024,
-        2025
-      ],
+      "calibrationSeasonIds": [2023, 2024, 2025],
       "edgeThreshold": 0.05,
-      "targetLines": [
-        2.5,
-        3.5
-      ],
-      "allowedLines": [
-        2.5,
-        3.5,
-        4.5
-      ],
+      "targetLines": [2.5, 3.5],
+      "allowedLines": [2.5, 3.5, 4.5],
       "riskLevel": "Needs MC calibration",
       "notes": "Profile shell ready for state-Weibull MC calibration. Monte Carlo disabled until curves and next-goal-side model are fitted."
     },
@@ -156,21 +102,10 @@
       "flashscoreCountry": "Norway",
       "flashscoreCountryCode": "NOR",
       "currentSeasonId": 2026,
-      "calibrationSeasonIds": [
-        2023,
-        2024,
-        2025
-      ],
+      "calibrationSeasonIds": [2023, 2024, 2025],
       "edgeThreshold": 0.05,
-      "targetLines": [
-        2.5,
-        3.5
-      ],
-      "allowedLines": [
-        2.5,
-        3.5,
-        4.5
-      ],
+      "targetLines": [2.5, 3.5],
+      "allowedLines": [2.5, 3.5, 4.5],
       "riskLevel": "Needs MC calibration",
       "notes": "Profile shell ready for state-Weibull MC calibration. Monte Carlo disabled until curves and next-goal-side model are fitted."
     },
@@ -182,33 +117,12 @@
       "flashscoreCountry": "China",
       "flashscoreCountryCode": "CHN",
       "currentSeasonId": 2026,
-      "calibrationSeasonIds": [
-        2023,
-        2024,
-        2025
-      ],
+      "calibrationSeasonIds": [2023, 2024, 2025],
       "edgeThreshold": 0.05,
-      "targetLines": [
-        2.5,
-        3.5
-      ],
-      "allowedLines": [
-        2.5,
-        3.5,
-        4.5
-      ],
+      "targetLines": [2.5, 3.5],
+      "allowedLines": [2.5, 3.5, 4.5],
       "riskLevel": "Needs MC calibration",
       "notes": "Profile shell ready for state-Weibull MC calibration. Monte Carlo disabled until curves and next-goal-side model are fitted."
     }
-  ],
-  "competingHazardCurveFit": {
-    "minMuFullBucketExposures": 75.0,
-    "minMuGoals": 30,
-    "minKFullBucketExposures": 150.0,
-    "minKGoals": 50,
-    "minK": 0.65,
-    "maxK": 1.85,
-    "kStep": 0.05,
-    "defaultK": 1.0
-  }
+  ]
 }

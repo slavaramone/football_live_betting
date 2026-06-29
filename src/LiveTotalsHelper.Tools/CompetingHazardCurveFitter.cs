@@ -11,6 +11,7 @@ public sealed class CompetingHazardCurveFitterOptions
     public string OutputPath { get; init; } = "outputs/calibration/competing-hazard-curves.json";
     public string SummaryPath { get; init; } = "outputs/calibration/competing-hazard-curves-summary.csv";
     public string League { get; init; } = string.Empty;
+
     public double MinMuFullBucketExposures { get; init; } = 75.0;
     public int MinMuGoals { get; init; } = 30;
     public double MinKFullBucketExposures { get; init; } = 150.0;
@@ -19,19 +20,32 @@ public sealed class CompetingHazardCurveFitterOptions
     public double MaxK { get; init; } = 1.85;
     public double KStep { get; init; } = 0.05;
     public double DefaultK { get; init; } = 1.0;
+
+    public int MinExactGoals { get; init; } = 25;
+    public int MinDirectionalOverallGoals { get; init; } = 50;
+    public int MinPressureTimeGoals { get; init; } = 40;
+    public int MinNeutralScoreTimeGoals { get; init; } = 25;
+    public int MinTimeGoals { get; init; } = 50;
+    public int MinLeagueGoals { get; init; } = 100;
+    public double PriorWeightGoals { get; init; } = 6.0;
 }
 
 public sealed class CompetingHazardCurveFitResult
 {
     public int ExposureRowsRead { get; init; }
     public int GoalRowsRead { get; init; }
+    public int TotalCurvesWritten { get; init; }
     public int CurvesWritten { get; init; }
-    public int SideCurvesWritten { get; init; }
-    public int ExactSupported { get; init; }
-    public int PartialSupported { get; init; }
-    public int UnsupportedSparse { get; init; }
-    public int TimeFallbacksWritten { get; init; }
-    public int NeutralTimeFallbacksWritten { get; init; }
+    public int TotalExactSupported { get; init; }
+    public int TotalPartialSupported { get; init; }
+    public int TotalUnsupportedSparse { get; init; }
+    public int ScorerShareExactSupported { get; init; }
+    public int ScorerShareDirectionalFallback { get; init; }
+    public int ScorerSharePressureTimeFallback { get; init; }
+    public int ScorerShareNeutralTimeFallback { get; init; }
+    public int ScorerShareTimeFallback { get; init; }
+    public int ScorerShareLeagueFallback { get; init; }
+    public int ScorerShareRuleBasedFallback { get; init; }
     public string OutputPath { get; init; } = string.Empty;
     public string SummaryPath { get; init; } = string.Empty;
 }
@@ -52,10 +66,16 @@ public sealed class CompetingHazardCurveFitter
             throw new ArgumentException("Invalid k grid settings. Require 0 < min-k < max-k and k-step > 0.", nameof(options));
         if (options.DefaultK <= 0)
             throw new ArgumentException("Default k must be positive.", nameof(options));
+        if (options.PriorWeightGoals < 0)
+            throw new ArgumentException("Prior weight must be non-negative.", nameof(options));
 
         List<ExposureRow> rows = await ReadExposureRowsAsync(options.InputPath, cancellationToken);
         if (rows.Count == 0)
             throw new ArgumentException($"Exposure CSV contains no data rows: {options.InputPath}");
+
+        List<ExposureRow> goalRows = rows
+            .Where(x => x.GoalHappened && (x.GoalSide.Equals("home", StringComparison.OrdinalIgnoreCase) || x.GoalSide.Equals("away", StringComparison.OrdinalIgnoreCase)))
+            .ToList();
 
         string league = !string.IsNullOrWhiteSpace(options.League)
             ? options.League.Trim()
@@ -77,6 +97,13 @@ public sealed class CompetingHazardCurveFitter
         if (timeBuckets.Count == 0)
             throw new ArgumentException("Exposure CSV contains no time buckets.");
 
+        List<string> scoreBuckets = StateWeibullScoreBucketer.StandardBuckets.ToList();
+        foreach (string observed in rows.Select(x => x.NeutralScoreBucket).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x))
+        {
+            if (!scoreBuckets.Contains(observed, StringComparer.OrdinalIgnoreCase))
+                scoreBuckets.Add(observed);
+        }
+
         List<string> directionalBuckets = StateWeibullScoreBucketer.StandardDirectionalBuckets.ToList();
         foreach (string observed in rows.Select(x => x.DirectionalScoreBucket).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x))
         {
@@ -84,48 +111,129 @@ public sealed class CompetingHazardCurveFitter
                 directionalBuckets.Add(observed);
         }
 
-        Dictionary<string, CompetingHazardFallbackCurve> timeFallbacks = BuildTimeFallbacks(rows, timeBuckets, options);
-        Dictionary<string, CompetingHazardFallbackCurve> neutralTimeFallbacks = BuildNeutralTimeFallbacks(rows, timeBuckets, options);
+        StateWeibullCurveFitSettings totalSettings = new()
+        {
+            MinMuFullBucketExposures = options.MinMuFullBucketExposures,
+            MinMuGoals = options.MinMuGoals,
+            MinKFullBucketExposures = options.MinKFullBucketExposures,
+            MinKGoals = options.MinKGoals,
+            MinK = options.MinK,
+            MaxK = options.MaxK,
+            KStep = options.KStep,
+            DefaultK = options.DefaultK,
+            SparseFallbackPolicy = "league_time_bucket"
+        };
+
+        NextGoalSideModelSettings scorerSettings = new()
+        {
+            MinExactGoals = options.MinExactGoals,
+            MinDirectionalOverallGoals = options.MinDirectionalOverallGoals,
+            MinPressureTimeGoals = options.MinPressureTimeGoals,
+            MinNeutralScoreTimeGoals = options.MinNeutralScoreTimeGoals,
+            MinTimeGoals = options.MinTimeGoals,
+            MinLeagueGoals = options.MinLeagueGoals,
+            PriorWeightGoals = options.PriorWeightGoals
+        };
+
+        Dictionary<string, StateWeibullTimeFallbackCurve> totalTimeFallbacks = BuildTotalTimeFallbacks(rows, timeBuckets, options);
+        List<StateWeibullCurve> totalCurves = BuildTotalCurves(rows, scoreBuckets, timeBuckets, totalTimeFallbacks, league, options);
+        Dictionary<string, StateWeibullCurve> totalByNeutralTime = totalCurves.ToDictionary(x => Key(x.ScoreBucket, x.TimeBucket), StringComparer.OrdinalIgnoreCase);
+
+        NextGoalSideAggregate leagueShare = ToShareAggregate("league_overall", "league_overall", goalRows, 0.5, options.PriorWeightGoals);
+        if (leagueShare.GoalCount == 0)
+        {
+            leagueShare = new NextGoalSideAggregate
+            {
+                Key = "league_overall",
+                Source = "rule_based_default",
+                ProbabilityHomeNextGoal = 0.5
+            };
+        }
+
+        Dictionary<string, NextGoalSideAggregate> directionalOverall = BuildShareAggregateMap(
+            goalRows,
+            x => x.DirectionalScoreBucket,
+            "directional_overall",
+            leagueShare.ProbabilityHomeNextGoal,
+            options.PriorWeightGoals);
+
+        Dictionary<string, NextGoalSideAggregate> pressureTime = BuildShareAggregateMap(
+            goalRows,
+            x => Key(x.PressureBucket, x.TimeBucket),
+            "pressure_time",
+            leagueShare.ProbabilityHomeNextGoal,
+            options.PriorWeightGoals);
+
+        Dictionary<string, NextGoalSideAggregate> neutralScoreTime = BuildShareAggregateMap(
+            goalRows,
+            x => Key(x.NeutralScoreBucket, x.TimeBucket),
+            "neutral_score_time",
+            leagueShare.ProbabilityHomeNextGoal,
+            options.PriorWeightGoals);
+
+        Dictionary<string, NextGoalSideAggregate> timeShares = BuildShareAggregateMap(
+            goalRows,
+            x => x.TimeBucket,
+            "time_bucket",
+            leagueShare.ProbabilityHomeNextGoal,
+            options.PriorWeightGoals);
+
         var curves = new List<CompetingHazardCurve>();
 
         foreach (string directionalBucket in directionalBuckets)
         {
             foreach (StateWeibullCurveBucketInfo timeBucket in timeBuckets)
             {
-                List<ExposureRow> bucketRows = rows
+                List<ExposureRow> matchingRows = rows
                     .Where(x => x.DirectionalScoreBucket.Equals(directionalBucket, StringComparison.OrdinalIgnoreCase)
                                 && x.TimeBucket.Equals(timeBucket.TimeBucket, StringComparison.OrdinalIgnoreCase))
                     .ToList();
 
-                ExposureRow? sample = bucketRows.FirstOrDefault()
+                ExposureRow? sample = matchingRows.FirstOrDefault()
                     ?? rows.FirstOrDefault(x => x.DirectionalScoreBucket.Equals(directionalBucket, StringComparison.OrdinalIgnoreCase));
 
                 string neutralBucket = sample?.NeutralScoreBucket ?? NeutralFromDirectional(directionalBucket);
                 string pressureBucket = sample?.PressureBucket ?? PressureFromDirectional(directionalBucket);
-                string neutralTimeKey = Key(neutralBucket, timeBucket.TimeBucket);
+                StateWeibullCurve totalCurve = totalByNeutralTime.TryGetValue(Key(neutralBucket, timeBucket.TimeBucket), out StateWeibullCurve? foundTotal)
+                    ? foundTotal
+                    : BuildDefaultTotalCurve(league, neutralBucket, timeBucket, options);
 
-                CompetingHazardFallbackCurve? neutralFallback = neutralTimeFallbacks.TryGetValue(neutralTimeKey, out CompetingHazardFallbackCurve? foundNeutral)
-                    ? foundNeutral
-                    : null;
-                CompetingHazardFallbackCurve timeFallback = timeFallbacks.TryGetValue(timeBucket.TimeBucket, out CompetingHazardFallbackCurve? foundTime)
-                    ? foundTime
-                    : BuildDefaultFallback("time_bucket", timeBucket, options);
+                SideCount exact = CountSideGoals(matchingRows);
+                double ruleBased = RuleBasedFromDirectional(directionalBucket);
+                NextGoalSideAggregate fallback = ResolveShareFallback(
+                    directionalBucket,
+                    neutralBucket,
+                    pressureBucket,
+                    timeBucket.TimeBucket,
+                    exact,
+                    ruleBased,
+                    directionalOverall,
+                    pressureTime,
+                    neutralScoreTime,
+                    timeShares,
+                    leagueShare,
+                    options,
+                    out string shareStatus,
+                    out string shareSource,
+                    out string shareWarning);
 
-                CompetingHazardSideCurve home = BuildResolvedSideCurve(
-                    "home",
-                    bucketRows,
-                    timeBucket,
-                    neutralFallback?.Home,
-                    timeFallback.Home,
-                    options);
+                double? exactRawProbabilityHome = exact.GoalCount > 0 ? exact.HomeGoalCount / (double)exact.GoalCount : null;
+                double probabilityHome;
+                if (exact.GoalCount >= options.MinExactGoals)
+                {
+                    shareStatus = "ExactSupported";
+                    shareSource = "exact_directional_time";
+                    probabilityHome = Smooth(exact.HomeGoalCount, exact.AwayGoalCount, fallback.ProbabilityHomeNextGoal, options.PriorWeightGoals);
+                    shareWarning = string.Empty;
+                }
+                else
+                {
+                    probabilityHome = fallback.ProbabilityHomeNextGoal;
+                }
 
-                CompetingHazardSideCurve away = BuildResolvedSideCurve(
-                    "away",
-                    bucketRows,
-                    timeBucket,
-                    neutralFallback?.Away,
-                    timeFallback.Away,
-                    options);
+                probabilityHome = ClampProbability(probabilityHome);
+                double homeExpected = totalCurve.ExpectedGoalsInBucket * probabilityHome;
+                double awayExpected = totalCurve.ExpectedGoalsInBucket * (1.0 - probabilityHome);
 
                 curves.Add(new CompetingHazardCurve
                 {
@@ -137,8 +245,48 @@ public sealed class CompetingHazardCurveFitter
                     BucketStartMinute = timeBucket.StartMinute,
                     BucketEndMinute = timeBucket.EndMinute,
                     BucketLengthMinutes = timeBucket.LengthMinutes,
-                    Home = home,
-                    Away = away
+                    TotalStatus = totalCurve.Status,
+                    TotalCurveSource = totalCurve.CurveSource,
+                    TotalExpectedGoalsSource = totalCurve.ExpectedGoalsSource,
+                    TotalShapeKSource = totalCurve.ShapeKSource,
+                    TotalFullBucketExposures = totalCurve.FullBucketExposures,
+                    TotalExposureMinutes = totalCurve.ExposureMinutes,
+                    TotalGoalCount = totalCurve.GoalCount,
+                    TotalRawExpectedGoalsInBucket = totalCurve.RawExpectedGoalsInBucket,
+                    TotalExpectedGoalsInBucket = totalCurve.ExpectedGoalsInBucket,
+                    TotalRawShapeK = totalCurve.RawShapeK,
+                    TotalShapeK = totalCurve.ShapeK,
+                    ScorerShareStatus = shareStatus,
+                    ScorerShareSource = shareSource,
+                    ProbabilityHomeGoalInBucket = probabilityHome,
+                    ExactHomeGoalCount = exact.HomeGoalCount,
+                    ExactAwayGoalCount = exact.AwayGoalCount,
+                    ExactRawProbabilityHomeGoal = exactRawProbabilityHome,
+                    FallbackScorerShareSource = fallback.Source,
+                    FallbackHomeGoalCount = fallback.HomeGoalCount,
+                    FallbackAwayGoalCount = fallback.AwayGoalCount,
+                    FallbackProbabilityHomeGoal = fallback.ProbabilityHomeNextGoal,
+                    RuleBasedProbabilityHomeGoal = ruleBased,
+                    Home = new CompetingHazardSideSplit
+                    {
+                        Side = "home",
+                        ProbabilityGoalInBucket = probabilityHome,
+                        ExpectedGoalsInBucket = homeExpected,
+                        ShapeK = totalCurve.ShapeK,
+                        ExpectedGoalsSource = $"{totalCurve.ExpectedGoalsSource} * {shareSource}",
+                        ShapeKSource = totalCurve.ShapeKSource
+                    },
+                    Away = new CompetingHazardSideSplit
+                    {
+                        Side = "away",
+                        ProbabilityGoalInBucket = 1.0 - probabilityHome,
+                        ExpectedGoalsInBucket = awayExpected,
+                        ShapeK = totalCurve.ShapeK,
+                        ExpectedGoalsSource = $"{totalCurve.ExpectedGoalsSource} * {shareSource}",
+                        ShapeKSource = totalCurve.ShapeKSource
+                    },
+                    TotalWarning = totalCurve.Warning,
+                    ScorerShareWarning = shareWarning
                 });
             }
         }
@@ -148,27 +296,27 @@ public sealed class CompetingHazardCurveFitter
             GeneratedUtc = DateTimeOffset.UtcNow,
             SourceExposureFile = Path.GetFullPath(options.InputPath),
             League = league,
+            ScoreBuckets = scoreBuckets,
             DirectionalScoreBuckets = directionalBuckets,
             TimeBuckets = timeBuckets,
-            Settings = new CompetingHazardCurveFitSettings
+            Settings = new CompetingHazardFitSettings
             {
-                MinMuFullBucketExposures = options.MinMuFullBucketExposures,
-                MinMuGoals = options.MinMuGoals,
-                MinKFullBucketExposures = options.MinKFullBucketExposures,
-                MinKGoals = options.MinKGoals,
-                MinK = options.MinK,
-                MaxK = options.MaxK,
-                KStep = options.KStep,
-                DefaultK = options.DefaultK
+                TotalHazardFit = totalSettings,
+                ScorerShareFit = scorerSettings
             },
-            TimeFallbacks = timeFallbacks.Values
+            TotalTimeFallbacks = totalTimeFallbacks.Values
                 .OrderBy(x => x.BucketStartMinute)
                 .ThenBy(x => x.BucketEndMinute)
                 .ToList(),
-            NeutralScoreTimeFallbacks = neutralTimeFallbacks.Values
+            TotalCurves = totalCurves
                 .OrderBy(x => x.BucketStartMinute)
-                .ThenBy(x => x.NeutralScoreBucket)
+                .ThenBy(x => x.ScoreBucket)
                 .ToList(),
+            LeagueScorerShare = leagueShare,
+            DirectionalScorerShares = directionalOverall.Values.OrderBy(x => x.Key).ToList(),
+            PressureTimeScorerShares = pressureTime.Values.OrderBy(x => x.Key).ToList(),
+            NeutralScoreTimeScorerShares = neutralScoreTime.Values.OrderBy(x => x.Key).ToList(),
+            TimeScorerShares = timeShares.Values.OrderBy(x => x.Key).ToList(),
             Curves = curves
                 .OrderBy(x => x.BucketStartMinute)
                 .ThenBy(x => x.DirectionalScoreBucket)
@@ -178,271 +326,209 @@ public sealed class CompetingHazardCurveFitter
         await WriteJsonAsync(model, options.OutputPath, cancellationToken);
         await WriteSummaryCsvAsync(model.Curves, options.SummaryPath, cancellationToken);
 
-        List<CompetingHazardSideCurve> sideCurves = model.Curves.SelectMany(x => new[] { x.Home, x.Away }).ToList();
         return new CompetingHazardCurveFitResult
         {
             ExposureRowsRead = rows.Count,
-            GoalRowsRead = rows.Count(x => x.GoalHappened),
+            GoalRowsRead = goalRows.Count,
+            TotalCurvesWritten = totalCurves.Count,
             CurvesWritten = model.Curves.Count,
-            SideCurvesWritten = sideCurves.Count,
-            ExactSupported = sideCurves.Count(x => x.Status == "ExactSupported"),
-            PartialSupported = sideCurves.Count(x => x.Status == "PartialSupported"),
-            UnsupportedSparse = sideCurves.Count(x => x.Status == "UnsupportedSparse"),
-            TimeFallbacksWritten = model.TimeFallbacks.Count,
-            NeutralTimeFallbacksWritten = model.NeutralScoreTimeFallbacks.Count,
+            TotalExactSupported = totalCurves.Count(x => x.Status == "ExactSupported"),
+            TotalPartialSupported = totalCurves.Count(x => x.Status == "PartialSupported"),
+            TotalUnsupportedSparse = totalCurves.Count(x => x.Status == "UnsupportedSparse"),
+            ScorerShareExactSupported = model.Curves.Count(x => x.ScorerShareStatus == "ExactSupported"),
+            ScorerShareDirectionalFallback = model.Curves.Count(x => x.ScorerShareStatus == "DirectionalOverallFallback"),
+            ScorerSharePressureTimeFallback = model.Curves.Count(x => x.ScorerShareStatus == "PressureTimeFallback"),
+            ScorerShareNeutralTimeFallback = model.Curves.Count(x => x.ScorerShareStatus == "NeutralScoreTimeFallback"),
+            ScorerShareTimeFallback = model.Curves.Count(x => x.ScorerShareStatus == "TimeBucketFallback"),
+            ScorerShareLeagueFallback = model.Curves.Count(x => x.ScorerShareStatus == "LeagueOverallFallback"),
+            ScorerShareRuleBasedFallback = model.Curves.Count(x => x.ScorerShareStatus == "RuleBasedFallback"),
             OutputPath = Path.GetFullPath(options.OutputPath),
             SummaryPath = Path.GetFullPath(options.SummaryPath)
         };
     }
 
-    private static Dictionary<string, CompetingHazardFallbackCurve> BuildTimeFallbacks(
+    private static List<StateWeibullCurve> BuildTotalCurves(
+        IReadOnlyList<ExposureRow> rows,
+        IReadOnlyList<string> scoreBuckets,
+        IReadOnlyList<StateWeibullCurveBucketInfo> timeBuckets,
+        IReadOnlyDictionary<string, StateWeibullTimeFallbackCurve> timeFallbacks,
+        string league,
+        CompetingHazardCurveFitterOptions options)
+    {
+        var curves = new List<StateWeibullCurve>();
+        foreach (string scoreBucket in scoreBuckets)
+        {
+            foreach (StateWeibullCurveBucketInfo timeBucket in timeBuckets)
+            {
+                List<ExposureRow> bucketRows = rows
+                    .Where(x => x.NeutralScoreBucket.Equals(scoreBucket, StringComparison.OrdinalIgnoreCase)
+                                && x.TimeBucket.Equals(timeBucket.TimeBucket, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                ExposureAggregate aggregate = Aggregate(bucketRows, timeBucket.StartMinute, timeBucket.EndMinute);
+                StateWeibullTimeFallbackCurve fallback = timeFallbacks.TryGetValue(timeBucket.TimeBucket, out StateWeibullTimeFallbackCurve? foundFallback)
+                    ? foundFallback
+                    : BuildDefaultTotalFallback(timeBucket, options);
+
+                bool muReady = aggregate.FullBucketExposures >= options.MinMuFullBucketExposures && aggregate.GoalCount >= options.MinMuGoals;
+                bool kReady = aggregate.FullBucketExposures >= options.MinKFullBucketExposures && aggregate.GoalCount >= options.MinKGoals;
+
+                string status;
+                string curveSource;
+                string expectedGoalsSource;
+                string shapeKSource;
+                double expectedGoalsInBucket;
+                double shapeK;
+                double? rawK = null;
+                string warning = string.Empty;
+
+                if (!muReady)
+                {
+                    status = "UnsupportedSparse";
+                    curveSource = "fallback_league_time_bucket";
+                    expectedGoalsSource = "fallback_league_time_bucket";
+                    shapeKSource = "fallback_league_time_bucket";
+                    expectedGoalsInBucket = fallback.ExpectedGoalsInBucket;
+                    shapeK = fallback.ShapeK;
+                    warning = $"Total hazard exact neutral/time bucket too sparse; fallback total curve used. Exact sample: {aggregate.FullBucketExposures.ToString("0.##", CultureInfo.InvariantCulture)} full-bucket exposures, {aggregate.GoalCount} goals.";
+                }
+                else if (!kReady)
+                {
+                    status = "PartialSupported";
+                    curveSource = "exact_total_mu_fallback_k";
+                    expectedGoalsSource = "exact_neutral_time_bucket";
+                    shapeKSource = "fallback_league_time_bucket";
+                    expectedGoalsInBucket = aggregate.RawExpectedGoalsInBucket ?? fallback.ExpectedGoalsInBucket;
+                    shapeK = fallback.ShapeK;
+                    warning = $"Total hazard exact neutral/time bucket has enough data for μ but not for k; fallback k used. Exact sample: {aggregate.FullBucketExposures.ToString("0.##", CultureInfo.InvariantCulture)} full-bucket exposures, {aggregate.GoalCount} goals.";
+                }
+                else
+                {
+                    status = "ExactSupported";
+                    curveSource = "exact_neutral_time_bucket";
+                    expectedGoalsSource = "exact_neutral_time_bucket";
+                    shapeKSource = "exact_neutral_time_bucket";
+                    expectedGoalsInBucket = aggregate.RawExpectedGoalsInBucket ?? fallback.ExpectedGoalsInBucket;
+                    rawK = FitShapeK(bucketRows, options.DefaultK, options.MinK, options.MaxK, options.KStep);
+                    shapeK = rawK ?? fallback.ShapeK;
+                }
+
+                curves.Add(new StateWeibullCurve
+                {
+                    League = league,
+                    ScoreBucket = scoreBucket,
+                    TimeBucket = timeBucket.TimeBucket,
+                    BucketStartMinute = timeBucket.StartMinute,
+                    BucketEndMinute = timeBucket.EndMinute,
+                    BucketLengthMinutes = timeBucket.LengthMinutes,
+                    Status = status,
+                    CurveSource = curveSource,
+                    ExpectedGoalsSource = expectedGoalsSource,
+                    ShapeKSource = shapeKSource,
+                    FullBucketExposures = aggregate.FullBucketExposures,
+                    ExposureMinutes = aggregate.ExposureMinutes,
+                    GoalCount = aggregate.GoalCount,
+                    RawExpectedGoalsInBucket = aggregate.RawExpectedGoalsInBucket,
+                    ExpectedGoalsInBucket = expectedGoalsInBucket,
+                    RawShapeK = rawK,
+                    ShapeK = shapeK,
+                    FallbackFullBucketExposures = fallback.FullBucketExposures,
+                    FallbackExposureMinutes = fallback.ExposureMinutes,
+                    FallbackGoalCount = fallback.GoalCount,
+                    FallbackExpectedGoalsInBucket = fallback.ExpectedGoalsInBucket,
+                    FallbackShapeK = fallback.ShapeK,
+                    Warning = warning
+                });
+            }
+        }
+
+        return curves;
+    }
+
+    private static Dictionary<string, StateWeibullTimeFallbackCurve> BuildTotalTimeFallbacks(
         IReadOnlyList<ExposureRow> rows,
         IReadOnlyList<StateWeibullCurveBucketInfo> timeBuckets,
         CompetingHazardCurveFitterOptions options)
     {
-        var result = new Dictionary<string, CompetingHazardFallbackCurve>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, StateWeibullTimeFallbackCurve>(StringComparer.OrdinalIgnoreCase);
         foreach (StateWeibullCurveBucketInfo timeBucket in timeBuckets)
         {
             List<ExposureRow> timeRows = rows
                 .Where(x => x.TimeBucket.Equals(timeBucket.TimeBucket, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-            result[timeBucket.TimeBucket] = new CompetingHazardFallbackCurve
+            ExposureAggregate aggregate = Aggregate(timeRows, timeBucket.StartMinute, timeBucket.EndMinute);
+            double expectedGoals = aggregate.RawExpectedGoalsInBucket ?? 0.0;
+            double? fittedK = aggregate.GoalCount > 0
+                ? FitShapeK(timeRows, options.DefaultK, options.MinK, options.MaxK, options.KStep)
+                : null;
+
+            result[timeBucket.TimeBucket] = new StateWeibullTimeFallbackCurve
             {
-                Key = timeBucket.TimeBucket,
-                Source = "league_time_bucket",
                 TimeBucket = timeBucket.TimeBucket,
                 BucketStartMinute = timeBucket.StartMinute,
                 BucketEndMinute = timeBucket.EndMinute,
                 BucketLengthMinutes = timeBucket.LengthMinutes,
-                Home = BuildFallbackSideCurve("home", timeRows, timeBucket, "league_time_bucket", options),
-                Away = BuildFallbackSideCurve("away", timeRows, timeBucket, "league_time_bucket", options)
+                FullBucketExposures = aggregate.FullBucketExposures,
+                ExposureMinutes = aggregate.ExposureMinutes,
+                GoalCount = aggregate.GoalCount,
+                ExpectedGoalsInBucket = expectedGoals,
+                ShapeK = fittedK ?? options.DefaultK,
+                ShapeKSource = fittedK.HasValue ? "league_time_bucket" : "default_k"
             };
         }
 
         return result;
     }
 
-    private static Dictionary<string, CompetingHazardFallbackCurve> BuildNeutralTimeFallbacks(
-        IReadOnlyList<ExposureRow> rows,
-        IReadOnlyList<StateWeibullCurveBucketInfo> timeBuckets,
-        CompetingHazardCurveFitterOptions options)
-    {
-        var result = new Dictionary<string, CompetingHazardFallbackCurve>(StringComparer.OrdinalIgnoreCase);
-        List<string> neutralBuckets = StateWeibullScoreBucketer.StandardBuckets.ToList();
-        foreach (string observed in rows.Select(x => x.NeutralScoreBucket).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x))
-        {
-            if (!neutralBuckets.Contains(observed, StringComparer.OrdinalIgnoreCase))
-                neutralBuckets.Add(observed);
-        }
-
-        foreach (string neutralBucket in neutralBuckets)
-        {
-            foreach (StateWeibullCurveBucketInfo timeBucket in timeBuckets)
-            {
-                List<ExposureRow> matchingRows = rows
-                    .Where(x => x.NeutralScoreBucket.Equals(neutralBucket, StringComparison.OrdinalIgnoreCase)
-                                && x.TimeBucket.Equals(timeBucket.TimeBucket, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-                string key = Key(neutralBucket, timeBucket.TimeBucket);
-                result[key] = new CompetingHazardFallbackCurve
-                {
-                    Key = key,
-                    Source = "neutral_score_time",
-                    NeutralScoreBucket = neutralBucket,
-                    TimeBucket = timeBucket.TimeBucket,
-                    BucketStartMinute = timeBucket.StartMinute,
-                    BucketEndMinute = timeBucket.EndMinute,
-                    BucketLengthMinutes = timeBucket.LengthMinutes,
-                    Home = BuildFallbackSideCurve("home", matchingRows, timeBucket, "neutral_score_time", options),
-                    Away = BuildFallbackSideCurve("away", matchingRows, timeBucket, "neutral_score_time", options)
-                };
-            }
-        }
-
-        return result;
-    }
-
-    private static CompetingHazardFallbackCurve BuildDefaultFallback(
-        string source,
+    private static StateWeibullTimeFallbackCurve BuildDefaultTotalFallback(
         StateWeibullCurveBucketInfo timeBucket,
         CompetingHazardCurveFitterOptions options)
         => new()
         {
-            Key = source,
-            Source = source,
             TimeBucket = timeBucket.TimeBucket,
             BucketStartMinute = timeBucket.StartMinute,
             BucketEndMinute = timeBucket.EndMinute,
             BucketLengthMinutes = timeBucket.LengthMinutes,
-            Home = BuildDefaultSideCurve("home", source, options),
-            Away = BuildDefaultSideCurve("away", source, options)
+            FullBucketExposures = 0.0,
+            ExposureMinutes = 0.0,
+            GoalCount = 0,
+            ExpectedGoalsInBucket = 0.0,
+            ShapeK = options.DefaultK,
+            ShapeKSource = "default_k"
         };
 
-    private static CompetingHazardSideCurve BuildDefaultSideCurve(string side, string source, CompetingHazardCurveFitterOptions options)
+    private static StateWeibullCurve BuildDefaultTotalCurve(
+        string league,
+        string neutralBucket,
+        StateWeibullCurveBucketInfo timeBucket,
+        CompetingHazardCurveFitterOptions options)
         => new()
         {
-            Side = side,
+            League = league,
+            ScoreBucket = neutralBucket,
+            TimeBucket = timeBucket.TimeBucket,
+            BucketStartMinute = timeBucket.StartMinute,
+            BucketEndMinute = timeBucket.EndMinute,
+            BucketLengthMinutes = timeBucket.LengthMinutes,
             Status = "DefaultFallback",
-            CurveSource = source,
-            ExpectedGoalsSource = source,
+            CurveSource = "default_zero_total_hazard",
+            ExpectedGoalsSource = "default_zero_total_hazard",
             ShapeKSource = "default_k",
             ExpectedGoalsInBucket = 0.0,
             ShapeK = options.DefaultK,
-            FallbackSource = source
+            Warning = "Total hazard curve missing; default zero hazard used."
         };
-
-    private static CompetingHazardSideCurve BuildFallbackSideCurve(
-        string side,
-        IReadOnlyList<ExposureRow> rows,
-        StateWeibullCurveBucketInfo timeBucket,
-        string source,
-        CompetingHazardCurveFitterOptions options)
-    {
-        ExposureAggregate aggregate = Aggregate(rows, side, timeBucket.StartMinute, timeBucket.EndMinute);
-        double? rawK = aggregate.GoalCount > 0
-            ? FitShapeK(rows, side, options.DefaultK, options.MinK, options.MaxK, options.KStep)
-            : null;
-
-        return new CompetingHazardSideCurve
-        {
-            Side = side,
-            Status = aggregate.GoalCount > 0 ? "FallbackAvailable" : "FallbackSparse",
-            CurveSource = source,
-            ExpectedGoalsSource = source,
-            ShapeKSource = rawK.HasValue ? source : "default_k",
-            FullBucketExposures = aggregate.FullBucketExposures,
-            ExposureMinutes = aggregate.ExposureMinutes,
-            GoalCount = aggregate.GoalCount,
-            RawExpectedGoalsInBucket = aggregate.RawExpectedGoalsInBucket,
-            ExpectedGoalsInBucket = aggregate.RawExpectedGoalsInBucket ?? 0.0,
-            RawShapeK = rawK,
-            ShapeK = rawK ?? options.DefaultK,
-            FallbackSource = source
-        };
-    }
-
-    private static CompetingHazardSideCurve BuildResolvedSideCurve(
-        string side,
-        IReadOnlyList<ExposureRow> rows,
-        StateWeibullCurveBucketInfo timeBucket,
-        CompetingHazardSideCurve? neutralFallback,
-        CompetingHazardSideCurve timeFallback,
-        CompetingHazardCurveFitterOptions options)
-    {
-        ExposureAggregate aggregate = Aggregate(rows, side, timeBucket.StartMinute, timeBucket.EndMinute);
-        bool muReady = aggregate.FullBucketExposures >= options.MinMuFullBucketExposures && aggregate.GoalCount >= options.MinMuGoals;
-        bool kReady = aggregate.FullBucketExposures >= options.MinKFullBucketExposures && aggregate.GoalCount >= options.MinKGoals;
-
-        CompetingHazardSideCurve muFallback = SelectMuFallback(neutralFallback, timeFallback, options);
-        CompetingHazardSideCurve kFallback = SelectKFallback(neutralFallback, timeFallback, options);
-
-        string status;
-        string curveSource;
-        string expectedGoalsSource;
-        string shapeKSource;
-        double expectedGoalsInBucket;
-        double shapeK;
-        double? rawK = null;
-        string warning = string.Empty;
-
-        if (!muReady)
-        {
-            status = "UnsupportedSparse";
-            curveSource = $"fallback_{muFallback.FallbackSource}";
-            expectedGoalsSource = $"fallback_{muFallback.FallbackSource}";
-            shapeKSource = $"fallback_{kFallback.FallbackSource}";
-            expectedGoalsInBucket = muFallback.ExpectedGoalsInBucket;
-            shapeK = kFallback.ShapeK;
-            warning = $"{side}: exact directional/time bucket too sparse; fallback μ from {muFallback.FallbackSource}, fallback k from {kFallback.FallbackSource}. Exact sample: {aggregate.FullBucketExposures.ToString("0.##", CultureInfo.InvariantCulture)} full-bucket exposures, {aggregate.GoalCount} {side} goals.";
-        }
-        else if (!kReady)
-        {
-            status = "PartialSupported";
-            curveSource = "exact_mu_fallback_k";
-            expectedGoalsSource = "exact_directional_time";
-            shapeKSource = $"fallback_{kFallback.FallbackSource}";
-            expectedGoalsInBucket = aggregate.RawExpectedGoalsInBucket ?? muFallback.ExpectedGoalsInBucket;
-            shapeK = kFallback.ShapeK;
-            warning = $"{side}: exact directional/time bucket has enough data for μ but not for k; fallback k from {kFallback.FallbackSource}. Exact sample: {aggregate.FullBucketExposures.ToString("0.##", CultureInfo.InvariantCulture)} full-bucket exposures, {aggregate.GoalCount} {side} goals.";
-        }
-        else
-        {
-            status = "ExactSupported";
-            curveSource = "exact_directional_time";
-            expectedGoalsSource = "exact_directional_time";
-            shapeKSource = "exact_directional_time";
-            expectedGoalsInBucket = aggregate.RawExpectedGoalsInBucket ?? muFallback.ExpectedGoalsInBucket;
-            rawK = FitShapeK(rows, side, options.DefaultK, options.MinK, options.MaxK, options.KStep);
-            shapeK = rawK ?? kFallback.ShapeK;
-        }
-
-        return new CompetingHazardSideCurve
-        {
-            Side = side,
-            Status = status,
-            CurveSource = curveSource,
-            ExpectedGoalsSource = expectedGoalsSource,
-            ShapeKSource = shapeKSource,
-            FullBucketExposures = aggregate.FullBucketExposures,
-            ExposureMinutes = aggregate.ExposureMinutes,
-            GoalCount = aggregate.GoalCount,
-            RawExpectedGoalsInBucket = aggregate.RawExpectedGoalsInBucket,
-            ExpectedGoalsInBucket = Math.Max(0.0, expectedGoalsInBucket),
-            RawShapeK = rawK,
-            ShapeK = shapeK,
-            FallbackFullBucketExposures = muFallback.FullBucketExposures,
-            FallbackExposureMinutes = muFallback.ExposureMinutes,
-            FallbackGoalCount = muFallback.GoalCount,
-            FallbackExpectedGoalsInBucket = muFallback.ExpectedGoalsInBucket,
-            FallbackShapeK = kFallback.ShapeK,
-            FallbackSource = muFallback.FallbackSource,
-            Warning = warning
-        };
-    }
-
-    private static CompetingHazardSideCurve SelectMuFallback(
-        CompetingHazardSideCurve? neutralFallback,
-        CompetingHazardSideCurve timeFallback,
-        CompetingHazardCurveFitterOptions options)
-    {
-        if (neutralFallback is not null
-            && neutralFallback.FullBucketExposures >= options.MinMuFullBucketExposures
-            && neutralFallback.GoalCount >= options.MinMuGoals)
-            return neutralFallback;
-
-        return timeFallback;
-    }
-
-    private static CompetingHazardSideCurve SelectKFallback(
-        CompetingHazardSideCurve? neutralFallback,
-        CompetingHazardSideCurve timeFallback,
-        CompetingHazardCurveFitterOptions options)
-    {
-        if (neutralFallback is not null
-            && neutralFallback.FullBucketExposures >= options.MinKFullBucketExposures
-            && neutralFallback.GoalCount >= options.MinKGoals)
-            return neutralFallback;
-
-        if (timeFallback.FullBucketExposures >= options.MinKFullBucketExposures
-            && timeFallback.GoalCount >= options.MinKGoals)
-            return timeFallback;
-
-        return timeFallback;
-    }
 
     private static ExposureAggregate Aggregate(
         IReadOnlyList<ExposureRow> rows,
-        string side,
         double bucketStartMinute,
         double bucketEndMinute)
     {
         double exposureMinutes = rows.Sum(x => x.ExposureMinutes);
         double length = Math.Max(Epsilon, bucketEndMinute - bucketStartMinute);
         double fullBucketExposures = exposureMinutes / length;
-        int goals = rows.Count(x => x.GoalHappened && x.GoalSide.Equals(side, StringComparison.OrdinalIgnoreCase));
-
+        int goals = rows.Count(x => x.GoalHappened);
         return new ExposureAggregate(
             exposureMinutes,
             fullBucketExposures,
@@ -452,19 +538,17 @@ public sealed class CompetingHazardCurveFitter
 
     private static double? FitShapeK(
         IReadOnlyList<ExposureRow> rows,
-        string side,
         double defaultK,
         double minK,
         double maxK,
         double kStep)
     {
-        int goalCount = rows.Count(x => x.GoalHappened && x.GoalSide.Equals(side, StringComparison.OrdinalIgnoreCase));
+        int goalCount = rows.Count(x => x.GoalHappened);
         if (goalCount <= 0)
             return null;
 
         double bestK = defaultK;
         double bestLogLikelihood = double.NegativeInfinity;
-
         int steps = (int)Math.Floor((maxK - minK) / kStep + 0.5);
         for (int i = 0; i <= steps; i++)
         {
@@ -486,7 +570,7 @@ public sealed class CompetingHazardCurveFitter
 
                 transformedExposure += Math.Pow(endX, k) - Math.Pow(startX, k);
 
-                if (row.GoalHappened && row.GoalSide.Equals(side, StringComparison.OrdinalIgnoreCase))
+                if (row.GoalHappened)
                 {
                     double goalMinute = row.GoalMinute ?? row.EndMinute;
                     double goalX = Math.Clamp((goalMinute - row.BucketStartMinute) / length, 0.001, 1.0);
@@ -522,6 +606,212 @@ public sealed class CompetingHazardCurveFitter
         return Math.Round(bestK, 6);
     }
 
+    private static NextGoalSideAggregate ResolveShareFallback(
+        string directionalBucket,
+        string neutralBucket,
+        string pressureBucket,
+        string timeBucket,
+        SideCount exact,
+        double ruleBasedProbability,
+        IReadOnlyDictionary<string, NextGoalSideAggregate> directionalOverall,
+        IReadOnlyDictionary<string, NextGoalSideAggregate> pressureTime,
+        IReadOnlyDictionary<string, NextGoalSideAggregate> neutralScoreTime,
+        IReadOnlyDictionary<string, NextGoalSideAggregate> timeShares,
+        NextGoalSideAggregate leagueOverall,
+        CompetingHazardCurveFitterOptions options,
+        out string status,
+        out string source,
+        out string warning)
+    {
+        if (directionalOverall.TryGetValue(directionalBucket, out NextGoalSideAggregate? directional) && directional.GoalCount >= options.MinDirectionalOverallGoals)
+        {
+            status = "DirectionalOverallFallback";
+            source = "fallback_directional_overall";
+            warning = SparseShareWarning(exact, source);
+            return directional;
+        }
+
+        string pressureTimeKey = Key(pressureBucket, timeBucket);
+        if (pressureTime.TryGetValue(pressureTimeKey, out NextGoalSideAggregate? pressure) && pressure.GoalCount >= options.MinPressureTimeGoals)
+        {
+            status = "PressureTimeFallback";
+            source = "fallback_pressure_time";
+            warning = SparseShareWarning(exact, source);
+            return pressure;
+        }
+
+        string neutralTimeKey = Key(neutralBucket, timeBucket);
+        if (neutralScoreTime.TryGetValue(neutralTimeKey, out NextGoalSideAggregate? neutral) && neutral.GoalCount >= options.MinNeutralScoreTimeGoals)
+        {
+            status = "NeutralScoreTimeFallback";
+            source = "fallback_neutral_score_time";
+            warning = SparseShareWarning(exact, source);
+            return neutral;
+        }
+
+        if (timeShares.TryGetValue(timeBucket, out NextGoalSideAggregate? time) && time.GoalCount >= options.MinTimeGoals)
+        {
+            status = "TimeBucketFallback";
+            source = "fallback_time_bucket";
+            warning = SparseShareWarning(exact, source);
+            return time;
+        }
+
+        if (leagueOverall.GoalCount >= options.MinLeagueGoals)
+        {
+            status = "LeagueOverallFallback";
+            source = "fallback_league_overall";
+            warning = SparseShareWarning(exact, source);
+            return leagueOverall;
+        }
+
+        status = "RuleBasedFallback";
+        source = "fallback_rule_based";
+        warning = SparseShareWarning(exact, source);
+        return new NextGoalSideAggregate
+        {
+            Key = "rule_based",
+            Source = "rule_based",
+            ProbabilityHomeNextGoal = ruleBasedProbability
+        };
+    }
+
+    private static string SparseShareWarning(SideCount exact, string source)
+        => $"Scorer-share exact directional/time bucket too sparse ({exact.GoalCount} goals: home={exact.HomeGoalCount}, away={exact.AwayGoalCount}); {source} used.";
+
+    private static Dictionary<string, NextGoalSideAggregate> BuildShareAggregateMap(
+        IReadOnlyList<ExposureRow> goalRows,
+        Func<ExposureRow, string> keySelector,
+        string source,
+        double priorProbability,
+        double priorWeight)
+    {
+        var result = new Dictionary<string, NextGoalSideAggregate>(StringComparer.OrdinalIgnoreCase);
+        foreach (IGrouping<string, ExposureRow> group in goalRows.GroupBy(keySelector, StringComparer.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(group.Key))
+                continue;
+
+            result[group.Key] = ToShareAggregate(group.Key, source, group.ToList(), priorProbability, priorWeight);
+        }
+
+        return result;
+    }
+
+    private static NextGoalSideAggregate ToShareAggregate(
+        string key,
+        string source,
+        IReadOnlyList<ExposureRow> rows,
+        double priorProbability,
+        double priorWeight)
+    {
+        SideCount count = CountSideGoals(rows);
+        return new NextGoalSideAggregate
+        {
+            Key = key,
+            Source = source,
+            DirectionalScoreBucket = rows.FirstOrDefault()?.DirectionalScoreBucket ?? string.Empty,
+            NeutralScoreBucket = rows.FirstOrDefault()?.NeutralScoreBucket ?? string.Empty,
+            PressureBucket = rows.FirstOrDefault()?.PressureBucket ?? string.Empty,
+            TimeBucket = rows.FirstOrDefault()?.TimeBucket ?? string.Empty,
+            HomeGoalCount = count.HomeGoalCount,
+            AwayGoalCount = count.AwayGoalCount,
+            ProbabilityHomeNextGoal = Smooth(count.HomeGoalCount, count.AwayGoalCount, priorProbability, priorWeight)
+        };
+    }
+
+    private static SideCount CountSideGoals(IEnumerable<ExposureRow> rows)
+    {
+        int home = 0;
+        int away = 0;
+        foreach (ExposureRow row in rows)
+        {
+            if (!row.GoalHappened)
+                continue;
+            if (row.GoalSide.Equals("home", StringComparison.OrdinalIgnoreCase))
+                home++;
+            else if (row.GoalSide.Equals("away", StringComparison.OrdinalIgnoreCase))
+                away++;
+        }
+
+        return new SideCount(home, away);
+    }
+
+    private static double Smooth(int homeGoals, int awayGoals, double priorProbability, double priorWeight)
+    {
+        double total = homeGoals + awayGoals;
+        if (total <= 0 && priorWeight <= 0)
+            return ClampProbability(priorProbability);
+
+        double numerator = homeGoals + priorProbability * priorWeight;
+        double denominator = total + priorWeight;
+        return denominator > Epsilon ? ClampProbability(numerator / denominator) : ClampProbability(priorProbability);
+    }
+
+    private static double ClampProbability(double probability)
+        => Math.Clamp(probability, 0.01, 0.99);
+
+    private static string NeutralFromDirectional(string directionalBucket)
+    {
+        if (directionalBucket.Equals("draw_0_0", StringComparison.OrdinalIgnoreCase))
+            return "draw_0_0";
+        if (directionalBucket.StartsWith("draw", StringComparison.OrdinalIgnoreCase))
+            return "draw_1_1_plus";
+        if (directionalBucket.Contains("lead1_low", StringComparison.OrdinalIgnoreCase))
+            return "margin1_total1_2";
+        if (directionalBucket.Contains("lead1_high", StringComparison.OrdinalIgnoreCase))
+            return "margin1_total3_plus";
+        if (directionalBucket.Contains("lead2", StringComparison.OrdinalIgnoreCase))
+            return "margin2";
+        return "margin3_plus";
+    }
+
+    private static string PressureFromDirectional(string directionalBucket)
+    {
+        if (directionalBucket.StartsWith("draw", StringComparison.OrdinalIgnoreCase))
+            return "draw";
+        if (directionalBucket.StartsWith("home_lead1", StringComparison.OrdinalIgnoreCase))
+            return "home_lead1";
+        if (directionalBucket.StartsWith("away_lead1", StringComparison.OrdinalIgnoreCase))
+            return "away_lead1";
+        if (directionalBucket.StartsWith("home", StringComparison.OrdinalIgnoreCase))
+            return "home_lead2_plus";
+        return "away_lead2_plus";
+    }
+
+    private static double RuleBasedFromDirectional(string directionalBucket)
+    {
+        if (directionalBucket.StartsWith("draw", StringComparison.OrdinalIgnoreCase))
+            return 0.53;
+        if (directionalBucket.StartsWith("home_lead1", StringComparison.OrdinalIgnoreCase))
+            return 0.48;
+        if (directionalBucket.StartsWith("home_lead2", StringComparison.OrdinalIgnoreCase))
+            return 0.43;
+        if (directionalBucket.StartsWith("home_lead3", StringComparison.OrdinalIgnoreCase))
+            return 0.40;
+        if (directionalBucket.StartsWith("away_lead1", StringComparison.OrdinalIgnoreCase))
+            return 0.58;
+        if (directionalBucket.StartsWith("away_lead2", StringComparison.OrdinalIgnoreCase))
+            return 0.63;
+        return 0.66;
+    }
+
+    private static string Key(string first, string second) => $"{first}|{second}";
+
+    private static string ResolveLeague(IReadOnlyList<ExposureRow> rows)
+    {
+        string? league = rows
+            .Select(x => !string.IsNullOrWhiteSpace(x.LeagueSlug) ? x.LeagueSlug : x.League)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .GroupBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key)
+            .Select(g => g.Key)
+            .FirstOrDefault();
+
+        return league ?? string.Empty;
+    }
+
     private static async Task<List<ExposureRow>> ReadExposureRowsAsync(string path, CancellationToken cancellationToken)
     {
         var rows = new List<ExposureRow>();
@@ -538,8 +828,8 @@ public sealed class CompetingHazardCurveFitter
         string[] required =
         [
             "league", "league_slug", "time_bucket", "bucket_start_minute", "bucket_end_minute",
-            "score_bucket", "home_goals_at_start", "away_goals_at_start", "start_minute",
-            "end_minute", "exposure_minutes", "goal_happened", "goal_minute", "goal_side"
+            "score_bucket", "home_goals_at_start", "away_goals_at_start", "start_minute", "end_minute",
+            "exposure_minutes", "goal_happened", "goal_minute", "goal_side"
         ];
 
         foreach (string column in required)
@@ -595,48 +885,6 @@ public sealed class CompetingHazardCurveFitter
         return rows;
     }
 
-    private static string NeutralFromDirectional(string directionalBucket)
-    {
-        if (directionalBucket.Equals("draw_0_0", StringComparison.OrdinalIgnoreCase))
-            return "draw_0_0";
-        if (directionalBucket.Equals("draw_1_1_plus", StringComparison.OrdinalIgnoreCase))
-            return "draw_1_1_plus";
-        if (directionalBucket.Contains("lead1_low", StringComparison.OrdinalIgnoreCase))
-            return "margin1_total1_2";
-        if (directionalBucket.Contains("lead1_high", StringComparison.OrdinalIgnoreCase))
-            return "margin1_total3_plus";
-        if (directionalBucket.Contains("lead2", StringComparison.OrdinalIgnoreCase))
-            return "margin2";
-        return "margin3_plus";
-    }
-
-    private static string PressureFromDirectional(string directionalBucket)
-    {
-        if (directionalBucket.StartsWith("draw", StringComparison.OrdinalIgnoreCase))
-            return "draw";
-        if (directionalBucket.StartsWith("home_lead1", StringComparison.OrdinalIgnoreCase))
-            return "home_lead1";
-        if (directionalBucket.StartsWith("away_lead1", StringComparison.OrdinalIgnoreCase))
-            return "away_lead1";
-        if (directionalBucket.StartsWith("home_", StringComparison.OrdinalIgnoreCase))
-            return "home_lead2_plus";
-        return "away_lead2_plus";
-    }
-
-    private static string ResolveLeague(IReadOnlyList<ExposureRow> rows)
-    {
-        string? league = rows
-            .Select(x => !string.IsNullOrWhiteSpace(x.LeagueSlug) ? x.LeagueSlug : x.League)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .GroupBy(x => x, StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(g => g.Count())
-            .ThenBy(g => g.Key)
-            .Select(g => g.Key)
-            .FirstOrDefault();
-
-        return league ?? string.Empty;
-    }
-
     private static async Task WriteJsonAsync(CompetingHazardCurveSet model, string outputPath, CancellationToken cancellationToken)
     {
         string fullPath = Path.GetFullPath(outputPath);
@@ -661,7 +909,7 @@ public sealed class CompetingHazardCurveFitter
             Directory.CreateDirectory(directory);
 
         var builder = new StringBuilder();
-        builder.AppendLine("league,directional_score_bucket,neutral_score_bucket,pressure_bucket,time_bucket,bucket_start_minute,bucket_end_minute,home_status,home_mu_source,home_k_source,home_full_bucket_exposures,home_exposure_minutes,home_goals,home_raw_mu,home_final_mu,home_raw_k,home_final_k,away_status,away_mu_source,away_k_source,away_full_bucket_exposures,away_exposure_minutes,away_goals,away_raw_mu,away_final_mu,away_raw_k,away_final_k,total_final_mu,p_home_goal_in_bucket,p_away_goal_in_bucket,warning");
+        builder.AppendLine("league,directional_score_bucket,neutral_score_bucket,pressure_bucket,time_bucket,bucket_start_minute,bucket_end_minute,total_status,total_curve_source,total_mu_source,total_k_source,total_full_bucket_exposures,total_goal_count,total_raw_mu,total_final_mu,total_raw_k,total_final_k,scorer_share_status,scorer_share_source,p_home_goal,p_away_goal,exact_home_goals,exact_away_goals,exact_goal_count,exact_raw_p_home,fallback_share_source,fallback_home_goals,fallback_away_goals,fallback_goal_count,fallback_p_home,rule_based_p_home,home_mu,away_mu,warning");
 
         foreach (CompetingHazardCurve curve in curves.OrderBy(x => x.BucketStartMinute).ThenBy(x => x.DirectionalScoreBucket))
         {
@@ -672,30 +920,37 @@ public sealed class CompetingHazardCurveFitter
             builder.Append(Csv(curve.TimeBucket)); builder.Append(',');
             builder.Append(Format(curve.BucketStartMinute)); builder.Append(',');
             builder.Append(Format(curve.BucketEndMinute)); builder.Append(',');
-            AppendSide(builder, curve.Home);
-            AppendSide(builder, curve.Away);
-            builder.Append(Format(curve.ExpectedGoalsInBucket)); builder.Append(',');
+            builder.Append(Csv(curve.TotalStatus)); builder.Append(',');
+            builder.Append(Csv(curve.TotalCurveSource)); builder.Append(',');
+            builder.Append(Csv(curve.TotalExpectedGoalsSource)); builder.Append(',');
+            builder.Append(Csv(curve.TotalShapeKSource)); builder.Append(',');
+            builder.Append(Format(curve.TotalFullBucketExposures)); builder.Append(',');
+            builder.Append(curve.TotalGoalCount.ToString(CultureInfo.InvariantCulture)); builder.Append(',');
+            builder.Append(curve.TotalRawExpectedGoalsInBucket.HasValue ? Format(curve.TotalRawExpectedGoalsInBucket.Value) : string.Empty); builder.Append(',');
+            builder.Append(Format(curve.TotalExpectedGoalsInBucket)); builder.Append(',');
+            builder.Append(curve.TotalRawShapeK.HasValue ? Format(curve.TotalRawShapeK.Value) : string.Empty); builder.Append(',');
+            builder.Append(Format(curve.TotalShapeK)); builder.Append(',');
+            builder.Append(Csv(curve.ScorerShareStatus)); builder.Append(',');
+            builder.Append(Csv(curve.ScorerShareSource)); builder.Append(',');
             builder.Append(Format(curve.ProbabilityHomeGoalInBucket)); builder.Append(',');
             builder.Append(Format(curve.ProbabilityAwayGoalInBucket)); builder.Append(',');
+            builder.Append(curve.ExactHomeGoalCount.ToString(CultureInfo.InvariantCulture)); builder.Append(',');
+            builder.Append(curve.ExactAwayGoalCount.ToString(CultureInfo.InvariantCulture)); builder.Append(',');
+            builder.Append(curve.ExactGoalCount.ToString(CultureInfo.InvariantCulture)); builder.Append(',');
+            builder.Append(curve.ExactRawProbabilityHomeGoal.HasValue ? Format(curve.ExactRawProbabilityHomeGoal.Value) : string.Empty); builder.Append(',');
+            builder.Append(Csv(curve.FallbackScorerShareSource)); builder.Append(',');
+            builder.Append(curve.FallbackHomeGoalCount.ToString(CultureInfo.InvariantCulture)); builder.Append(',');
+            builder.Append(curve.FallbackAwayGoalCount.ToString(CultureInfo.InvariantCulture)); builder.Append(',');
+            builder.Append(curve.FallbackGoalCount.ToString(CultureInfo.InvariantCulture)); builder.Append(',');
+            builder.Append(Format(curve.FallbackProbabilityHomeGoal)); builder.Append(',');
+            builder.Append(Format(curve.RuleBasedProbabilityHomeGoal)); builder.Append(',');
+            builder.Append(Format(curve.Home.ExpectedGoalsInBucket)); builder.Append(',');
+            builder.Append(Format(curve.Away.ExpectedGoalsInBucket)); builder.Append(',');
             builder.Append(Csv(curve.Warning));
             builder.AppendLine();
         }
 
         await File.WriteAllTextAsync(fullPath, builder.ToString(), Encoding.UTF8, cancellationToken);
-    }
-
-    private static void AppendSide(StringBuilder builder, CompetingHazardSideCurve side)
-    {
-        builder.Append(Csv(side.Status)); builder.Append(',');
-        builder.Append(Csv(side.ExpectedGoalsSource)); builder.Append(',');
-        builder.Append(Csv(side.ShapeKSource)); builder.Append(',');
-        builder.Append(Format(side.FullBucketExposures)); builder.Append(',');
-        builder.Append(Format(side.ExposureMinutes)); builder.Append(',');
-        builder.Append(side.GoalCount.ToString(CultureInfo.InvariantCulture)); builder.Append(',');
-        builder.Append(side.RawExpectedGoalsInBucket.HasValue ? Format(side.RawExpectedGoalsInBucket.Value) : string.Empty); builder.Append(',');
-        builder.Append(Format(side.ExpectedGoalsInBucket)); builder.Append(',');
-        builder.Append(side.RawShapeK.HasValue ? Format(side.RawShapeK.Value) : string.Empty); builder.Append(',');
-        builder.Append(Format(side.ShapeK)); builder.Append(',');
     }
 
     private static List<string> ParseCsvLine(string line)
@@ -775,8 +1030,6 @@ public sealed class CompetingHazardCurveFitter
         return value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase) || value.Equals("yes", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string Key(string first, string second) => $"{first}|{second}";
-
     private static string Format(double value)
         => value.ToString("0.######", CultureInfo.InvariantCulture);
 
@@ -813,5 +1066,10 @@ public sealed class CompetingHazardCurveFitter
         public bool GoalHappened { get; init; }
         public double? GoalMinute { get; init; }
         public string GoalSide { get; init; } = string.Empty;
+    }
+
+    private sealed record SideCount(int HomeGoalCount, int AwayGoalCount)
+    {
+        public int GoalCount => HomeGoalCount + AwayGoalCount;
     }
 }
