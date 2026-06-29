@@ -2,9 +2,9 @@ namespace LiveTotalsHelper.Core.MonteCarlo;
 
 public sealed class CompetingHazardCurveSet
 {
-    public string Version { get; init; } = "competing-hazard-curves-v3-after-goal";
+    public string Version { get; init; } = "competing-hazard-curves-v3-after-goal-goal-draw";
     public DateTimeOffset GeneratedUtc { get; init; } = DateTimeOffset.UtcNow;
-    public string Strategy { get; init; } = "total_state_weibull_x_directional_scorer_share_x_after_goal_hazard_factors";
+    public string Strategy { get; init; } = "total_state_weibull_x_directional_scorer_share_x_after_goal_hazard_factors_x_goal_draw_suppression";
     public string SourceExposureFile { get; init; } = string.Empty;
     public string League { get; init; } = string.Empty;
     public List<string> ScoreBuckets { get; init; } = [];
@@ -20,6 +20,8 @@ public sealed class CompetingHazardCurveSet
     public List<NextGoalSideAggregate> TimeScorerShares { get; init; } = [];
     public CompetingHazardAfterGoalSettings AfterGoalSettings { get; init; } = new();
     public List<CompetingHazardAfterGoalFactor> AfterGoalFactors { get; init; } = [];
+    public CompetingHazardGoalDrawSuppressionSettings GoalDrawSuppressionSettings { get; init; } = new();
+    public List<CompetingHazardGoalDrawSuppressionFactor> GoalDrawSuppressionFactors { get; init; } = [];
     public List<CompetingHazardCurve> Curves { get; init; } = [];
 }
 
@@ -27,7 +29,7 @@ public sealed class CompetingHazardFitSettings
 {
     public StateWeibullCurveFitSettings TotalHazardFit { get; init; } = new();
     public NextGoalSideModelSettings ScorerShareFit { get; init; } = new();
-    public string Strategy { get; init; } = "Fit total goal hazard by neutral score/time bucket, split it by directional next-goal scorer share, then apply fitted after-goal hazard factors during simulation.";
+    public string Strategy { get; init; } = "Fit total goal hazard by neutral score/time bucket, split it by directional next-goal scorer share, then apply fitted after-goal and goal-draw suppression factors during simulation.";
 }
 
 public sealed class CompetingHazardAfterGoalSettings
@@ -74,6 +76,35 @@ public sealed class CompetingHazardAfterGoalFactor
 
     public string Warning { get; init; } = string.Empty;
 }
+
+public sealed class CompetingHazardGoalDrawSuppressionSettings
+{
+    public bool Enabled { get; init; } = true;
+    public string NeutralScoreBucket { get; init; } = "draw_1_1_plus";
+    public double PriorExpectedGoals { get; init; } = 35.0;
+    public double MinMultiplier { get; init; } = 0.55;
+    public double MaxMultiplier { get; init; } = 1.0;
+    public double MinExpectedGoalsForStableFactor { get; init; } = 8.0;
+    public string Strategy { get; init; } = "Fit time-bucket residual multipliers for goal-draw states such as 1-1 and 2-2 after applying base competing hazards and after-goal factors; multiply both home and away hazards during simulation.";
+}
+
+public sealed class CompetingHazardGoalDrawSuppressionFactor
+{
+    public string Key { get; init; } = string.Empty;
+    public string NeutralScoreBucket { get; init; } = "draw_1_1_plus";
+    public string TimeBucket { get; init; } = string.Empty;
+    public double BucketStartMinute { get; init; }
+    public double BucketEndMinute { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public int ExposureRows { get; init; }
+    public double ExposureMinutes { get; init; }
+    public int ObservedGoals { get; init; }
+    public double ExpectedGoals { get; init; }
+    public double RawMultiplier { get; init; } = 1.0;
+    public double Multiplier { get; init; } = 1.0;
+    public string Warning { get; init; } = string.Empty;
+}
+
 
 public sealed class CompetingHazardCurve
 {

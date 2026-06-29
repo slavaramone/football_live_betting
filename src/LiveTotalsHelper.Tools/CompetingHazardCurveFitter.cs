@@ -34,6 +34,13 @@ public sealed class CompetingHazardCurveFitterOptions
     public double AfterGoalMinMultiplier { get; init; } = 0.55;
     public double AfterGoalMaxMultiplier { get; init; } = 1.65;
     public double AfterGoalMinExpectedGoalsForStableFactor { get; init; } = 8.0;
+
+    public bool GoalDrawSuppressionEnabled { get; init; } = true;
+    public string GoalDrawNeutralScoreBucket { get; init; } = "draw_1_1_plus";
+    public double GoalDrawPriorExpectedGoals { get; init; } = 35.0;
+    public double GoalDrawMinMultiplier { get; init; } = 0.55;
+    public double GoalDrawMaxMultiplier { get; init; } = 1.0;
+    public double GoalDrawMinExpectedGoalsForStableFactor { get; init; } = 8.0;
 }
 
 public sealed class CompetingHazardCurveFitResult
@@ -53,6 +60,7 @@ public sealed class CompetingHazardCurveFitResult
     public int ScorerShareLeagueFallback { get; init; }
     public int ScorerShareRuleBasedFallback { get; init; }
     public int AfterGoalFactorsWritten { get; init; }
+    public int GoalDrawSuppressionFactorsWritten { get; init; }
     public string OutputPath { get; init; } = string.Empty;
     public string SummaryPath { get; init; } = string.Empty;
 }
@@ -303,6 +311,11 @@ public sealed class CompetingHazardCurveFitter
             ? BuildAfterGoalFactors(rows, curves, afterGoalSettings)
             : [];
 
+        CompetingHazardGoalDrawSuppressionSettings goalDrawSettings = CreateGoalDrawSuppressionSettings(options);
+        List<CompetingHazardGoalDrawSuppressionFactor> goalDrawSuppressionFactors = options.GoalDrawSuppressionEnabled
+            ? BuildGoalDrawSuppressionFactors(rows, curves, afterGoalSettings, afterGoalFactors, goalDrawSettings)
+            : [];
+
         var model = new CompetingHazardCurveSet
         {
             GeneratedUtc = DateTimeOffset.UtcNow,
@@ -331,6 +344,8 @@ public sealed class CompetingHazardCurveFitter
             TimeScorerShares = timeShares.Values.OrderBy(x => x.Key).ToList(),
             AfterGoalSettings = afterGoalSettings,
             AfterGoalFactors = afterGoalFactors,
+            GoalDrawSuppressionSettings = goalDrawSettings,
+            GoalDrawSuppressionFactors = goalDrawSuppressionFactors,
             Curves = curves
                 .OrderBy(x => x.BucketStartMinute)
                 .ThenBy(x => x.DirectionalScoreBucket)
@@ -357,6 +372,7 @@ public sealed class CompetingHazardCurveFitter
             ScorerShareLeagueFallback = model.Curves.Count(x => x.ScorerShareStatus == "LeagueOverallFallback"),
             ScorerShareRuleBasedFallback = model.Curves.Count(x => x.ScorerShareStatus == "RuleBasedFallback"),
             AfterGoalFactorsWritten = model.AfterGoalFactors.Count,
+            GoalDrawSuppressionFactorsWritten = model.GoalDrawSuppressionFactors.Count,
             OutputPath = Path.GetFullPath(options.OutputPath),
             SummaryPath = Path.GetFullPath(options.SummaryPath)
         };
@@ -938,6 +954,274 @@ public sealed class CompetingHazardCurveFitter
         return Math.Max(0.0, endCum - startCum);
     }
 
+    private static CompetingHazardGoalDrawSuppressionSettings CreateGoalDrawSuppressionSettings(CompetingHazardCurveFitterOptions options)
+    {
+        double minMultiplier = Math.Max(0.05, options.GoalDrawMinMultiplier);
+        double maxMultiplier = Math.Max(minMultiplier, options.GoalDrawMaxMultiplier);
+        return new CompetingHazardGoalDrawSuppressionSettings
+        {
+            Enabled = options.GoalDrawSuppressionEnabled,
+            NeutralScoreBucket = string.IsNullOrWhiteSpace(options.GoalDrawNeutralScoreBucket) ? "draw_1_1_plus" : options.GoalDrawNeutralScoreBucket.Trim(),
+            PriorExpectedGoals = Math.Max(0.0, options.GoalDrawPriorExpectedGoals),
+            MinMultiplier = minMultiplier,
+            MaxMultiplier = maxMultiplier,
+            MinExpectedGoalsForStableFactor = Math.Max(0.0, options.GoalDrawMinExpectedGoalsForStableFactor)
+        };
+    }
+
+    private static List<CompetingHazardGoalDrawSuppressionFactor> BuildGoalDrawSuppressionFactors(
+        IReadOnlyList<ExposureRow> rows,
+        IReadOnlyList<CompetingHazardCurve> curves,
+        CompetingHazardAfterGoalSettings afterGoalSettings,
+        IReadOnlyList<CompetingHazardAfterGoalFactor> afterGoalFactors,
+        CompetingHazardGoalDrawSuppressionSettings settings)
+    {
+        if (!settings.Enabled)
+            return [];
+
+        var curveLookup = curves.ToDictionary(
+            x => Key(x.DirectionalScoreBucket, x.TimeBucket),
+            StringComparer.OrdinalIgnoreCase);
+
+        var afterGoalLookup = afterGoalFactors.ToDictionary(x => x.Key, StringComparer.OrdinalIgnoreCase);
+
+        var accumulators = new Dictionary<string, GoalDrawSuppressionAccumulator>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["goal_draw_overall"] = new GoalDrawSuppressionAccumulator("goal_draw_overall", settings.NeutralScoreBucket, "overall", 0.0, 0.0)
+        };
+
+        foreach (CompetingHazardCurve curve in curves
+                     .Where(x => x.NeutralScoreBucket.Equals(settings.NeutralScoreBucket, StringComparison.OrdinalIgnoreCase))
+                     .OrderBy(x => x.BucketStartMinute))
+        {
+            string key = GoalDrawTimeKey(curve.TimeBucket);
+            if (!accumulators.ContainsKey(key))
+            {
+                accumulators[key] = new GoalDrawSuppressionAccumulator(
+                    key,
+                    settings.NeutralScoreBucket,
+                    curve.TimeBucket,
+                    curve.BucketStartMinute,
+                    curve.BucketEndMinute);
+            }
+        }
+
+        foreach (IGrouping<int, ExposureRow> matchRows in rows
+                     .GroupBy(x => x.MatchId)
+                     .OrderBy(g => g.Key))
+        {
+            double? lastGoalMinute = null;
+            string lastGoalSide = string.Empty;
+
+            foreach (ExposureRow row in matchRows
+                         .OrderBy(x => x.Sequence)
+                         .ThenBy(x => x.StartMinute))
+            {
+                if (row.NeutralScoreBucket.Equals(settings.NeutralScoreBucket, StringComparison.OrdinalIgnoreCase)
+                    && curveLookup.TryGetValue(Key(row.DirectionalScoreBucket, row.TimeBucket), out CompetingHazardCurve? curve))
+                {
+                    AccumulateGoalDrawRow(
+                        row,
+                        curve,
+                        accumulators,
+                        afterGoalSettings,
+                        afterGoalLookup,
+                        lastGoalMinute,
+                        lastGoalSide);
+                }
+
+                if (row.GoalHappened)
+                {
+                    lastGoalMinute = row.GoalMinute ?? row.EndMinute;
+                    lastGoalSide = NormalizeGoalSide(row.GoalSide);
+                }
+            }
+        }
+
+        return accumulators.Values
+            .OrderBy(x => x.TimeBucket.Equals("overall", StringComparison.OrdinalIgnoreCase) ? -1.0 : x.BucketStartMinute)
+            .ThenBy(x => x.TimeBucket)
+            .Select(x => x.ToFactor(settings))
+            .ToList();
+    }
+
+    private static void AccumulateGoalDrawRow(
+        ExposureRow row,
+        CompetingHazardCurve curve,
+        IDictionary<string, GoalDrawSuppressionAccumulator> accumulators,
+        CompetingHazardAfterGoalSettings afterGoalSettings,
+        IReadOnlyDictionary<string, CompetingHazardAfterGoalFactor> afterGoalFactors,
+        double? lastGoalMinute,
+        string lastGoalSide)
+    {
+        string timeKey = GoalDrawTimeKey(row.TimeBucket);
+        if (!accumulators.TryGetValue(timeKey, out GoalDrawSuppressionAccumulator? timeAccumulator))
+            return;
+
+        GoalDrawSuppressionAccumulator overallAccumulator = accumulators["goal_draw_overall"];
+        double goalMinute = row.GoalMinute ?? row.EndMinute;
+
+        foreach (var segment in SplitForAfterGoalBoundaries(row.StartMinute, row.EndMinute, lastGoalMinute, afterGoalSettings))
+        {
+            if (segment.SegmentEnd <= segment.SegmentStart + Epsilon)
+                continue;
+
+            double homeExpected = ExpectedGoalsBetween(curve, curve.Home, segment.SegmentStart, segment.SegmentEnd);
+            double awayExpected = ExpectedGoalsBetween(curve, curve.Away, segment.SegmentStart, segment.SegmentEnd);
+            (double HomeMultiplier, double AwayMultiplier) afterGoal = ResolveAfterGoalMultipliersForFit(
+                afterGoalSettings,
+                afterGoalFactors,
+                lastGoalMinute,
+                lastGoalSide,
+                segment.SegmentStart);
+
+            double expected = homeExpected * afterGoal.HomeMultiplier + awayExpected * afterGoal.AwayMultiplier;
+            bool goalInSegment = row.GoalHappened
+                                 && goalMinute > segment.SegmentStart + Epsilon
+                                 && goalMinute <= segment.SegmentEnd + Epsilon;
+
+            timeAccumulator.Add(segment.SegmentEnd - segment.SegmentStart, expected, goalInSegment);
+            overallAccumulator.Add(segment.SegmentEnd - segment.SegmentStart, expected, goalInSegment);
+        }
+    }
+
+    private static IEnumerable<(double SegmentStart, double SegmentEnd)> SplitForAfterGoalBoundaries(
+        double startMinute,
+        double endMinute,
+        double? lastGoalMinute,
+        CompetingHazardAfterGoalSettings afterGoalSettings)
+    {
+        var points = new SortedSet<double> { startMinute, endMinute };
+        if (lastGoalMinute.HasValue && afterGoalSettings.Enabled)
+        {
+            foreach (CompetingHazardAfterGoalBucket bucket in afterGoalSettings.Buckets)
+            {
+                AddCutPoint(points, startMinute, endMinute, lastGoalMinute.Value + bucket.StartMinutesSinceGoal);
+                AddCutPoint(points, startMinute, endMinute, lastGoalMinute.Value + bucket.EndMinutesSinceGoal);
+            }
+        }
+
+        double? previous = null;
+        foreach (double point in points)
+        {
+            if (previous.HasValue && point > previous.Value + Epsilon)
+                yield return (previous.Value, point);
+            previous = point;
+        }
+    }
+
+    private static void AddCutPoint(SortedSet<double> points, double startMinute, double endMinute, double point)
+    {
+        if (point > startMinute + Epsilon && point < endMinute - Epsilon)
+            points.Add(point);
+    }
+
+    private static (double HomeMultiplier, double AwayMultiplier) ResolveAfterGoalMultipliersForFit(
+        CompetingHazardAfterGoalSettings settings,
+        IReadOnlyDictionary<string, CompetingHazardAfterGoalFactor> factors,
+        double? lastGoalMinute,
+        string lastGoalSide,
+        double currentMinute)
+    {
+        if (!settings.Enabled || !lastGoalMinute.HasValue || factors.Count == 0)
+            return (1.0, 1.0);
+
+        double minutesSinceGoal = Math.Max(0.0, currentMinute - lastGoalMinute.Value);
+        CompetingHazardAfterGoalFactor? factor = factors.Values
+            .Where(x => minutesSinceGoal >= x.StartMinutesSinceGoal - Epsilon && minutesSinceGoal < x.EndMinutesSinceGoal - Epsilon)
+            .OrderBy(x => x.StartMinutesSinceGoal)
+            .FirstOrDefault();
+
+        if (factor is null)
+            return (1.0, 1.0);
+
+        string normalizedLastGoalSide = NormalizeGoalSide(lastGoalSide);
+        if (normalizedLastGoalSide.Equals("home", StringComparison.OrdinalIgnoreCase))
+            return (ClampMultiplier(factor.SameTeamMultiplier), ClampMultiplier(factor.OpponentMultiplier));
+        if (normalizedLastGoalSide.Equals("away", StringComparison.OrdinalIgnoreCase))
+            return (ClampMultiplier(factor.OpponentMultiplier), ClampMultiplier(factor.SameTeamMultiplier));
+
+        double multiplier = ClampMultiplier(factor.TotalMultiplier);
+        return (multiplier, multiplier);
+    }
+
+    private static string GoalDrawTimeKey(string timeBucket)
+        => $"goal_draw_{timeBucket}";
+
+    private static double ClampMultiplier(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value) || value <= 0)
+            return 1.0;
+        return Math.Clamp(value, 0.05, 5.0);
+    }
+
+    private sealed class GoalDrawSuppressionAccumulator
+    {
+        public GoalDrawSuppressionAccumulator(string key, string neutralScoreBucket, string timeBucket, double bucketStartMinute, double bucketEndMinute)
+        {
+            Key = key;
+            NeutralScoreBucket = neutralScoreBucket;
+            TimeBucket = timeBucket;
+            BucketStartMinute = bucketStartMinute;
+            BucketEndMinute = bucketEndMinute;
+        }
+
+        public string Key { get; }
+        public string NeutralScoreBucket { get; }
+        public string TimeBucket { get; }
+        public double BucketStartMinute { get; }
+        public double BucketEndMinute { get; }
+        public int ExposureRows { get; private set; }
+        public double ExposureMinutes { get; private set; }
+        public int ObservedGoals { get; private set; }
+        public double ExpectedGoals { get; private set; }
+
+        public void Add(double exposureMinutes, double expectedGoals, bool observedGoal)
+        {
+            ExposureRows++;
+            ExposureMinutes += Math.Max(0.0, exposureMinutes);
+            ExpectedGoals += Math.Max(0.0, expectedGoals);
+            if (observedGoal)
+                ObservedGoals++;
+        }
+
+        public CompetingHazardGoalDrawSuppressionFactor ToFactor(CompetingHazardGoalDrawSuppressionSettings settings)
+        {
+            double raw = ExpectedGoals > Epsilon ? ObservedGoals / ExpectedGoals : 1.0;
+            double multiplier = ShrinkAndClamp(raw, ExpectedGoals, settings);
+            string status = ExpectedGoals >= settings.MinExpectedGoalsForStableFactor ? "Supported" : "SparseShrunk";
+            string warning = string.Empty;
+            if (status == "SparseShrunk")
+                warning = $"Goal-draw suppression factor has low expected-goal sample ({ExpectedGoals.ToString("0.##", CultureInfo.InvariantCulture)} xG); multiplier is strongly shrunk toward 1.0.";
+
+            return new CompetingHazardGoalDrawSuppressionFactor
+            {
+                Key = Key,
+                NeutralScoreBucket = NeutralScoreBucket,
+                TimeBucket = TimeBucket,
+                BucketStartMinute = BucketStartMinute,
+                BucketEndMinute = BucketEndMinute,
+                Status = status,
+                ExposureRows = ExposureRows,
+                ExposureMinutes = ExposureMinutes,
+                ObservedGoals = ObservedGoals,
+                ExpectedGoals = ExpectedGoals,
+                RawMultiplier = raw,
+                Multiplier = multiplier,
+                Warning = warning
+            };
+        }
+
+        private static double ShrinkAndClamp(double raw, double expected, CompetingHazardGoalDrawSuppressionSettings settings)
+        {
+            double weight = expected / (expected + Math.Max(0.0, settings.PriorExpectedGoals));
+            double shrunk = 1.0 + (raw - 1.0) * weight;
+            if (double.IsNaN(shrunk) || double.IsInfinity(shrunk) || shrunk <= 0)
+                shrunk = 1.0;
+            return Math.Clamp(shrunk, settings.MinMultiplier, settings.MaxMultiplier);
+        }
+    }
+
     private static string NormalizeGoalSide(string value)
     {
         if (value.Equals("h", StringComparison.OrdinalIgnoreCase) || value.Equals("home", StringComparison.OrdinalIgnoreCase))
@@ -1195,6 +1479,29 @@ public sealed class CompetingHazardCurveFitter
                 builder.Append(Format(factor.OpponentExpectedGoals)); builder.Append(',');
                 builder.Append(Format(factor.OpponentRawMultiplier)); builder.Append(',');
                 builder.Append(Format(factor.OpponentMultiplier)); builder.Append(',');
+                builder.Append(Csv(factor.Warning));
+                builder.AppendLine();
+            }
+        }
+
+        if (model.GoalDrawSuppressionFactors.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("goal_draw_factor_key,neutral_score_bucket,time_bucket,bucket_start_minute,bucket_end_minute,status,exposure_rows,exposure_minutes,observed_goals,expected_goals,raw_multiplier,multiplier,warning");
+            foreach (CompetingHazardGoalDrawSuppressionFactor factor in model.GoalDrawSuppressionFactors.OrderBy(x => x.TimeBucket.Equals("overall", StringComparison.OrdinalIgnoreCase) ? -1.0 : x.BucketStartMinute).ThenBy(x => x.TimeBucket))
+            {
+                builder.Append(Csv(factor.Key)); builder.Append(',');
+                builder.Append(Csv(factor.NeutralScoreBucket)); builder.Append(',');
+                builder.Append(Csv(factor.TimeBucket)); builder.Append(',');
+                builder.Append(Format(factor.BucketStartMinute)); builder.Append(',');
+                builder.Append(Format(factor.BucketEndMinute)); builder.Append(',');
+                builder.Append(Csv(factor.Status)); builder.Append(',');
+                builder.Append(factor.ExposureRows.ToString(CultureInfo.InvariantCulture)); builder.Append(',');
+                builder.Append(Format(factor.ExposureMinutes)); builder.Append(',');
+                builder.Append(factor.ObservedGoals.ToString(CultureInfo.InvariantCulture)); builder.Append(',');
+                builder.Append(Format(factor.ExpectedGoals)); builder.Append(',');
+                builder.Append(Format(factor.RawMultiplier)); builder.Append(',');
+                builder.Append(Format(factor.Multiplier)); builder.Append(',');
                 builder.Append(Csv(factor.Warning));
                 builder.AppendLine();
             }

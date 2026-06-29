@@ -80,6 +80,8 @@ public sealed class LiveMonteCarloPathEvent
     public string AfterGoalBucket { get; init; } = string.Empty;
     public double AfterGoalHomeMultiplier { get; init; } = 1.0;
     public double AfterGoalAwayMultiplier { get; init; } = 1.0;
+    public string GoalDrawFactorKey { get; init; } = string.Empty;
+    public double GoalDrawMultiplier { get; init; } = 1.0;
 }
 
 public sealed class LiveHazardMonteCarloSimulator

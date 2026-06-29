@@ -426,14 +426,20 @@ static async Task<int> RunFitCompetingHazardCurves(string[] args)
         AfterGoalPriorExpectedGoals = parsed.Double("after-goal-prior-xg", 40.0),
         AfterGoalMinMultiplier = parsed.Double("after-goal-min-multiplier", 0.55),
         AfterGoalMaxMultiplier = parsed.Double("after-goal-max-multiplier", 1.65),
-        AfterGoalMinExpectedGoalsForStableFactor = parsed.Double("after-goal-min-stable-xg", 8.0)
+        AfterGoalMinExpectedGoalsForStableFactor = parsed.Double("after-goal-min-stable-xg", 8.0),
+        GoalDrawSuppressionEnabled = parsed.Has("disable-goal-draw-suppression") ? false : parsed.Bool("goal-draw-suppression", true),
+        GoalDrawNeutralScoreBucket = parsed.String("goal-draw-score-bucket", "draw_1_1_plus"),
+        GoalDrawPriorExpectedGoals = parsed.Double("goal-draw-prior-xg", 35.0),
+        GoalDrawMinMultiplier = parsed.Double("goal-draw-min-multiplier", 0.55),
+        GoalDrawMaxMultiplier = parsed.Double("goal-draw-max-multiplier", 1.0),
+        GoalDrawMinExpectedGoalsForStableFactor = parsed.Double("goal-draw-min-stable-xg", 8.0)
     };
 
     var fitter = new CompetingHazardCurveFitter();
     CompetingHazardCurveFitResult result = await fitter.FitAsync(options, CancellationToken.None);
 
     Console.WriteLine("Competing hazard curves fitted");
-    Console.WriteLine("Strategy: total state-Weibull hazard × directional scorer-share");
+    Console.WriteLine("Strategy: total state-Weibull hazard × directional scorer-share × after-goal factors × goal-draw suppression");
     Console.WriteLine($"Input rows read: {result.ExposureRowsRead}");
     Console.WriteLine($"Goal rows read: {result.GoalRowsRead}");
     Console.WriteLine($"Total hazard curves written: {result.TotalCurvesWritten}");
@@ -449,6 +455,7 @@ static async Task<int> RunFitCompetingHazardCurves(string[] args)
     Console.WriteLine($"Scorer-share league fallback: {result.ScorerShareLeagueFallback}");
     Console.WriteLine($"Scorer-share rule-based fallback: {result.ScorerShareRuleBasedFallback}");
     Console.WriteLine($"After-goal factors written: {result.AfterGoalFactorsWritten}");
+    Console.WriteLine($"Goal-draw suppression factors written: {result.GoalDrawSuppressionFactorsWritten}");
     Console.WriteLine($"Output written: {result.OutputPath}");
     Console.WriteLine($"Summary written: {result.SummaryPath}");
 
@@ -1224,7 +1231,10 @@ static bool IsV3ModelVersion(string modelVersion)
     => modelVersion.Equals("v3", StringComparison.OrdinalIgnoreCase)
        || modelVersion.Equals("competing", StringComparison.OrdinalIgnoreCase)
        || modelVersion.Equals("competing-hazard", StringComparison.OrdinalIgnoreCase)
-       || modelVersion.Equals("v3-competing-hazard", StringComparison.OrdinalIgnoreCase);
+       || modelVersion.Equals("v3-competing-hazard", StringComparison.OrdinalIgnoreCase)
+       || modelVersion.Equals("v3-competing-hazard-after-goal", StringComparison.OrdinalIgnoreCase)
+       || modelVersion.Equals("v3-competing-hazard-goal-draw", StringComparison.OrdinalIgnoreCase)
+       || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw", StringComparison.OrdinalIgnoreCase);
 
 static IConfiguration BuildConfiguration()
 {

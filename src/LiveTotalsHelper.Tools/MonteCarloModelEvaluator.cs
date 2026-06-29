@@ -50,6 +50,7 @@ public sealed class MonteCarloModelEvaluationSummary
     public string SideModelPath { get; init; } = string.Empty;
     public string CompetingHazardCurvesPath { get; init; } = string.Empty;
     public IReadOnlyList<CompetingHazardAfterGoalFactor> AfterGoalFactors { get; init; } = [];
+    public IReadOnlyList<CompetingHazardGoalDrawSuppressionFactor> GoalDrawSuppressionFactors { get; init; } = [];
     public int SimulationCount { get; init; }
     public double StepMinutes { get; init; }
     public int? RandomSeed { get; init; }
@@ -316,7 +317,7 @@ public sealed class MonteCarloModelEvaluator
         {
             GeneratedUtc = DateTimeOffset.UtcNow,
             ModelVersion = useV3
-                ? (competingCurves!.AfterGoalSettings.Enabled && competingCurves.AfterGoalFactors.Count > 0 ? "v3-competing-hazard-after-goal" : "v3-competing-hazard")
+                ? ResolveCompetingModelVersion(competingCurves!)
                 : "v2-total-hazard",
             League = options.League,
             Seasons = options.Seasons.ToList(),
@@ -326,6 +327,7 @@ public sealed class MonteCarloModelEvaluator
             SideModelPath = string.IsNullOrWhiteSpace(options.SideModelPath) ? string.Empty : Path.GetFullPath(options.SideModelPath),
             CompetingHazardCurvesPath = string.IsNullOrWhiteSpace(options.CompetingHazardCurvesPath) ? string.Empty : Path.GetFullPath(options.CompetingHazardCurvesPath),
             AfterGoalFactors = useV3 ? competingCurves!.AfterGoalFactors : [],
+            GoalDrawSuppressionFactors = useV3 ? competingCurves!.GoalDrawSuppressionFactors : [],
             SimulationCount = options.SimulationCount,
             StepMinutes = options.StepMinutes,
             RandomSeed = options.RandomSeed,
@@ -765,11 +767,28 @@ public sealed class MonteCarloModelEvaluator
         return fullPath;
     }
 
+    private static string ResolveCompetingModelVersion(CompetingHazardCurveSet curves)
+    {
+        bool afterGoal = curves.AfterGoalSettings.Enabled && curves.AfterGoalFactors.Count > 0;
+        bool goalDraw = curves.GoalDrawSuppressionSettings.Enabled && curves.GoalDrawSuppressionFactors.Count > 0;
+
+        if (afterGoal && goalDraw)
+            return "v3-competing-hazard-after-goal-goal-draw";
+        if (afterGoal)
+            return "v3-competing-hazard-after-goal";
+        if (goalDraw)
+            return "v3-competing-hazard-goal-draw";
+        return "v3-competing-hazard";
+    }
+
     private static bool IsV3(string modelVersion)
         => modelVersion.Equals("v3", StringComparison.OrdinalIgnoreCase)
            || modelVersion.Equals("competing", StringComparison.OrdinalIgnoreCase)
            || modelVersion.Equals("competing-hazard", StringComparison.OrdinalIgnoreCase)
-           || modelVersion.Equals("v3-competing-hazard", StringComparison.OrdinalIgnoreCase);
+           || modelVersion.Equals("v3-competing-hazard", StringComparison.OrdinalIgnoreCase)
+           || modelVersion.Equals("v3-competing-hazard-after-goal", StringComparison.OrdinalIgnoreCase)
+           || modelVersion.Equals("v3-competing-hazard-goal-draw", StringComparison.OrdinalIgnoreCase)
+           || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw", StringComparison.OrdinalIgnoreCase);
 
     private static double SafeDivide(double numerator, double denominator)
         => denominator <= 0 ? 0.0 : numerator / denominator;

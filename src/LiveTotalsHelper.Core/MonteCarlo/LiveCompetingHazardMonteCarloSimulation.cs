@@ -42,8 +42,12 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
 
         if (options.Curves.AfterGoalSettings.Enabled && options.Curves.AfterGoalFactors.Count == 0)
             warnings.Add("After-goal hazard factors are enabled but the competing-hazard model contains no after-goal factor rows; neutral multiplier 1.0 used.");
+        if (options.Curves.GoalDrawSuppressionSettings.Enabled && options.Curves.GoalDrawSuppressionFactors.Count == 0)
+            warnings.Add("Goal-draw suppression is enabled but the competing-hazard model contains no goal-draw factor rows; neutral multiplier 1.0 used.");
 
         var afterGoalFactors = options.Curves.AfterGoalFactors
+            .ToDictionary(x => x.Key, StringComparer.OrdinalIgnoreCase);
+        var goalDrawFactors = options.Curves.GoalDrawSuppressionFactors
             .ToDictionary(x => x.Key, StringComparer.OrdinalIgnoreCase);
 
         var rng = request.RandomSeed.HasValue ? new Random(request.RandomSeed.Value) : new Random();
@@ -105,6 +109,13 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
                 homeExpectedGoalsInStep *= afterGoal.HomeMultiplier;
                 awayExpectedGoalsInStep *= afterGoal.AwayMultiplier;
 
+                GoalDrawStepAdjustment goalDraw = ResolveGoalDrawAdjustment(options.Curves, goalDrawFactors, curve);
+                if (goalDraw.Factor is not null && !string.IsNullOrWhiteSpace(goalDraw.Factor.Warning))
+                    warnings.Add($"goal_draw/{goalDraw.Factor.Key}: {goalDraw.Factor.Warning}");
+
+                homeExpectedGoalsInStep *= goalDraw.Multiplier;
+                awayExpectedGoalsInStep *= goalDraw.Multiplier;
+
                 double expectedGoalsInStep = homeExpectedGoalsInStep + awayExpectedGoalsInStep;
                 double pGoal = 1.0 - Math.Exp(-expectedGoalsInStep);
 
@@ -154,7 +165,9 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
                             GoalProbabilityInStep = pGoal,
                             AfterGoalBucket = afterGoal.BucketKey,
                             AfterGoalHomeMultiplier = afterGoal.HomeMultiplier,
-                            AfterGoalAwayMultiplier = afterGoal.AwayMultiplier
+                            AfterGoalAwayMultiplier = afterGoal.AwayMultiplier,
+                            GoalDrawFactorKey = goalDraw.FactorKey,
+                            GoalDrawMultiplier = goalDraw.Multiplier
                         });
                     }
 
@@ -199,9 +212,7 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
 
         return new LiveMonteCarloSimulationResult
         {
-            ModelVersion = options.Curves.AfterGoalSettings.Enabled && options.Curves.AfterGoalFactors.Count > 0
-                ? "v3-competing-hazard-after-goal"
-                : "v3-competing-hazard",
+            ModelVersion = ResolveModelVersion(options.Curves),
             League = string.IsNullOrWhiteSpace(options.Curves.League) ? request.LeagueKey : options.Curves.League,
             StartMinute = request.CurrentMinute,
             EffectiveEndMinute = effectiveEnd,
@@ -241,7 +252,7 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
             FairUnderOdds = fairUnder,
             OverEdge = request.OverOdds.HasValue && request.OverOdds.Value > 0 ? pOver - 1.0 / request.OverOdds.Value : null,
             UnderEdge = request.UnderOdds.HasValue && request.UnderOdds.Value > 0 ? pUnder - 1.0 / request.UnderOdds.Value : null,
-            Explanation = BuildExplanation(request, pOver, pUnder, pPush, fairOver, fairUnder, neededGoalsForOver, options.Curves.AfterGoalSettings.Enabled && options.Curves.AfterGoalFactors.Count > 0),
+            Explanation = BuildExplanation(request, pOver, pUnder, pPush, fairOver, fairUnder, neededGoalsForOver, options.Curves.AfterGoalSettings.Enabled && options.Curves.AfterGoalFactors.Count > 0, options.Curves.GoalDrawSuppressionSettings.Enabled && options.Curves.GoalDrawSuppressionFactors.Count > 0),
             Warnings = warnings.Take(50).ToList(),
             TraceEvents = traceEvents
         };
@@ -258,6 +269,45 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
             if (!curve.ScorerShareStatus.Equals("ExactSupported", StringComparison.OrdinalIgnoreCase))
                 warnings.Add($"{curve.DirectionalScoreBucket}/{curve.TimeBucket}: scorer-share status {curve.ScorerShareStatus}, source {curve.ScorerShareSource}.");
         }
+    }
+
+    private static string ResolveModelVersion(CompetingHazardCurveSet curves)
+    {
+        bool afterGoal = curves.AfterGoalSettings.Enabled && curves.AfterGoalFactors.Count > 0;
+        bool goalDraw = curves.GoalDrawSuppressionSettings.Enabled && curves.GoalDrawSuppressionFactors.Count > 0;
+
+        if (afterGoal && goalDraw)
+            return "v3-competing-hazard-after-goal-goal-draw";
+        if (afterGoal)
+            return "v3-competing-hazard-after-goal";
+        if (goalDraw)
+            return "v3-competing-hazard-goal-draw";
+        return "v3-competing-hazard";
+    }
+
+    private static GoalDrawStepAdjustment ResolveGoalDrawAdjustment(
+        CompetingHazardCurveSet curveSet,
+        IReadOnlyDictionary<string, CompetingHazardGoalDrawSuppressionFactor> factors,
+        CompetingHazardCurve curve)
+    {
+        if (!curveSet.GoalDrawSuppressionSettings.Enabled || factors.Count == 0)
+            return GoalDrawStepAdjustment.Neutral;
+
+        string targetBucket = string.IsNullOrWhiteSpace(curveSet.GoalDrawSuppressionSettings.NeutralScoreBucket)
+            ? "draw_1_1_plus"
+            : curveSet.GoalDrawSuppressionSettings.NeutralScoreBucket;
+
+        if (!curve.NeutralScoreBucket.Equals(targetBucket, StringComparison.OrdinalIgnoreCase))
+            return GoalDrawStepAdjustment.Neutral;
+
+        string timeKey = $"goal_draw_{curve.TimeBucket}";
+        if (!factors.TryGetValue(timeKey, out CompetingHazardGoalDrawSuppressionFactor? factor))
+            factors.TryGetValue("goal_draw_overall", out factor);
+
+        if (factor is null)
+            return GoalDrawStepAdjustment.Neutral;
+
+        return new GoalDrawStepAdjustment(factor.Key, ClampMultiplier(factor.Multiplier), factor);
     }
 
     private static AfterGoalStepAdjustment ResolveAfterGoalAdjustment(
@@ -355,14 +405,21 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
         double? fairOver,
         double? fairUnder,
         int neededGoalsForOver,
-        bool afterGoalEnabled)
+        bool afterGoalEnabled,
+        bool goalDrawEnabled)
     {
         string overNeed = neededGoalsForOver <= 0
             ? "Over is already winning at the current score"
             : $"Over {request.Line.ToString("0.##", CultureInfo.InvariantCulture)} needs {neededGoalsForOver}+ more goal(s)";
 
-        string afterGoal = afterGoalEnabled ? " with after-goal hazard factors" : string.Empty;
-        return $"{overNeed}. MC v3 competing hazards{afterGoal} POver={FormatProbability(pOver)}, PUnder={FormatProbability(pUnder)}, PPush={FormatProbability(pPush)}. Fair Over odds={FormatOdds(fairOver)}, fair Under odds={FormatOdds(fairUnder)}.";
+        var features = new List<string>();
+        if (afterGoalEnabled)
+            features.Add("after-goal hazard factors");
+        if (goalDrawEnabled)
+            features.Add("goal-draw suppression");
+
+        string suffix = features.Count > 0 ? " with " + string.Join(" and ", features) : string.Empty;
+        return $"{overNeed}. MC v3 competing hazards{suffix} POver={FormatProbability(pOver)}, PUnder={FormatProbability(pUnder)}, PPush={FormatProbability(pPush)}. Fair Over odds={FormatOdds(fairOver)}, fair Under odds={FormatOdds(fairUnder)}.";
     }
 
     private static bool IsIntegerLine(double line)
@@ -406,5 +463,13 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
         CompetingHazardAfterGoalFactor? Factor)
     {
         public static readonly AfterGoalStepAdjustment Neutral = new(string.Empty, 1.0, 1.0, null);
+    }
+
+    private sealed record GoalDrawStepAdjustment(
+        string FactorKey,
+        double Multiplier,
+        CompetingHazardGoalDrawSuppressionFactor? Factor)
+    {
+        public static readonly GoalDrawStepAdjustment Neutral = new(string.Empty, 1.0, null);
     }
 }
