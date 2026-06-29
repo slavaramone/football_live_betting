@@ -22,8 +22,9 @@ public static class HelpPrinter
         Console.WriteLine("  fit-next-goal-side-model            Fit next-goal scorer-side probabilities with fallback hierarchy.");
         Console.WriteLine("  fit-competing-hazard-curves         Fit v3 curves: total state-Weibull hazard split by directional scorer share.");
         Console.WriteLine("  debug-next-goal-side                Resolve P(home/away next goal) for one live score/minute.");
-        Console.WriteLine("  simulate-live-total                 Run single-fixture Monte Carlo live total simulation.");
-        Console.WriteLine("  evaluate-monte-carlo-model         Build historical live states in memory and write MC validation summary JSON.");
+        Console.WriteLine("  simulate-live-total                 Run v2 single-fixture Monte Carlo live total simulation.");
+        Console.WriteLine("  simulate-live-total-v3              Run v3 competing-hazard single-fixture MC simulation.");
+        Console.WriteLine("  evaluate-monte-carlo-model         Build historical live states in memory and write MC validation summary JSON; use --model-version v3 for competing hazards.");
         Console.WriteLine();
         Console.WriteLine("Profile file:");
         Console.WriteLine("  Default: config/league-profiles.json");
@@ -42,7 +43,9 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-competing-hazard-curves --profile npl-victoria");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- debug-next-goal-side --profile npl-victoria --score 2-0 --minute 49");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- simulate-live-total --profile npl-victoria --score 2-0 --minute 49 --line 3.5 --under-odds 2.20");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- simulate-live-total-v3 --profile npl-victoria --score 2-0 --minute 49 --line 3.5 --under-odds 2.20");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-monte-carlo-model --profile npl-victoria --seasons 2026 --sims 5000");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-monte-carlo-model --profile npl-victoria --model-version v3 --seasons 2026 --sims 5000");
         Console.WriteLine();
         Console.WriteLine("Common arguments:");
         Console.WriteLine("  --profile                         Profile key/name from config/league-profiles.json.");
@@ -64,7 +67,8 @@ public static class HelpPrinter
         Console.WriteLine("  --time-buckets                    Optional override for profile stateWeibullTimeBuckets.");
         Console.WriteLine("  --in / --input                    Optional override for profile input CSV path.");
         Console.WriteLine("  --summary                         Optional override for profile summary CSV path.");
-        Console.WriteLine("  --curves                          Optional override for profile fitted state Weibull curves JSON path.");
+        Console.WriteLine("  --curves                          Optional override for profile fitted state Weibull curves JSON path, or v3 competing curves in simulate-live-total-v3.");
+        Console.WriteLine("  --competing-curves                Optional override for profile fitted v3 competing-hazard curves JSON path.");
         Console.WriteLine("  --model                           Optional override for profile fitted next-goal-side JSON path.");
         Console.WriteLine("  --out / --output                  Optional output path for fitted/debug/evaluation commands.");
         Console.WriteLine("  --side-model                      Optional override for profile fitted next-goal-side JSON path.");
@@ -73,6 +77,7 @@ public static class HelpPrinter
         Console.WriteLine("  --sims                            Monte Carlo simulation count. Default from profile/global config.");
         Console.WriteLine("  --seed                            Monte Carlo random seed. Default from profile/global config.");
         Console.WriteLine("  --line                            Live total line for simulate-live-total.");
+        Console.WriteLine("  --model-version                   Evaluation/simulation model version. Use v3 for competing-hazard mode.");
         Console.WriteLine("  --lines                           Comma-separated lines for evaluate-monte-carlo-model. Default: profile targetLines.");
         Console.WriteLine("  --minutes                         Comma-separated historical state minutes for evaluation. Default: 45,50,55,60,65,70,75,80,85.");
         Console.WriteLine("  --assumed-odds                    Assumed flat odds for evaluation betting metrics. Default: 1.85.");

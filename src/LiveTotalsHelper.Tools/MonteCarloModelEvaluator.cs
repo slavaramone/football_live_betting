@@ -15,8 +15,10 @@ public sealed class MonteCarloModelEvaluationOptions
     public IReadOnlyList<double> StateMinutes { get; init; } = [45, 50, 55, 60, 65, 70, 75, 80, 85];
     public IReadOnlyList<double> Lines { get; init; } = [2.5, 3.5];
     public bool IncludeSettledLines { get; init; }
+    public string ModelVersion { get; init; } = "v2";
     public string CurvesPath { get; init; } = string.Empty;
     public string SideModelPath { get; init; } = string.Empty;
+    public string CompetingHazardCurvesPath { get; init; } = string.Empty;
     public string OutputPath { get; init; } = "outputs/validation/monte-carlo-evaluation-summary.json";
     public int SimulationCount { get; init; } = 5_000;
     public double StepMinutes { get; init; } = 0.25;
@@ -43,8 +45,10 @@ public sealed class MonteCarloModelEvaluationSummary
     public IReadOnlyList<string> Seasons { get; init; } = [];
     public IReadOnlyList<double> StateMinutes { get; init; } = [];
     public IReadOnlyList<double> Lines { get; init; } = [];
+    public string ModelVersion { get; init; } = "v2";
     public string CurvesPath { get; init; } = string.Empty;
     public string SideModelPath { get; init; } = string.Empty;
+    public string CompetingHazardCurvesPath { get; init; } = string.Empty;
     public int SimulationCount { get; init; }
     public double StepMinutes { get; init; }
     public int? RandomSeed { get; init; }
@@ -177,8 +181,10 @@ public sealed class MonteCarloModelEvaluator
     {
         ValidateOptions(options);
 
-        StateWeibullCurveSet curves = await ReadJsonAsync<StateWeibullCurveSet>(options.CurvesPath, cancellationToken);
-        NextGoalSideModelSet sideModel = await ReadJsonAsync<NextGoalSideModelSet>(options.SideModelPath, cancellationToken);
+        bool useV3 = IsV3(options.ModelVersion);
+        StateWeibullCurveSet? curves = useV3 ? null : await ReadJsonAsync<StateWeibullCurveSet>(options.CurvesPath, cancellationToken);
+        NextGoalSideModelSet? sideModel = useV3 ? null : await ReadJsonAsync<NextGoalSideModelSet>(options.SideModelPath, cancellationToken);
+        CompetingHazardCurveSet? competingCurves = useV3 ? await ReadJsonAsync<CompetingHazardCurveSet>(options.CompetingHazardCurvesPath, cancellationToken) : null;
 
         HistoricalLiveDataset dataset = await BuildHistoricalDatasetAsync(options, cancellationToken);
         EvaluationAccumulator overall = new();
@@ -193,6 +199,10 @@ public sealed class MonteCarloModelEvaluator
         int skippedOutsideCurveHorizon = 0;
         int failedSimulation = 0;
         var simulator = new LiveHazardMonteCarloSimulator();
+        var competingSimulator = new LiveCompetingHazardMonteCarloSimulator();
+        double maxCurveEnd = useV3
+            ? competingCurves!.Curves.Max(x => x.BucketEndMinute)
+            : curves!.Curves.Max(x => x.BucketEndMinute);
 
         foreach (HistoricalEvaluationRow row in dataset.Rows)
         {
@@ -205,7 +215,7 @@ public sealed class MonteCarloModelEvaluator
                 continue;
             }
 
-            if (row.Minute >= curves.Curves.Max(x => x.BucketEndMinute) - Epsilon)
+            if (row.Minute >= maxCurveEnd - Epsilon)
             {
                 skippedOutsideCurveHorizon++;
                 continue;
@@ -214,7 +224,7 @@ public sealed class MonteCarloModelEvaluator
             int rowIndex = evaluated + 1;
             var request = new LiveMonteCarloRequest
             {
-                LeagueKey = string.IsNullOrWhiteSpace(options.League) ? curves.League : options.League,
+                LeagueKey = string.IsNullOrWhiteSpace(options.League) ? (useV3 ? competingCurves!.League : curves!.League) : options.League,
                 CurrentMinute = row.Minute,
                 HomeGoals = row.HomeGoals,
                 AwayGoals = row.AwayGoals,
@@ -232,14 +242,22 @@ public sealed class MonteCarloModelEvaluator
             LiveMonteCarloSimulationResult simulation;
             try
             {
-                simulation = simulator.Run(new LiveMonteCarloSimulationOptions
-                {
-                    Request = request,
-                    Curves = curves,
-                    NextGoalSideModel = sideModel,
-                    EffectiveEndMinute = options.EffectiveEndMinute,
-                    TracePathCount = 0
-                });
+                simulation = useV3
+                    ? competingSimulator.Run(new LiveCompetingHazardMonteCarloSimulationOptions
+                    {
+                        Request = request,
+                        Curves = competingCurves!,
+                        EffectiveEndMinute = options.EffectiveEndMinute,
+                        TracePathCount = 0
+                    })
+                    : simulator.Run(new LiveMonteCarloSimulationOptions
+                    {
+                        Request = request,
+                        Curves = curves!,
+                        NextGoalSideModel = sideModel!,
+                        EffectiveEndMinute = options.EffectiveEndMinute,
+                        TracePathCount = 0
+                    });
             }
             catch (ArgumentException)
             {
@@ -253,7 +271,9 @@ public sealed class MonteCarloModelEvaluator
             }
 
             evaluated++;
-            double staticExpected = CalculateStaticExpectedRemaining(curves, row.HomeGoals, row.AwayGoals, row.Minute, simulation.EffectiveEndMinute);
+            double staticExpected = useV3
+                ? CalculateStaticExpectedRemaining(competingCurves!, row.HomeGoals, row.AwayGoals, row.Minute, simulation.EffectiveEndMinute)
+                : CalculateStaticExpectedRemaining(curves!, row.HomeGoals, row.AwayGoals, row.Minute, simulation.EffectiveEndMinute);
             EvaluationRecord record = EvaluationRecord.From(row, simulation, staticExpected);
 
             overall.Add(record);
@@ -293,12 +313,14 @@ public sealed class MonteCarloModelEvaluator
         MonteCarloModelEvaluationSummary summary = new()
         {
             GeneratedUtc = DateTimeOffset.UtcNow,
+            ModelVersion = useV3 ? "v3-competing-hazard" : "v2-total-hazard",
             League = options.League,
             Seasons = options.Seasons.ToList(),
             StateMinutes = options.StateMinutes.ToList(),
             Lines = options.Lines.ToList(),
-            CurvesPath = Path.GetFullPath(options.CurvesPath),
-            SideModelPath = Path.GetFullPath(options.SideModelPath),
+            CurvesPath = string.IsNullOrWhiteSpace(options.CurvesPath) ? string.Empty : Path.GetFullPath(options.CurvesPath),
+            SideModelPath = string.IsNullOrWhiteSpace(options.SideModelPath) ? string.Empty : Path.GetFullPath(options.SideModelPath),
+            CompetingHazardCurvesPath = string.IsNullOrWhiteSpace(options.CompetingHazardCurvesPath) ? string.Empty : Path.GetFullPath(options.CompetingHazardCurvesPath),
             SimulationCount = options.SimulationCount,
             StepMinutes = options.StepMinutes,
             RandomSeed = options.RandomSeed,
@@ -359,10 +381,18 @@ public sealed class MonteCarloModelEvaluator
             throw new ArgumentException("At least one state minute is required.", nameof(options));
         if (options.Lines.Count == 0)
             throw new ArgumentException("At least one total line is required.", nameof(options));
-        if (string.IsNullOrWhiteSpace(options.CurvesPath) || !File.Exists(options.CurvesPath))
-            throw new FileNotFoundException($"State Weibull curves JSON was not found: {options.CurvesPath}", options.CurvesPath);
-        if (string.IsNullOrWhiteSpace(options.SideModelPath) || !File.Exists(options.SideModelPath))
-            throw new FileNotFoundException($"Next-goal-side model JSON was not found: {options.SideModelPath}", options.SideModelPath);
+        if (IsV3(options.ModelVersion))
+        {
+            if (string.IsNullOrWhiteSpace(options.CompetingHazardCurvesPath) || !File.Exists(options.CompetingHazardCurvesPath))
+                throw new FileNotFoundException($"Competing-hazard curves JSON was not found: {options.CompetingHazardCurvesPath}", options.CompetingHazardCurvesPath);
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(options.CurvesPath) || !File.Exists(options.CurvesPath))
+                throw new FileNotFoundException($"State Weibull curves JSON was not found: {options.CurvesPath}", options.CurvesPath);
+            if (string.IsNullOrWhiteSpace(options.SideModelPath) || !File.Exists(options.SideModelPath))
+                throw new FileNotFoundException($"Next-goal-side model JSON was not found: {options.SideModelPath}", options.SideModelPath);
+        }
         if (options.EffectiveEndMinute <= 0)
             throw new ArgumentException("Effective end minute must be positive.", nameof(options));
         if (options.AssumedOverOdds <= 1.0 || options.AssumedUnderOdds <= 1.0)
@@ -501,6 +531,39 @@ public sealed class MonteCarloModelEvaluator
     }
 
     private static double CalculateStaticExpectedRemaining(
+        CompetingHazardCurveSet curves,
+        int homeGoals,
+        int awayGoals,
+        double minute,
+        double effectiveEnd)
+    {
+        string directionalBucket = StateWeibullScoreBucketer.ResolveDirectionalScoreBucket(homeGoals, awayGoals);
+        double total = 0.0;
+        double current = minute;
+        double maxEnd = curves.Curves.Count == 0 ? effectiveEnd : curves.Curves.Max(x => x.BucketEndMinute);
+        double end = Math.Min(effectiveEnd, maxEnd);
+
+        while (current < end - Epsilon)
+        {
+            CompetingHazardCurve? curve = curves.Curves
+                .Where(x => x.DirectionalScoreBucket.Equals(directionalBucket, StringComparison.OrdinalIgnoreCase)
+                            && current >= x.BucketStartMinute - Epsilon
+                            && current < x.BucketEndMinute - Epsilon)
+                .OrderBy(x => x.BucketStartMinute)
+                .FirstOrDefault();
+            if (curve is null)
+                break;
+
+            double segmentEnd = Math.Min(end, curve.BucketEndMinute);
+            total += ExpectedGoalsBetween(curve, curve.Home, current, segmentEnd)
+                     + ExpectedGoalsBetween(curve, curve.Away, current, segmentEnd);
+            current = segmentEnd;
+        }
+
+        return total;
+    }
+
+    private static double CalculateStaticExpectedRemaining(
         StateWeibullCurveSet curves,
         int homeGoals,
         int awayGoals,
@@ -530,6 +593,22 @@ public sealed class MonteCarloModelEvaluator
         }
 
         return total;
+    }
+
+    private static double ExpectedGoalsBetween(
+        CompetingHazardCurve curve,
+        CompetingHazardSideSplit side,
+        double startMinute,
+        double endMinute)
+    {
+        double start = Math.Clamp(startMinute - curve.BucketStartMinute, 0.0, curve.BucketLengthMinutes);
+        double end = Math.Clamp(endMinute - curve.BucketStartMinute, 0.0, curve.BucketLengthMinutes);
+        if (end <= start + Epsilon)
+            return 0.0;
+
+        double startCum = side.ExpectedGoalsInBucket * Math.Pow(start / curve.BucketLengthMinutes, side.ShapeK);
+        double endCum = side.ExpectedGoalsInBucket * Math.Pow(end / curve.BucketLengthMinutes, side.ShapeK);
+        return Math.Max(0.0, endCum - startCum);
     }
 
     private static double ExpectedGoalsBetween(StateWeibullCurve curve, double startMinute, double endMinute)
@@ -677,6 +756,12 @@ public sealed class MonteCarloModelEvaluator
         await File.WriteAllTextAsync(fullPath, JsonSerializer.Serialize(summary, JsonOptions), Encoding.UTF8, cancellationToken);
         return fullPath;
     }
+
+    private static bool IsV3(string modelVersion)
+        => modelVersion.Equals("v3", StringComparison.OrdinalIgnoreCase)
+           || modelVersion.Equals("competing", StringComparison.OrdinalIgnoreCase)
+           || modelVersion.Equals("competing-hazard", StringComparison.OrdinalIgnoreCase)
+           || modelVersion.Equals("v3-competing-hazard", StringComparison.OrdinalIgnoreCase);
 
     private static double SafeDivide(double numerator, double denominator)
         => denominator <= 0 ? 0.0 : numerator / denominator;

@@ -39,6 +39,8 @@ try
         "fit-next-goal-side-model" => await RunFitNextGoalSideModel(commandArgs),
         "debug-next-goal-side" => await RunDebugNextGoalSide(commandArgs),
         "simulate-live-total" => await RunSimulateLiveTotal(commandArgs),
+        "simulate-live-total-v3" => await RunSimulateLiveTotalV3(commandArgs),
+        "simulate-competing-hazard-total" => await RunSimulateLiveTotalV3(commandArgs),
         "evaluate-monte-carlo-model" => await RunEvaluateMonteCarloModel(commandArgs),
         "evaluate-live-monte-carlo" => await RunEvaluateMonteCarloModel(commandArgs),
         "backtest-monte-carlo-model" => await RunEvaluateMonteCarloModel(commandArgs),
@@ -607,6 +609,8 @@ static async Task<int> RunDebugNextGoalSide(string[] args)
 static async Task<int> RunSimulateLiveTotal(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
+    if (IsV3ModelVersion(parsed.String("model-version", string.Empty)))
+        return await RunSimulateLiveTotalV3(args);
 
     LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
     MonteCarloConfig monteCarlo = profile?.MonteCarlo ?? new MonteCarloConfig();
@@ -710,6 +714,113 @@ static async Task<int> RunSimulateLiveTotal(string[] args)
 }
 
 
+static async Task<int> RunSimulateLiveTotalV3(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    MonteCarloConfig monteCarlo = profile?.MonteCarlo ?? new MonteCarloConfig();
+    (int homeGoals, int awayGoals) = ParseScore(parsed.RequiredString("score"));
+
+    int simulationCount = parsed.Int("sims", parsed.Int("simulation-count", monteCarlo.SimulationCount));
+    double stepMinutes = parsed.Double("step", parsed.Double("step-minutes", monteCarlo.StepMinutes));
+    int? seed = parsed.Has("seed")
+        ? parsed.Int("seed", 0)
+        : monteCarlo.RandomSeed;
+
+    double minute = parsed.RequiredDouble("minute");
+    double? lastGoalMinute = parsed.Has("last-goal-minute")
+        ? parsed.Double("last-goal-minute", 0.0)
+        : null;
+
+    var requestForEnd = new LiveMonteCarloRequest
+    {
+        LeagueKey = profile?.Key ?? parsed.String("league", parsed.String("profile", string.Empty)),
+        CurrentMinute = minute,
+        HomeGoals = homeGoals,
+        AwayGoals = awayGoals,
+        HomeRedCards = parsed.Int("hr", parsed.Int("home-red-cards", 0)),
+        AwayRedCards = parsed.Int("ar", parsed.Int("away-red-cards", 0)),
+        LastGoalMinute = lastGoalMinute,
+        Line = parsed.RequiredDouble("line"),
+        OverOdds = parsed.Has("over-odds") ? parsed.Double("over-odds", 0.0) : null,
+        UnderOdds = parsed.Has("under-odds") ? parsed.Double("under-odds", 0.0) : null,
+        MarketTotal = parsed.Has("market-total") ? parsed.Double("market-total", 0.0) : null,
+        PregameTotal = parsed.Has("pregame-total") ? parsed.Double("pregame-total", 0.0) : null,
+        SimulationCount = simulationCount,
+        StepMinutes = stepMinutes,
+        RandomSeed = seed
+    };
+
+    double estimatedEnd = minute < 45.0
+        ? (monteCarlo.DefaultEffectiveEnd2H > 0 ? monteCarlo.DefaultEffectiveEnd2H : 96.0)
+        : new EffectiveEndMinuteEstimator().Estimate(requestForEnd, monteCarlo).EffectiveEndMinute;
+
+    var options = new LiveTotalCompetingHazardCommandOptions
+    {
+        CompetingHazardCurvesPath = GetPathArgument(parsed, profile?.CompetingHazardCurvesPath, "outputs/calibration/competing-hazard-curves.json", "competing-curves", "curves", "model", "in", "input"),
+        OutputPath = GetPathArgument(parsed, profile?.LiveMonteCarloV3OutputPath, "outputs/debug/live-total-mc-v3.json", "out", "output"),
+        PathsOutputPath = parsed.Has("paths-out") ? parsed.String("paths-out", profile?.LiveMonteCarloV3PathsOutputPath ?? string.Empty) : string.Empty,
+        League = parsed.String("league", profile?.League ?? profile?.Key ?? string.Empty),
+        Minute = minute,
+        UntilMinute = parsed.Has("until") ? parsed.Double("until", 0.0) : null,
+        HomeGoals = homeGoals,
+        AwayGoals = awayGoals,
+        HomeRedCards = requestForEnd.HomeRedCards,
+        AwayRedCards = requestForEnd.AwayRedCards,
+        LastGoalMinute = lastGoalMinute,
+        Line = requestForEnd.Line,
+        OverOdds = requestForEnd.OverOdds,
+        UnderOdds = requestForEnd.UnderOdds,
+        MarketTotal = requestForEnd.MarketTotal,
+        PregameTotal = requestForEnd.PregameTotal,
+        SimulationCount = simulationCount,
+        StepMinutes = stepMinutes,
+        RandomSeed = seed,
+        TracePathCount = parsed.Int("trace-paths", string.IsNullOrWhiteSpace(parsed.String("paths-out", string.Empty)) ? 0 : 200),
+        EstimatedEffectiveEndMinute = estimatedEnd
+    };
+
+    var command = new LiveTotalCompetingHazardSimulatorCommand();
+    LiveTotalCompetingHazardCommandResult result = await command.RunAsync(options, CancellationToken.None);
+    LiveMonteCarloSimulationResult simulation = result.Simulation;
+
+    Console.WriteLine("Live-total Monte Carlo v3 competing-hazard simulation");
+    Console.WriteLine($"League: {simulation.League}");
+    Console.WriteLine($"State: {simulation.StartScore} at {simulation.StartMinute.ToString("0.##", CultureInfo.InvariantCulture)}'");
+    Console.WriteLine($"Effective end: {simulation.EffectiveEndMinute.ToString("0.##", CultureInfo.InvariantCulture)}'");
+    Console.WriteLine($"Line: {simulation.Line.ToString("0.##", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Simulations: {simulation.SimulationCount}");
+    Console.WriteLine($"Step minutes: {simulation.StepMinutes.ToString("0.####", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Expected remaining goals: {simulation.ExpectedRemainingGoals.ToString("0.####", CultureInfo.InvariantCulture)}");
+    if (simulation.ExpectedHomeRemainingGoals.HasValue || simulation.ExpectedAwayRemainingGoals.HasValue)
+        Console.WriteLine($"Home/Away expected remaining: {FormatNullable(simulation.ExpectedHomeRemainingGoals)} / {FormatNullable(simulation.ExpectedAwayRemainingGoals)}");
+    Console.WriteLine($"Distribution: P0={simulation.Distribution.P0.ToString("0.00%", CultureInfo.InvariantCulture)}, P1={simulation.Distribution.P1.ToString("0.00%", CultureInfo.InvariantCulture)}, P2={simulation.Distribution.P2.ToString("0.00%", CultureInfo.InvariantCulture)}, P3+={simulation.Distribution.P3Plus.ToString("0.00%", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"POver={simulation.POver.ToString("0.00%", CultureInfo.InvariantCulture)}, PUnder={simulation.PUnder.ToString("0.00%", CultureInfo.InvariantCulture)}, PPush={simulation.PPush.ToString("0.00%", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Fair over odds: {FormatOdds(simulation.FairOverOdds)}");
+    Console.WriteLine($"Fair under odds: {FormatOdds(simulation.FairUnderOdds)}");
+    if (simulation.OverEdge.HasValue)
+        Console.WriteLine($"Over edge: {simulation.OverEdge.Value.ToString("0.00%", CultureInfo.InvariantCulture)}");
+    if (simulation.UnderEdge.HasValue)
+        Console.WriteLine($"Under edge: {simulation.UnderEdge.Value.ToString("0.00%", CultureInfo.InvariantCulture)}");
+    Console.WriteLine($"Output written: {result.OutputPath}");
+    if (!string.IsNullOrWhiteSpace(result.PathsOutputPath))
+        Console.WriteLine($"Path trace written: {result.PathsOutputPath}");
+
+    if (simulation.Warnings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Warnings:");
+        foreach (string warning in simulation.Warnings.Take(20))
+            Console.WriteLine($"- {warning}");
+        if (simulation.Warnings.Count > 20)
+            Console.WriteLine($"... {simulation.Warnings.Count - 20} more warnings in JSON output.");
+    }
+
+    return 0;
+}
+
+
 static async Task<int> RunEvaluateMonteCarloModel(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
@@ -740,6 +851,8 @@ static async Task<int> RunEvaluateMonteCarloModel(string[] args)
     int? seed = parsed.Has("seed") ? parsed.Int("seed", 0) : monteCarlo.RandomSeed;
     double effectiveEnd = parsed.Double("effective-end", monteCarlo.DefaultEffectiveEnd2H > 0 ? monteCarlo.DefaultEffectiveEnd2H : 96.0);
     double assumedOdds = parsed.Double("assumed-odds", 1.85);
+    string modelVersion = parsed.String("model-version", "v2");
+    bool useV3 = IsV3ModelVersion(modelVersion);
 
     var options = new MonteCarloModelEvaluationOptions
     {
@@ -748,9 +861,11 @@ static async Task<int> RunEvaluateMonteCarloModel(string[] args)
         StateMinutes = stateMinutes,
         Lines = lines,
         IncludeSettledLines = parsed.Bool("include-settled-lines", false),
+        ModelVersion = modelVersion,
         CurvesPath = GetPathArgument(parsed, profile?.StateWeibullCurvesPath, "outputs/calibration/state-weibull-curves.json", "curves", "in", "input"),
         SideModelPath = GetPathArgument(parsed, profile?.NextGoalSideModelPath, "outputs/calibration/next-goal-side-model.json", "side-model", "model"),
-        OutputPath = GetPathArgument(parsed, profile?.LiveMonteCarloEvaluationSummaryPath, "outputs/validation/mc-evaluation-summary.json", "out", "output", "summary"),
+        CompetingHazardCurvesPath = GetPathArgument(parsed, profile?.CompetingHazardCurvesPath, "outputs/calibration/competing-hazard-curves.json", "competing-curves", "curves-v3", "curves"),
+        OutputPath = GetPathArgument(parsed, useV3 ? profile?.LiveMonteCarloV3EvaluationSummaryPath : profile?.LiveMonteCarloEvaluationSummaryPath, useV3 ? "outputs/validation/mc-v3-evaluation-summary.json" : "outputs/validation/mc-evaluation-summary.json", "out", "output", "summary"),
         SimulationCount = simulationCount,
         StepMinutes = stepMinutes,
         RandomSeed = seed,
@@ -770,6 +885,7 @@ static async Task<int> RunEvaluateMonteCarloModel(string[] args)
     MonteCarloModelEvaluationSummary summary = result.Summary;
 
     Console.WriteLine("Monte Carlo model evaluation");
+    Console.WriteLine($"Model: {summary.ModelVersion}");
     Console.WriteLine($"League: {summary.League}");
     Console.WriteLine($"Seasons: {(summary.Seasons.Count == 0 ? "<all>" : string.Join(',', summary.Seasons))}");
     Console.WriteLine($"Rows evaluated: {summary.Dataset.RowsEvaluated}");
@@ -1089,6 +1205,15 @@ static void WriteDbValidationReport(TextWriter writer, DbValidationResult result
 
 static string FormatOdds(double? value)
     => value.HasValue ? value.Value.ToString("0.###", CultureInfo.InvariantCulture) : "<none>";
+
+static string FormatNullable(double? value)
+    => value.HasValue ? value.Value.ToString("0.####", CultureInfo.InvariantCulture) : "<none>";
+
+static bool IsV3ModelVersion(string modelVersion)
+    => modelVersion.Equals("v3", StringComparison.OrdinalIgnoreCase)
+       || modelVersion.Equals("competing", StringComparison.OrdinalIgnoreCase)
+       || modelVersion.Equals("competing-hazard", StringComparison.OrdinalIgnoreCase)
+       || modelVersion.Equals("v3-competing-hazard", StringComparison.OrdinalIgnoreCase);
 
 static IConfiguration BuildConfiguration()
 {
