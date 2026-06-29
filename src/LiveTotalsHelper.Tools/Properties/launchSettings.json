@@ -2,7 +2,7 @@
   "profiles": {
     "LiveTotalsHelper.Tools": {
       "commandName": "Project",
-      "commandLineArgs": "download-flashscore-fixtures --profile china-super-league\r\n"
+      "commandLineArgs": "build-state-weibull-exposures --profile npl-new-south-wales\r\n"
     }
   }
 }

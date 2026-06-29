@@ -129,7 +129,18 @@
         4.5
       ],
       "riskLevel": "Needs MC calibration",
-      "notes": "Profile shell ready for state-Weibull MC calibration. Monte Carlo disabled until curves and next-goal-side model are fitted."
+      "notes": "Profile shell ready for state-Weibull MC calibration. Monte Carlo disabled until curves and next-goal-side model are fitted.",
+      "marketBaseline": {
+          "enabled": true,
+          "oddsSensitivityGoals": 1.25,
+          "multiplierShrink": 0.7,
+          "lowTotalMultiplierShrink": 0.7,
+          "highTotalMultiplierShrink": 0.8,
+          "minMultiplier": 0.75,
+          "maxMultiplier": 1.25,
+          "minMarketExpectedTotalGoals": 1.0,
+          "maxMarketExpectedTotalGoals": 6.0
+        }
     },
     {
       "key": "npl-queensland",
@@ -159,9 +170,9 @@
       "notes": "Profile shell ready for state-Weibull MC calibration. Monte Carlo disabled until curves and next-goal-side model are fitted."
     },
     {
-      "key": "norway-1st-division",
-      "name": "Norway 1st Division",
-      "league": "Norway 1st Division",
+      "key": "norwegian-1st-division",
+      "name": "Norwegian 1st Division",
+      "league": "Norwegian 1st Division",
       "flashscoreFixturesUrl": "https://www.flashscore.co.ke/football/norway/obos-ligaen/fixtures/",
       "flashscoreTournamentId": 200001,
       "flashscoreCountry": "Norway",
@@ -187,8 +198,8 @@
     },
     {
       "key": "china-super-league",
-      "name": "China Super League",
-      "league": "China Super League",
+      "name": "Chinese Super League",
+      "league": "Chinese Super League",
       "flashscoreFixturesUrl": "https://www.flashscore.co.ke/football/china/super-league/fixtures/",
       "flashscoreCountry": "China",
       "flashscoreCountryCode": "CHN",
