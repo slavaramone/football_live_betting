@@ -31,6 +31,7 @@ try
         "build-after-goal-events" => await RunBuildAfterGoalEvents(commandArgs),
         "analyze-after-goal-angles" => await RunAnalyzeAfterGoalAngles(commandArgs),
         "build-after-goal-team-profiles" => await RunBuildAfterGoalTeamProfiles(commandArgs),
+        "build-after-goal-entry-gates" => await RunBuildAfterGoalEntryGates(commandArgs),
         "validate-profiles" => RunValidateProfiles(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
@@ -505,6 +506,98 @@ static async Task<int> RunBuildAfterGoalTeamProfiles(string[] args)
     Console.WriteLine($"Watchlist conceding signals: {result.WatchlistAfterConcedingCount}");
     Console.WriteLine($"Unstable signals: {result.UnstableSignalsCount}");
     Console.WriteLine($"No-signal teams: {result.NoSignalCount}");
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"  - {warning}");
+    }
+
+    return 0;
+}
+
+static async Task<int> RunBuildAfterGoalEntryGates(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    ValidateAllowedOptions(parsed, "build-after-goal-entry-gates",
+    [
+        "profile",
+        "profiles-file",
+        "events",
+        "angles-dir",
+        "profiles-dir",
+        "output-dir",
+        "train-from-season",
+        "train-to-season",
+        "test-season",
+        "include-watchlist",
+        "min-train-state-sample",
+        "min-test-state-sample",
+        "min-state-residual",
+        "strong-state-residual",
+        "require-test-confirmation",
+        "conflict-policy"
+    ]);
+
+    string eventsPath = parsed.String("events", profile is null ? string.Empty : LeagueProfileStore.ResolveProfileArtifactPath(profile, profile.Artifacts.AfterGoalEventsFile));
+    string anglesDirectory = parsed.String("angles-dir", profile is null ? string.Empty : LeagueProfileStore.ResolveProfileArtifactPath(profile, profile.Artifacts.AfterGoalAnglesDir));
+    string profilesDirectory = parsed.String("profiles-dir", profile is null ? string.Empty : LeagueProfileStore.ResolveProfileArtifactPath(profile, profile.Artifacts.AfterGoalProfilesDir));
+    string outputDirectory = parsed.String("output-dir", profile is null ? string.Empty : LeagueProfileStore.ResolveProfileArtifactPath(profile, profile.Artifacts.AfterGoalEntryGatesDir));
+
+    if (string.IsNullOrWhiteSpace(eventsPath))
+        throw new ArgumentException("Provide --events or --profile.");
+    if (string.IsNullOrWhiteSpace(anglesDirectory))
+        throw new ArgumentException("Provide --angles-dir or --profile.");
+    if (string.IsNullOrWhiteSpace(profilesDirectory))
+        throw new ArgumentException("Provide --profiles-dir or --profile.");
+    if (string.IsNullOrWhiteSpace(outputDirectory))
+        throw new ArgumentException("Provide --output-dir or --profile.");
+
+    var options = new AfterGoalEntryGateOptions
+    {
+        EventsPath = eventsPath,
+        AnglesDirectory = anglesDirectory,
+        ProfilesDirectory = profilesDirectory,
+        OutputDirectory = outputDirectory,
+        TrainFromSeason = parsed.String("train-from-season", profile?.Seasons.DefaultTrainFrom > 0 ? profile.Seasons.DefaultTrainFrom.ToString(CultureInfo.InvariantCulture) : string.Empty),
+        TrainToSeason = parsed.String("train-to-season", profile?.Seasons.DefaultTrainTo > 0 ? profile.Seasons.DefaultTrainTo.ToString(CultureInfo.InvariantCulture) : string.Empty),
+        TestSeason = parsed.String("test-season", profile?.Seasons.DefaultTestSeason > 0 ? profile.Seasons.DefaultTestSeason.ToString(CultureInfo.InvariantCulture) : string.Empty),
+        ProfileLeagueKey = profile?.Key ?? string.Empty,
+        IncludeWatchlist = parsed.Bool("include-watchlist", profile?.AfterGoalEntryGates.IncludeWatchlist ?? true),
+        MinTrainStateSample = parsed.Int("min-train-state-sample", profile?.AfterGoalEntryGates.MinTrainStateSample ?? 15),
+        MinTestStateSample = parsed.Int("min-test-state-sample", profile?.AfterGoalEntryGates.MinTestStateSample ?? 5),
+        MinStateResidual = parsed.Double("min-state-residual", profile?.AfterGoalEntryGates.MinStateResidual ?? 0.05),
+        StrongStateResidual = parsed.Double("strong-state-residual", profile?.AfterGoalEntryGates.StrongStateResidual ?? 0.15),
+        RequireTestConfirmation = parsed.Bool("require-test-confirmation", profile?.AfterGoalEntryGates.RequireTestConfirmation ?? true),
+        ConflictPolicy = parsed.String("conflict-policy", profile?.AfterGoalEntryGates.ConflictPolicy ?? "NoBet"),
+        MarketGateRequired = profile?.AfterGoalEntryGates.MarketGateRequired ?? true
+    };
+
+    var builder = new AfterGoalEntryGateBuilder();
+    AfterGoalEntryGateResult result = await builder.BuildAsync(options, CancellationToken.None);
+    await AfterGoalEntryGateReportWriter.WriteAsync(options.OutputDirectory, options, result, CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("After-goal entry gate build done.");
+    Console.WriteLine($"Events: {Path.GetFullPath(options.EventsPath)}");
+    Console.WriteLine($"Angles directory: {Path.GetFullPath(options.AnglesDirectory)}");
+    Console.WriteLine($"Profiles directory: {Path.GetFullPath(options.ProfilesDirectory)}");
+    Console.WriteLine($"Output directory: {Path.GetFullPath(options.OutputDirectory)}");
+    Console.WriteLine($"League: {result.LeagueKey}");
+    Console.WriteLine($"Train seasons: {result.TrainSeasons}");
+    Console.WriteLine($"Test season: {result.TestSeason}");
+    Console.WriteLine($"Strict signals analyzed: {result.StrictSignalsAnalyzed}");
+    Console.WriteLine($"Watchlist signals analyzed: {result.WatchlistSignalsAnalyzed}");
+    Console.WriteLine($"Context gate rows: {result.ContextGates.Count}");
+    Console.WriteLine($"Active rules: {result.ActiveEntryRules}");
+    Console.WriteLine($"Watchlist rules: {result.WatchlistEntryRules}");
+    Console.WriteLine($"Too-thin rules: {result.TooThinRules}");
+    Console.WriteLine($"No-usable-gate rules: {result.NoUsableGateRules}");
+    Console.WriteLine("Generated files:");
+    Console.WriteLine($"  {Path.Combine(Path.GetFullPath(options.OutputDirectory), "after-goal-profile-context-gates.csv")}");
+    Console.WriteLine($"  {Path.Combine(Path.GetFullPath(options.OutputDirectory), "after-goal-entry-rules.csv")}");
+    Console.WriteLine($"  {Path.Combine(Path.GetFullPath(options.OutputDirectory), "after-goal-entry-gates-summary.json")}");
     if (result.Warnings.Count > 0)
     {
         Console.WriteLine("Warnings:");

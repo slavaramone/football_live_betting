@@ -16,6 +16,7 @@ public static class HelpPrinter
         Console.WriteLine("  build-after-goal-events             Build a strict after-goal event CSV from imported historical matches.");
         Console.WriteLine("  analyze-after-goal-angles           Analyze after-goal CSV into league/team angle reports.");
         Console.WriteLine("  build-after-goal-team-profiles      Build stable team profile reports from after-goal angle reports.");
+        Console.WriteLine("  build-after-goal-entry-gates        Build Model V4 state gate reports for after-goal signals.");
         Console.WriteLine("  validate-profiles                   Validate Model V4 league profile JSON.");
         Console.WriteLine("  validate-db                         Validate imported PostgreSQL data quality.");
         Console.WriteLine("  db-validate                         Alias for validate-db.");
@@ -32,6 +33,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-after-goal-events --profile china-super-league");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-after-goal-angles --profile china-super-league");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-after-goal-team-profiles --profile china-super-league");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-after-goal-entry-gates --profile china-super-league");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-profiles");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db --league \"Superettan\" --season-id 2026");
         Console.WriteLine();
@@ -46,6 +48,8 @@ public static class HelpPrinter
         Console.WriteLine("  --train-from-season / --train-to-season / --test-season");
         Console.WriteLine("                                    Optional train/test split for analyze-after-goal-angles.");
         Console.WriteLine("  --angles-dir                      Input report directory for build-after-goal-team-profiles.");
+        Console.WriteLine("  --profiles-dir                    Input profile report directory for build-after-goal-entry-gates.");
+        Console.WriteLine("  --conflict-policy                 NoBet | PreferStrict | PreferScoring | PreferConceding. Default: NoBet.");
         Console.WriteLine("  --watchlist-enabled               Include marginal after-goal watchlist report. Default: true.");
         Console.WriteLine("  --tournament-id                   Tournament id override; deterministic profile fallback is used for fixtures.");
         Console.WriteLine("  --round / --rounds                Single round or comma-separated rounds.");

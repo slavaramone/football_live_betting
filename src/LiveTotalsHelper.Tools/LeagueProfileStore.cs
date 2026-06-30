@@ -125,6 +125,7 @@ public sealed class LeagueProfileArtifacts
     public string AfterGoalEventsFile { get; set; } = "after-goal-events.csv";
     public string AfterGoalAnglesDir { get; set; } = "after-goal-angles";
     public string AfterGoalProfilesDir { get; set; } = "after-goal-profiles";
+    public string AfterGoalEntryGatesDir { get; set; } = "after-goal-entry-gates";
 }
 
 public sealed class AfterGoalEventsProfileSettings
@@ -191,6 +192,12 @@ public sealed class AfterGoalEntryGatesSettings
 {
     public bool Enabled { get; set; }
     public string Description { get; set; } = "Reserved for Patch 4. Profiles are not automatic bet triggers.";
+    public bool IncludeWatchlist { get; set; } = true;
+    public int MinTrainStateSample { get; set; } = 15;
+    public int MinTestStateSample { get; set; } = 5;
+    public double MinStateResidual { get; set; } = 0.05;
+    public double StrongStateResidual { get; set; } = 0.15;
+    public bool RequireTestConfirmation { get; set; } = true;
     public List<string> DefaultAllowedMinuteBands { get; set; } = ["00-15", "16-30", "31-45+", "46-60", "61-75"];
     public List<string> DefaultAvoidMinuteBands { get; set; } = ["76-90+"];
     public List<string> DefaultAllowedScoreGapBands { get; set; } = ["Draw", "Lead1", "Lead2"];
