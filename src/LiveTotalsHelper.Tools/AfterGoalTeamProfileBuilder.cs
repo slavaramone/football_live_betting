@@ -14,18 +14,25 @@ public sealed class AfterGoalTeamProfileOptions
     public double MinTestAbsResidual { get; set; } = 0.05;
     public double StrongTestAbsResidual { get; set; } = 0.15;
     public bool RequireTestConfirmation { get; set; } = true;
+    public bool WatchlistEnabled { get; set; } = true;
+    public int WatchlistTrainSampleTolerance { get; set; } = 10;
+    public int WatchlistTestSampleTolerance { get; set; } = 5;
+    public double WatchlistResidualTolerance { get; set; } = 0.03;
 }
 
 public sealed class AfterGoalTeamProfileResult
 {
     public List<AfterGoalTeamProfileRow> Profiles { get; } = [];
     public List<AfterGoalUsableSignalRow> UsableSignals { get; } = [];
+    public List<AfterGoalWatchlistSignalRow> WatchlistSignals { get; } = [];
     public List<string> Warnings { get; } = [];
     public string SourceTrainSeasons { get; set; } = string.Empty;
     public string SourceTestSeason { get; set; } = string.Empty;
     public int TeamsAnalyzed => Profiles.Count;
     public int UsableScoringSignalsCount => UsableSignals.Count(x => x.TriggerType == "AfterScoring");
     public int UsableConcedingSignalsCount => UsableSignals.Count(x => x.TriggerType == "AfterConceding");
+    public int WatchlistAfterScoringCount => WatchlistSignals.Count(x => x.TriggerType == "AfterScoring");
+    public int WatchlistAfterConcedingCount => WatchlistSignals.Count(x => x.TriggerType == "AfterConceding");
     public int UnstableSignalsCount { get; set; }
     public int NoSignalCount => Profiles.Count(x => !x.CombinedUsable);
 }
@@ -45,6 +52,8 @@ public sealed class AfterGoalTeamProfileRow
     public double? AfterScoringTestResidualVsBaseline { get; set; }
     public string AfterScoringStability { get; set; } = string.Empty;
     public string AfterScoringReason { get; set; } = string.Empty;
+    public bool AfterScoringWatchlist { get; set; }
+    public string AfterScoringWatchlistReason { get; set; } = string.Empty;
     public string AfterConcedingProfile { get; set; } = string.Empty;
     public bool AfterConcedingUsable { get; set; }
     public int AfterConcedingTrainSampleSize { get; set; }
@@ -53,6 +62,8 @@ public sealed class AfterGoalTeamProfileRow
     public double? AfterConcedingTestResidualVsBaseline { get; set; }
     public string AfterConcedingStability { get; set; } = string.Empty;
     public string AfterConcedingReason { get; set; } = string.Empty;
+    public bool AfterConcedingWatchlist { get; set; }
+    public string AfterConcedingWatchlistReason { get; set; } = string.Empty;
     public string CombinedProfile { get; set; } = string.Empty;
     public bool CombinedUsable { get; set; }
     public string CombinedDirection { get; set; } = string.Empty;
@@ -72,6 +83,29 @@ public sealed class AfterGoalUsableSignalRow
     public int TestSampleSize { get; set; }
     public double TrainShrunkResidual { get; set; }
     public double TestResidualVsBaseline { get; set; }
+    public string Confidence { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+}
+
+public sealed class AfterGoalWatchlistSignalRow
+{
+    public string LeagueKey { get; set; } = string.Empty;
+    public string LeagueName { get; set; } = string.Empty;
+    public string Team { get; set; } = string.Empty;
+    public string TriggerType { get; set; } = string.Empty;
+    public string Direction { get; set; } = string.Empty;
+    public string WatchlistReason { get; set; } = string.Empty;
+    public string FailedRule { get; set; } = string.Empty;
+    public int TrainSampleSize { get; set; }
+    public int TestSampleSize { get; set; }
+    public double TrainShrunkResidual { get; set; }
+    public double TestResidualVsBaseline { get; set; }
+    public string TrainDirection { get; set; } = string.Empty;
+    public string TestDirection { get; set; } = string.Empty;
+    public int TrainSampleShortBy { get; set; }
+    public int TestSampleShortBy { get; set; }
+    public double AbsTrainResidualShortBy { get; set; }
+    public double AbsTestResidualShortBy { get; set; }
     public string Confidence { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
 }
@@ -149,6 +183,8 @@ public sealed class AfterGoalTeamProfileBuilder
 
             ClassifiedTeamSignal scoringSignal = AfterGoalTeamSignalClassifier.Classify(scoring, "AfterScoring", options);
             ClassifiedTeamSignal concedingSignal = AfterGoalTeamSignalClassifier.Classify(conceding, "AfterConceding", options);
+            AfterGoalWatchlistSignalRow? scoringWatchlist = AfterGoalTeamWatchlistClassifier.Classify(scoring, scoringSignal, "AfterScoring", options);
+            AfterGoalWatchlistSignalRow? concedingWatchlist = AfterGoalTeamWatchlistClassifier.Classify(conceding, concedingSignal, "AfterConceding", options);
 
             if (scoringSignal.Profile == "Unstable")
                 result.UnstableSignalsCount++;
@@ -156,11 +192,13 @@ public sealed class AfterGoalTeamProfileBuilder
                 result.UnstableSignalsCount++;
 
             AfterGoalTeamAngleRow source = scoring ?? conceding ?? new AfterGoalTeamAngleRow();
-            AfterGoalTeamProfileRow profile = CreateProfileRow(source, scoringSignal, concedingSignal, result.SourceTrainSeasons, result.SourceTestSeason);
+            AfterGoalTeamProfileRow profile = CreateProfileRow(source, scoringSignal, concedingSignal, scoringWatchlist, concedingWatchlist, result.SourceTrainSeasons, result.SourceTestSeason);
             result.Profiles.Add(profile);
 
             AddUsableSignal(result, profile, scoringSignal);
             AddUsableSignal(result, profile, concedingSignal);
+            AddWatchlistSignal(result, profile, scoringWatchlist);
+            AddWatchlistSignal(result, profile, concedingWatchlist);
         }
 
         SortResult(result);
@@ -171,6 +209,8 @@ public sealed class AfterGoalTeamProfileBuilder
         AfterGoalTeamAngleRow source,
         ClassifiedTeamSignal scoring,
         ClassifiedTeamSignal conceding,
+        AfterGoalWatchlistSignalRow? scoringWatchlist,
+        AfterGoalWatchlistSignalRow? concedingWatchlist,
         string trainSeasons,
         string testSeason)
     {
@@ -200,6 +240,8 @@ public sealed class AfterGoalTeamProfileBuilder
             AfterScoringTestResidualVsBaseline = scoring.TestResidualVsBaseline,
             AfterScoringStability = scoring.Stability,
             AfterScoringReason = scoring.Reason,
+            AfterScoringWatchlist = scoringWatchlist is not null,
+            AfterScoringWatchlistReason = scoringWatchlist?.Reason ?? string.Empty,
             AfterConcedingProfile = conceding.Profile,
             AfterConcedingUsable = conceding.Usable,
             AfterConcedingTrainSampleSize = conceding.TrainSampleSize,
@@ -208,6 +250,8 @@ public sealed class AfterGoalTeamProfileBuilder
             AfterConcedingTestResidualVsBaseline = conceding.TestResidualVsBaseline,
             AfterConcedingStability = conceding.Stability,
             AfterConcedingReason = conceding.Reason,
+            AfterConcedingWatchlist = concedingWatchlist is not null,
+            AfterConcedingWatchlistReason = concedingWatchlist?.Reason ?? string.Empty,
             CombinedProfile = combinedProfile,
             CombinedUsable = usable.Count > 0,
             CombinedDirection = combinedDirection,
@@ -236,6 +280,17 @@ public sealed class AfterGoalTeamProfileBuilder
             Confidence = SignalConfidence(signal),
             Reason = signal.Reason
         });
+    }
+
+    private static void AddWatchlistSignal(AfterGoalTeamProfileResult result, AfterGoalTeamProfileRow profile, AfterGoalWatchlistSignalRow? signal)
+    {
+        if (signal is null)
+            return;
+
+        signal.LeagueKey = profile.LeagueKey;
+        signal.LeagueName = profile.LeagueName;
+        signal.Team = profile.Team;
+        result.WatchlistSignals.Add(signal);
     }
 
     private static string CombinedDirection(IReadOnlyList<ClassifiedTeamSignal> usable)
@@ -294,6 +349,17 @@ public sealed class AfterGoalTeamProfileBuilder
             if (residual != 0) return residual;
             int test = right.TestSampleSize.CompareTo(left.TestSampleSize);
             if (test != 0) return test;
+            return right.TrainSampleSize.CompareTo(left.TrainSampleSize);
+        });
+
+        result.WatchlistSignals.Sort((left, right) =>
+        {
+            int testResidual = Math.Abs(right.TestResidualVsBaseline).CompareTo(Math.Abs(left.TestResidualVsBaseline));
+            if (testResidual != 0) return testResidual;
+            int testSample = right.TestSampleSize.CompareTo(left.TestSampleSize);
+            if (testSample != 0) return testSample;
+            int trainResidual = Math.Abs(right.TrainShrunkResidual).CompareTo(Math.Abs(left.TrainShrunkResidual));
+            if (trainResidual != 0) return trainResidual;
             return right.TrainSampleSize.CompareTo(left.TrainSampleSize);
         });
     }
@@ -509,6 +575,108 @@ internal static class AfterGoalTeamSignalClassifier
             direction.Equals("UNDER", StringComparison.OrdinalIgnoreCase) ? "Under" : "Neutral";
 }
 
+internal static class AfterGoalTeamWatchlistClassifier
+{
+    public static AfterGoalWatchlistSignalRow? Classify(AfterGoalTeamAngleRow? row, ClassifiedTeamSignal strictSignal, string triggerType, AfterGoalTeamProfileOptions options)
+    {
+        if (!options.WatchlistEnabled || row is null || strictSignal.Usable)
+            return null;
+
+        string trainDirection = NormalizeDirection(row.Direction);
+        string testDirection = TestDirection(row.TestAvgResidualVsBaseline);
+        if (trainDirection is not ("OVER" or "UNDER"))
+            return null;
+        if (row.TestSampleSize <= 0 || row.TestAvgResidualVsBaseline is null)
+            return null;
+        if (options.RequireTestConfirmation && testDirection != trainDirection)
+            return null;
+        if (testDirection is "OVER" or "UNDER" && testDirection != trainDirection)
+            return null;
+
+        double absTrainResidual = Math.Abs(row.TrainShrunkResidual);
+        double absTestResidual = Math.Abs(row.TestAvgResidualVsBaseline.Value);
+        int trainSampleShortBy = Math.Max(0, options.MinTrainSample - row.TrainSampleSize);
+        int testSampleShortBy = Math.Max(0, options.MinTestSample - row.TestSampleSize);
+        double trainResidualShortBy = Math.Max(0, options.MinTrainAbsResidual - absTrainResidual);
+        double testResidualShortBy = Math.Max(0, options.MinTestAbsResidual - absTestResidual);
+
+        bool trainSampleWithin = trainSampleShortBy <= options.WatchlistTrainSampleTolerance;
+        bool testSampleWithin = testSampleShortBy <= options.WatchlistTestSampleTolerance;
+        bool trainResidualWithin = trainResidualShortBy <= options.WatchlistResidualTolerance;
+        bool testResidualWithin = testResidualShortBy <= options.WatchlistResidualTolerance;
+        bool samplesMeaningful = trainSampleWithin && testSampleWithin;
+        bool residualsMeaningful = trainResidualWithin && testResidualWithin && (trainResidualShortBy == 0 || testResidualShortBy == 0);
+
+        if (!samplesMeaningful || !residualsMeaningful)
+            return null;
+
+        List<string> failed = [];
+        if (trainSampleShortBy > 0) failed.Add("TrainSample");
+        if (testSampleShortBy > 0) failed.Add("TestSample");
+        if (trainResidualShortBy > 0) failed.Add("TrainResidual");
+        if (testResidualShortBy > 0) failed.Add("TestResidual");
+        if (failed.Count == 0)
+            return null;
+
+        string watchlistReason = WatchlistReason(trainSampleShortBy, testSampleShortBy, trainResidualShortBy, testResidualShortBy);
+        return new AfterGoalWatchlistSignalRow
+        {
+            TriggerType = triggerType,
+            Direction = trainDirection,
+            WatchlistReason = watchlistReason,
+            FailedRule = string.Join(";", failed),
+            TrainSampleSize = row.TrainSampleSize,
+            TestSampleSize = row.TestSampleSize,
+            TrainShrunkResidual = row.TrainShrunkResidual,
+            TestResidualVsBaseline = row.TestAvgResidualVsBaseline.Value,
+            TrainDirection = trainDirection,
+            TestDirection = testDirection,
+            TrainSampleShortBy = trainSampleShortBy,
+            TestSampleShortBy = testSampleShortBy,
+            AbsTrainResidualShortBy = trainResidualShortBy,
+            AbsTestResidualShortBy = testResidualShortBy,
+            Confidence = Confidence(row, options),
+            Reason = Reason(trainDirection, row, options, trainSampleShortBy, testSampleShortBy, trainResidualShortBy, testResidualShortBy)
+        };
+    }
+
+    private static string WatchlistReason(int trainSampleShortBy, int testSampleShortBy, double trainResidualShortBy, double testResidualShortBy)
+    {
+        if (trainSampleShortBy > 0 && testSampleShortBy == 0 && trainResidualShortBy <= 0 && testResidualShortBy <= 0)
+            return "NearTrainSample";
+        if (testSampleShortBy > 0 && trainSampleShortBy == 0 && trainResidualShortBy <= 0 && testResidualShortBy <= 0)
+            return "NearTestSample";
+        if (trainResidualShortBy > 0 || testResidualShortBy > 0)
+            return trainSampleShortBy > 0 || testSampleShortBy > 0 ? "ConfirmedButMarginal" : "NearResidualThreshold";
+        return "ManualReview";
+    }
+
+    private static string Reason(string direction, AfterGoalTeamAngleRow row, AfterGoalTeamProfileOptions options, int trainSampleShortBy, int testSampleShortBy, double trainResidualShortBy, double testResidualShortBy)
+    {
+        var details = new List<string>();
+        if (trainSampleShortBy > 0)
+            details.Add($"train sample {row.TrainSampleSize} is {trainSampleShortBy} below threshold");
+        if (testSampleShortBy > 0)
+            details.Add($"test sample {row.TestSampleSize} is {testSampleShortBy} below threshold");
+        if (trainResidualShortBy > 0)
+            details.Add($"train residual is {trainResidualShortBy.ToString("0.0000", CultureInfo.InvariantCulture)} below threshold");
+        if (testResidualShortBy > 0)
+            details.Add($"test residual is {testResidualShortBy.ToString("0.0000", CultureInfo.InvariantCulture)} below threshold");
+
+        return $"Watchlist {direction}: {string.Join(", ", details)}, but train residual {AfterGoalTeamProfileBuilder.Signed(row.TrainShrunkResidual)} and test residual {AfterGoalTeamProfileBuilder.Signed(row.TestAvgResidualVsBaseline.GetValueOrDefault())} confirm direction.";
+    }
+
+    private static string Confidence(AfterGoalTeamAngleRow row, AfterGoalTeamProfileOptions options)
+        => row.TrainSampleSize >= options.MinTrainSample && row.TestSampleSize >= options.MinTestSample ? "MEDIUM" : "LOW";
+
+    private static string NormalizeDirection(string value)
+        => value.Equals("OVER", StringComparison.OrdinalIgnoreCase) ? "OVER" :
+            value.Equals("UNDER", StringComparison.OrdinalIgnoreCase) ? "UNDER" : "NEUTRAL";
+
+    private static string TestDirection(double? value)
+        => !value.HasValue || Math.Abs(value.Value) < 0.0000001 ? "NEUTRAL" : value.Value > 0 ? "OVER" : "UNDER";
+}
+
 public static class AfterGoalTeamProfileReportWriter
 {
     public static async Task WriteAsync(string outputDirectory, AfterGoalTeamProfileOptions options, AfterGoalTeamProfileResult result, CancellationToken cancellationToken)
@@ -518,6 +686,7 @@ public static class AfterGoalTeamProfileReportWriter
 
         await WriteProfilesAsync(Path.Combine(fullDirectory, "after-goal-team-profiles.csv"), result.Profiles, cancellationToken);
         await WriteSignalsAsync(Path.Combine(fullDirectory, "after-goal-usable-signals.csv"), result.UsableSignals, cancellationToken);
+        await WriteWatchlistAsync(Path.Combine(fullDirectory, "after-goal-watchlist-signals.csv"), result.WatchlistSignals, cancellationToken);
 
         var summary = new
         {
@@ -531,9 +700,16 @@ public static class AfterGoalTeamProfileReportWriter
             options.MinTestAbsResidual,
             options.StrongTestAbsResidual,
             options.RequireTestConfirmation,
+            options.WatchlistEnabled,
+            options.WatchlistTrainSampleTolerance,
+            options.WatchlistTestSampleTolerance,
+            options.WatchlistResidualTolerance,
             TeamsAnalyzed = result.TeamsAnalyzed,
             UsableScoringSignalsCount = result.UsableScoringSignalsCount,
             UsableConcedingSignalsCount = result.UsableConcedingSignalsCount,
+            WatchlistSignalsCount = result.WatchlistSignals.Count,
+            WatchlistAfterScoringCount = result.WatchlistAfterScoringCount,
+            WatchlistAfterConcedingCount = result.WatchlistAfterConcedingCount,
             result.UnstableSignalsCount,
             NoSignalCount = result.NoSignalCount,
             Warnings = result.Warnings,
@@ -561,6 +737,8 @@ public static class AfterGoalTeamProfileReportWriter
             "AfterScoringTestResidualVsBaseline",
             "AfterScoringStability",
             "AfterScoringReason",
+            "AfterScoringWatchlist",
+            "AfterScoringWatchlistReason",
             "AfterConcedingProfile",
             "AfterConcedingUsable",
             "AfterConcedingTrainSampleSize",
@@ -569,6 +747,8 @@ public static class AfterGoalTeamProfileReportWriter
             "AfterConcedingTestResidualVsBaseline",
             "AfterConcedingStability",
             "AfterConcedingReason",
+            "AfterConcedingWatchlist",
+            "AfterConcedingWatchlistReason",
             "CombinedProfile",
             "CombinedUsable",
             "CombinedDirection",
@@ -605,6 +785,37 @@ public static class AfterGoalTeamProfileReportWriter
             await writer.WriteLineAsync(CsvUtility.ToLine(SignalValues(row)));
     }
 
+    private static async Task WriteWatchlistAsync(string path, IReadOnlyList<AfterGoalWatchlistSignalRow> rows, CancellationToken cancellationToken)
+    {
+        string[] headers =
+        [
+            "LeagueKey",
+            "LeagueName",
+            "Team",
+            "TriggerType",
+            "Direction",
+            "WatchlistReason",
+            "FailedRule",
+            "TrainSampleSize",
+            "TestSampleSize",
+            "TrainShrunkResidual",
+            "TestResidualVsBaseline",
+            "TrainDirection",
+            "TestDirection",
+            "TrainSampleShortBy",
+            "TestSampleShortBy",
+            "AbsTrainResidualShortBy",
+            "AbsTestResidualShortBy",
+            "Confidence",
+            "Reason"
+        ];
+
+        await using var writer = new StreamWriter(path, false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        await writer.WriteLineAsync(string.Join(",", headers));
+        foreach (AfterGoalWatchlistSignalRow row in rows)
+            await writer.WriteLineAsync(CsvUtility.ToLine(WatchlistValues(row)));
+    }
+
     private static IEnumerable<string> ProfileValues(AfterGoalTeamProfileRow row)
     {
         yield return row.LeagueKey;
@@ -620,6 +831,8 @@ public static class AfterGoalTeamProfileReportWriter
         yield return Format(row.AfterScoringTestResidualVsBaseline);
         yield return row.AfterScoringStability;
         yield return row.AfterScoringReason;
+        yield return Bool(row.AfterScoringWatchlist);
+        yield return row.AfterScoringWatchlistReason;
         yield return row.AfterConcedingProfile;
         yield return Bool(row.AfterConcedingUsable);
         yield return row.AfterConcedingTrainSampleSize.ToString(CultureInfo.InvariantCulture);
@@ -628,6 +841,8 @@ public static class AfterGoalTeamProfileReportWriter
         yield return Format(row.AfterConcedingTestResidualVsBaseline);
         yield return row.AfterConcedingStability;
         yield return row.AfterConcedingReason;
+        yield return Bool(row.AfterConcedingWatchlist);
+        yield return row.AfterConcedingWatchlistReason;
         yield return row.CombinedProfile;
         yield return Bool(row.CombinedUsable);
         yield return row.CombinedDirection;
@@ -646,6 +861,29 @@ public static class AfterGoalTeamProfileReportWriter
         yield return row.TestSampleSize.ToString(CultureInfo.InvariantCulture);
         yield return Format(row.TrainShrunkResidual);
         yield return Format(row.TestResidualVsBaseline);
+        yield return row.Confidence;
+        yield return row.Reason;
+    }
+
+    private static IEnumerable<string> WatchlistValues(AfterGoalWatchlistSignalRow row)
+    {
+        yield return row.LeagueKey;
+        yield return row.LeagueName;
+        yield return row.Team;
+        yield return row.TriggerType;
+        yield return row.Direction;
+        yield return row.WatchlistReason;
+        yield return row.FailedRule;
+        yield return row.TrainSampleSize.ToString(CultureInfo.InvariantCulture);
+        yield return row.TestSampleSize.ToString(CultureInfo.InvariantCulture);
+        yield return Format(row.TrainShrunkResidual);
+        yield return Format(row.TestResidualVsBaseline);
+        yield return row.TrainDirection;
+        yield return row.TestDirection;
+        yield return row.TrainSampleShortBy.ToString(CultureInfo.InvariantCulture);
+        yield return row.TestSampleShortBy.ToString(CultureInfo.InvariantCulture);
+        yield return Format(row.AbsTrainResidualShortBy);
+        yield return Format(row.AbsTestResidualShortBy);
         yield return row.Confidence;
         yield return row.Reason;
     }

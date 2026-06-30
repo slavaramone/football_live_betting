@@ -430,7 +430,11 @@ static async Task<int> RunBuildAfterGoalTeamProfiles(string[] args)
         "min-train-abs-residual",
         "min-test-abs-residual",
         "strong-test-abs-residual",
-        "require-test-confirmation"
+        "require-test-confirmation",
+        "watchlist-enabled",
+        "watchlist-train-sample-tolerance",
+        "watchlist-test-sample-tolerance",
+        "watchlist-residual-tolerance"
     ]);
 
     string anglesDirectory = parsed.RequiredString("angles-dir");
@@ -445,7 +449,11 @@ static async Task<int> RunBuildAfterGoalTeamProfiles(string[] args)
         MinTrainAbsResidual = parsed.Double("min-train-abs-residual", 0.10),
         MinTestAbsResidual = parsed.Double("min-test-abs-residual", 0.05),
         StrongTestAbsResidual = parsed.Double("strong-test-abs-residual", 0.15),
-        RequireTestConfirmation = parsed.Bool("require-test-confirmation", true)
+        RequireTestConfirmation = parsed.Bool("require-test-confirmation", true),
+        WatchlistEnabled = parsed.Bool("watchlist-enabled", true),
+        WatchlistTrainSampleTolerance = parsed.Int("watchlist-train-sample-tolerance", 10),
+        WatchlistTestSampleTolerance = parsed.Int("watchlist-test-sample-tolerance", 5),
+        WatchlistResidualTolerance = parsed.Double("watchlist-residual-tolerance", 0.03)
     };
 
     if (options.MinTrainSample <= 0)
@@ -454,6 +462,8 @@ static async Task<int> RunBuildAfterGoalTeamProfiles(string[] args)
         throw new ArgumentException("Argument --min-test-sample must be positive.");
     if (options.MinTrainAbsResidual < 0 || options.MinTestAbsResidual < 0 || options.StrongTestAbsResidual < 0)
         throw new ArgumentException("Residual thresholds must be zero or greater.");
+    if (options.WatchlistTrainSampleTolerance < 0 || options.WatchlistTestSampleTolerance < 0 || options.WatchlistResidualTolerance < 0)
+        throw new ArgumentException("Watchlist tolerances must be zero or greater.");
 
     var builder = new AfterGoalTeamProfileBuilder();
     AfterGoalTeamProfileResult result = await builder.BuildAsync(options, CancellationToken.None);
@@ -468,6 +478,9 @@ static async Task<int> RunBuildAfterGoalTeamProfiles(string[] args)
     Console.WriteLine($"Teams analyzed: {result.TeamsAnalyzed}");
     Console.WriteLine($"Usable scoring signals: {result.UsableScoringSignalsCount}");
     Console.WriteLine($"Usable conceding signals: {result.UsableConcedingSignalsCount}");
+    Console.WriteLine($"Watchlist signals: {result.WatchlistSignals.Count}");
+    Console.WriteLine($"Watchlist scoring signals: {result.WatchlistAfterScoringCount}");
+    Console.WriteLine($"Watchlist conceding signals: {result.WatchlistAfterConcedingCount}");
     Console.WriteLine($"Unstable signals: {result.UnstableSignalsCount}");
     Console.WriteLine($"No-signal teams: {result.NoSignalCount}");
     if (result.Warnings.Count > 0)

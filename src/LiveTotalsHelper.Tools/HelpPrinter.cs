@@ -44,6 +44,7 @@ public static class HelpPrinter
         Console.WriteLine("  --train-from-season / --train-to-season / --test-season");
         Console.WriteLine("                                    Optional train/test split for analyze-after-goal-angles.");
         Console.WriteLine("  --angles-dir                      Input report directory for build-after-goal-team-profiles.");
+        Console.WriteLine("  --watchlist-enabled               Include marginal after-goal watchlist report. Default: true.");
         Console.WriteLine("  --tournament-id                   Tournament id override; deterministic profile fallback is used for fixtures.");
         Console.WriteLine("  --round / --rounds                Single round or comma-separated rounds.");
         Console.WriteLine("  --from-round / --to-round         Inclusive round range.");
