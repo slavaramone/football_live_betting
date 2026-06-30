@@ -29,6 +29,7 @@ try
         "import-flashscore" => await RunImportFlashscore(commandArgs),
         "import-flashscore-fixtures" => await RunImportFlashscoreFixtures(commandArgs),
         "build-after-goal-events" => await RunBuildAfterGoalEvents(commandArgs),
+        "analyze-after-goal-angles" => await RunAnalyzeAfterGoalAngles(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
@@ -314,6 +315,145 @@ static async Task<int> RunBuildAfterGoalEvents(string[] args)
     }
 
     return 0;
+}
+
+static async Task<int> RunAnalyzeAfterGoalAngles(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    ValidateAllowedOptions(parsed, "analyze-after-goal-angles",
+    [
+        "input",
+        "output-dir",
+        "train-from-season",
+        "train-to-season",
+        "test-season",
+        "min-sample",
+        "strong-sample",
+        "shrink-k",
+        "include-opponent-pairs"
+    ]);
+
+    string inputPath = parsed.RequiredString("input");
+    if (string.IsNullOrWhiteSpace(inputPath))
+        throw new ArgumentException("Provide --input.");
+
+    string defaultOutputDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(inputPath)) ?? Directory.GetCurrentDirectory(), "after-goal-angles");
+    var options = new AfterGoalAngleAnalysisOptions
+    {
+        InputPath = inputPath,
+        OutputDirectory = parsed.String("output-dir", defaultOutputDirectory),
+        TrainFromSeason = parsed.String("train-from-season", string.Empty),
+        TrainToSeason = parsed.String("train-to-season", string.Empty),
+        TestSeason = parsed.String("test-season", string.Empty),
+        MinSample = parsed.Int("min-sample", 30),
+        StrongSample = parsed.Int("strong-sample", 80),
+        ShrinkK = parsed.Double("shrink-k", 50),
+        IncludeOpponentPairs = parsed.Bool("include-opponent-pairs", false),
+        RawCommandLine = string.Join(" ", ["analyze-after-goal-angles", .. args])
+    };
+
+    if (options.MinSample <= 0)
+        throw new ArgumentException("Argument --min-sample must be positive.");
+    if (options.StrongSample < options.MinSample)
+        throw new ArgumentException("Argument --strong-sample must be greater than or equal to --min-sample.");
+    if (options.ShrinkK < 0)
+        throw new ArgumentException("Argument --shrink-k must be zero or greater.");
+
+    var analyzer = new AfterGoalAngleAnalyzer();
+    AfterGoalAngleAnalysisResult result;
+    try
+    {
+        result = await analyzer.AnalyzeAsync(options, CancellationToken.None);
+    }
+    catch (ArgumentException ex)
+    {
+        await WriteAngleAnalysisErrorAsync(options, ex, CancellationToken.None);
+        throw;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("After-goal angle analysis split resolved.");
+    Console.WriteLine($"Input path: {Path.GetFullPath(options.InputPath)}");
+    Console.WriteLine($"Output directory: {Path.GetFullPath(options.OutputDirectory)}");
+    Console.WriteLine($"Seasons found in input: {string.Join(", ", result.InputSeasons)}");
+    Console.WriteLine($"Split mode: {result.SplitMode}");
+    Console.WriteLine($"Requested train-from-season: {PrintableOption(options.TrainFromSeason)}");
+    Console.WriteLine($"Requested train-to-season: {PrintableOption(options.TrainToSeason)}");
+    Console.WriteLine($"Requested test-season: {PrintableOption(options.TestSeason)}");
+    Console.WriteLine($"Resolved train seasons: {string.Join(", ", result.TrainSeasons)}");
+    Console.WriteLine($"Resolved test season: {result.TestSeason}");
+    Console.WriteLine($"Train rows: {result.TrainRows}");
+    Console.WriteLine($"Test rows: {result.TestRows}");
+
+    await AfterGoalAngleReportWriter.WriteAsync(options.OutputDirectory, options, result, CancellationToken.None);
+
+    Console.WriteLine("After-goal angle analysis done.");
+    Console.WriteLine($"Total rows read: {result.TotalRowsRead}");
+    Console.WriteLine($"Rows used: {result.RowsUsed}");
+    Console.WriteLine($"Train seasons: {string.Join(", ", result.TrainSeasons)}");
+    Console.WriteLine($"Test season: {result.TestSeason}");
+    Console.WriteLine("Report rows:");
+    foreach (var report in result.ReportRowCounts.OrderBy(x => x.Key))
+        Console.WriteLine($"  {report.Key}: {report.Value}");
+
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"  - {warning}");
+    }
+
+    return 0;
+}
+
+static void ValidateAllowedOptions(ParsedArgs parsed, string command, IReadOnlyCollection<string> allowedOptions)
+{
+    var allowed = new HashSet<string>(allowedOptions, StringComparer.OrdinalIgnoreCase);
+    List<string> unknown = parsed.Values.Keys.Where(x => !allowed.Contains(x)).OrderBy(x => x).ToList();
+    if (unknown.Count > 0)
+        throw new ArgumentException($"Unknown option(s) for {command}: {string.Join(", ", unknown.Select(x => "--" + x))}.");
+}
+
+static string PrintableOption(string value)
+    => string.IsNullOrWhiteSpace(value) ? "<none>" : value;
+
+static async Task WriteAngleAnalysisErrorAsync(AfterGoalAngleAnalysisOptions options, Exception exception, CancellationToken cancellationToken)
+{
+    string outputDirectory = Path.GetFullPath(options.OutputDirectory);
+    Directory.CreateDirectory(outputDirectory);
+
+    foreach (string fileName in AngleAnalysisOutputFileNames())
+    {
+        string path = Path.Combine(outputDirectory, fileName);
+        if (File.Exists(path))
+            File.Delete(path);
+    }
+
+    var errorSummary = new
+    {
+        Input = Path.GetFullPath(options.InputPath),
+        OutputDir = outputDirectory,
+        options.TrainFromSeason,
+        options.TrainToSeason,
+        options.TestSeason,
+        Error = exception.Message,
+        Timestamp = DateTimeOffset.UtcNow
+    };
+
+    string json = JsonSerializer.Serialize(errorSummary, new JsonSerializerOptions { WriteIndented = true });
+    await File.WriteAllTextAsync(Path.Combine(outputDirectory, "after-goal-angle-analysis-error.json"), json, Encoding.UTF8, cancellationToken);
+}
+
+static IEnumerable<string> AngleAnalysisOutputFileNames()
+{
+    yield return "league-after-goal-angles.csv";
+    yield return "league-minute-after-goal-angles.csv";
+    yield return "team-after-scoring-angles.csv";
+    yield return "team-after-conceding-angles.csv";
+    yield return "team-minute-after-scoring-angles.csv";
+    yield return "team-minute-after-conceding-angles.csv";
+    yield return "opponent-pair-after-goal-angles.csv";
+    yield return "after-goal-angle-analysis-summary.json";
 }
 
 static async Task<int> RunImportFlashscore(string[] args)
