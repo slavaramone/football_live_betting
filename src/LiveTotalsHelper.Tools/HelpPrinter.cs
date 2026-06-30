@@ -16,6 +16,7 @@ public static class HelpPrinter
         Console.WriteLine("  build-after-goal-events             Build a strict after-goal event CSV from imported historical matches.");
         Console.WriteLine("  analyze-after-goal-angles           Analyze after-goal CSV into league/team angle reports.");
         Console.WriteLine("  build-after-goal-team-profiles      Build stable team profile reports from after-goal angle reports.");
+        Console.WriteLine("  validate-profiles                   Validate Model V4 league profile JSON.");
         Console.WriteLine("  validate-db                         Validate imported PostgreSQL data quality.");
         Console.WriteLine("  db-validate                         Alias for validate-db.");
         Console.WriteLine();
@@ -24,13 +25,14 @@ public static class HelpPrinter
         Console.WriteLine("  Override with --profiles-file <path>.");
         Console.WriteLine();
         Console.WriteLine("Examples:");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- download-flashscore --url <results-url> --league superettan --tournament-id 1 --season-id 2026");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- download-flashscore-fixtures --profile superettan --show-browser");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore --league superettan --season-id 2026");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore-fixtures --profile superettan");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-after-goal-events --profile superettan --from-season 2023 --to-season 2025");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-after-goal-angles --input C:\\football_data\\models\\superettan\\after-goal-events.csv --output-dir C:\\football_data\\models\\superettan\\after-goal-angles");
-        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-after-goal-team-profiles --angles-dir C:\\football_data\\models\\superettan\\after-goal-angles --output-dir C:\\football_data\\models\\superettan\\after-goal-profiles");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- download-flashscore --url <results-url> --league \"China Super League\" --tournament-id 1 --season-id 2026");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- download-flashscore-fixtures --profile china-super-league --show-browser");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore --league \"China Super League\" --season-id 2026");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore-fixtures --profile china-super-league");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-after-goal-events --profile china-super-league");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-after-goal-angles --profile china-super-league");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-after-goal-team-profiles --profile china-super-league");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-profiles");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db --league \"Superettan\" --season-id 2026");
         Console.WriteLine();
         Console.WriteLine("Common arguments:");
@@ -49,7 +51,7 @@ public static class HelpPrinter
         Console.WriteLine("  --round / --rounds                Single round or comma-separated rounds.");
         Console.WriteLine("  --from-round / --to-round         Inclusive round range.");
         Console.WriteLine("  --output                          Download output root, default data/flashscore or data/sofascore.");
-        Console.WriteLine("                                    For build-after-goal-events, default C:\\football_data\\models\\{league}\\after-goal-events.csv.");
+        Console.WriteLine("                                    For build-after-goal-events, default modelRoot\\{leagueKey}\\after-goal-events.csv.");
         Console.WriteLine("  --input                           Import input root, default data/flashscore.");
         Console.WriteLine("  --skip-playoffs true              Skip Flashscore Play Offs/Relegation sections. Default: true.");
         Console.WriteLine("  --include-playoffs true           Include Flashscore Play Offs/Relegation sections.");

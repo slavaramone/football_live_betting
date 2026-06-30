@@ -31,6 +31,7 @@ try
         "build-after-goal-events" => await RunBuildAfterGoalEvents(commandArgs),
         "analyze-after-goal-angles" => await RunAnalyzeAfterGoalAngles(commandArgs),
         "build-after-goal-team-profiles" => await RunBuildAfterGoalTeamProfiles(commandArgs),
+        "validate-profiles" => RunValidateProfiles(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
@@ -277,8 +278,8 @@ static async Task<int> RunBuildAfterGoalEvents(string[] args)
         LeagueName = league,
         TournamentId = tournamentId,
         Season = parsed.String("season", parsed.String("season-id", string.Empty)),
-        FromSeason = parsed.String("from-season", string.Empty),
-        ToSeason = parsed.String("to-season", string.Empty),
+        FromSeason = parsed.String("from-season", profile?.Seasons.DefaultTrainFrom.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
+        ToSeason = parsed.String("to-season", profile?.Seasons.DefaultTestSeason.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
         MinMinute = parsed.Has("min-minute") ? parsed.RequiredInt("min-minute") : null,
         MaxMinute = parsed.Has("max-minute") ? parsed.RequiredInt("max-minute") : null
     };
@@ -321,8 +322,11 @@ static async Task<int> RunBuildAfterGoalEvents(string[] args)
 static async Task<int> RunAnalyzeAfterGoalAngles(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
     ValidateAllowedOptions(parsed, "analyze-after-goal-angles",
     [
+        "profile",
+        "profiles-file",
         "input",
         "output-dir",
         "train-from-season",
@@ -334,22 +338,24 @@ static async Task<int> RunAnalyzeAfterGoalAngles(string[] args)
         "include-opponent-pairs"
     ]);
 
-    string inputPath = parsed.RequiredString("input");
+    string inputPath = parsed.String("input", profile is null ? string.Empty : LeagueProfileStore.ResolveProfileArtifactPath(profile, profile.Artifacts.AfterGoalEventsFile));
     if (string.IsNullOrWhiteSpace(inputPath))
-        throw new ArgumentException("Provide --input.");
+        throw new ArgumentException("Provide --input or --profile.");
 
-    string defaultOutputDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(inputPath)) ?? Directory.GetCurrentDirectory(), "after-goal-angles");
+    string defaultOutputDirectory = profile is null
+        ? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(inputPath)) ?? Directory.GetCurrentDirectory(), "after-goal-angles")
+        : LeagueProfileStore.ResolveProfileArtifactPath(profile, profile.Artifacts.AfterGoalAnglesDir);
     var options = new AfterGoalAngleAnalysisOptions
     {
         InputPath = inputPath,
         OutputDirectory = parsed.String("output-dir", defaultOutputDirectory),
-        TrainFromSeason = parsed.String("train-from-season", string.Empty),
-        TrainToSeason = parsed.String("train-to-season", string.Empty),
-        TestSeason = parsed.String("test-season", string.Empty),
-        MinSample = parsed.Int("min-sample", 30),
-        StrongSample = parsed.Int("strong-sample", 80),
-        ShrinkK = parsed.Double("shrink-k", 50),
-        IncludeOpponentPairs = parsed.Bool("include-opponent-pairs", false),
+        TrainFromSeason = parsed.String("train-from-season", profile?.Seasons.DefaultTrainFrom > 0 ? profile.Seasons.DefaultTrainFrom.ToString(CultureInfo.InvariantCulture) : string.Empty),
+        TrainToSeason = parsed.String("train-to-season", profile?.Seasons.DefaultTrainTo > 0 ? profile.Seasons.DefaultTrainTo.ToString(CultureInfo.InvariantCulture) : string.Empty),
+        TestSeason = parsed.String("test-season", profile?.Seasons.DefaultTestSeason > 0 ? profile.Seasons.DefaultTestSeason.ToString(CultureInfo.InvariantCulture) : string.Empty),
+        MinSample = parsed.Int("min-sample", profile?.AfterGoalAngles.MinSample ?? 30),
+        StrongSample = parsed.Int("strong-sample", profile?.AfterGoalAngles.StrongSample ?? 80),
+        ShrinkK = parsed.Double("shrink-k", profile?.AfterGoalAngles.ShrinkK ?? 50),
+        IncludeOpponentPairs = parsed.Bool("include-opponent-pairs", profile?.AfterGoalAngles.IncludeOpponentPairsDefault ?? false),
         RawCommandLine = string.Join(" ", ["analyze-after-goal-angles", .. args])
     };
 
@@ -371,6 +377,8 @@ static async Task<int> RunAnalyzeAfterGoalAngles(string[] args)
         await WriteAngleAnalysisErrorAsync(options, ex, CancellationToken.None);
         throw;
     }
+
+    ValidateProfileLeagueKeys(profile, result.LeagueKeys);
 
     Console.WriteLine();
     Console.WriteLine("After-goal angle analysis split resolved.");
@@ -421,8 +429,11 @@ static string PrintableOption(string value)
 static async Task<int> RunBuildAfterGoalTeamProfiles(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
     ValidateAllowedOptions(parsed, "build-after-goal-team-profiles",
     [
+        "profile",
+        "profiles-file",
         "angles-dir",
         "output-dir",
         "min-train-sample",
@@ -437,23 +448,29 @@ static async Task<int> RunBuildAfterGoalTeamProfiles(string[] args)
         "watchlist-residual-tolerance"
     ]);
 
-    string anglesDirectory = parsed.RequiredString("angles-dir");
-    string outputDirectory = parsed.String("output-dir", Path.Combine(Path.GetDirectoryName(Path.GetFullPath(anglesDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))) ?? Directory.GetCurrentDirectory(), "after-goal-profiles"));
+    string anglesDirectory = parsed.String("angles-dir", profile is null ? string.Empty : LeagueProfileStore.ResolveProfileArtifactPath(profile, profile.Artifacts.AfterGoalAnglesDir));
+    if (string.IsNullOrWhiteSpace(anglesDirectory))
+        throw new ArgumentException("Provide --angles-dir or --profile.");
+
+    string defaultOutputDirectory = profile is null
+        ? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(anglesDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))) ?? Directory.GetCurrentDirectory(), "after-goal-profiles")
+        : LeagueProfileStore.ResolveProfileArtifactPath(profile, profile.Artifacts.AfterGoalProfilesDir);
+    string outputDirectory = parsed.String("output-dir", defaultOutputDirectory);
 
     var options = new AfterGoalTeamProfileOptions
     {
         AnglesDirectory = anglesDirectory,
         OutputDirectory = outputDirectory,
-        MinTrainSample = parsed.Int("min-train-sample", 50),
-        MinTestSample = parsed.Int("min-test-sample", 15),
-        MinTrainAbsResidual = parsed.Double("min-train-abs-residual", 0.10),
-        MinTestAbsResidual = parsed.Double("min-test-abs-residual", 0.05),
-        StrongTestAbsResidual = parsed.Double("strong-test-abs-residual", 0.15),
-        RequireTestConfirmation = parsed.Bool("require-test-confirmation", true),
-        WatchlistEnabled = parsed.Bool("watchlist-enabled", true),
-        WatchlistTrainSampleTolerance = parsed.Int("watchlist-train-sample-tolerance", 10),
-        WatchlistTestSampleTolerance = parsed.Int("watchlist-test-sample-tolerance", 5),
-        WatchlistResidualTolerance = parsed.Double("watchlist-residual-tolerance", 0.03)
+        MinTrainSample = parsed.Int("min-train-sample", profile?.AfterGoalTeamProfiles.MinTrainSample ?? 50),
+        MinTestSample = parsed.Int("min-test-sample", profile?.AfterGoalTeamProfiles.MinTestSample ?? 15),
+        MinTrainAbsResidual = parsed.Double("min-train-abs-residual", profile?.AfterGoalTeamProfiles.MinTrainAbsResidual ?? 0.10),
+        MinTestAbsResidual = parsed.Double("min-test-abs-residual", profile?.AfterGoalTeamProfiles.MinTestAbsResidual ?? 0.05),
+        StrongTestAbsResidual = parsed.Double("strong-test-abs-residual", profile?.AfterGoalTeamProfiles.StrongTestAbsResidual ?? 0.15),
+        RequireTestConfirmation = parsed.Bool("require-test-confirmation", profile?.AfterGoalTeamProfiles.RequireTestConfirmation ?? true),
+        WatchlistEnabled = parsed.Bool("watchlist-enabled", profile?.AfterGoalTeamProfiles.Watchlist.Enabled ?? true),
+        WatchlistTrainSampleTolerance = parsed.Int("watchlist-train-sample-tolerance", profile?.AfterGoalTeamProfiles.Watchlist.TrainSampleTolerance ?? 10),
+        WatchlistTestSampleTolerance = parsed.Int("watchlist-test-sample-tolerance", profile?.AfterGoalTeamProfiles.Watchlist.TestSampleTolerance ?? 5),
+        WatchlistResidualTolerance = parsed.Double("watchlist-residual-tolerance", profile?.AfterGoalTeamProfiles.Watchlist.ResidualTolerance ?? 0.03)
     };
 
     if (options.MinTrainSample <= 0)
@@ -467,6 +484,11 @@ static async Task<int> RunBuildAfterGoalTeamProfiles(string[] args)
 
     var builder = new AfterGoalTeamProfileBuilder();
     AfterGoalTeamProfileResult result = await builder.BuildAsync(options, CancellationToken.None);
+    ValidateProfileLeagueKeys(profile, result.Profiles.Select(x => x.LeagueKey)
+        .Concat(result.UsableSignals.Select(x => x.LeagueKey))
+        .Concat(result.WatchlistSignals.Select(x => x.LeagueKey))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase));
     await AfterGoalTeamProfileReportWriter.WriteAsync(options.OutputDirectory, options, result, CancellationToken.None);
 
     Console.WriteLine();
@@ -491,6 +513,26 @@ static async Task<int> RunBuildAfterGoalTeamProfiles(string[] args)
     }
 
     return 0;
+}
+
+static int RunValidateProfiles(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    string profilesFile = parsed.String("profiles-file", "config/league-profiles.json");
+    LeagueProfileValidationResult result = LeagueProfileStore.ValidateFile(profilesFile);
+
+    Console.WriteLine();
+    Console.WriteLine("Profile validation done.");
+    Console.WriteLine($"Profiles file: {Path.GetFullPath(LeagueProfileStore.ResolvePath(profilesFile))}");
+    Console.WriteLine($"Errors: {result.Errors.Count}");
+    Console.WriteLine($"Warnings: {result.Warnings.Count}");
+
+    foreach (string error in result.Errors)
+        Console.WriteLine($"ERROR: {error}");
+    foreach (string warning in result.Warnings)
+        Console.WriteLine($"Warning: {warning}");
+
+    return result.IsValid ? 0 : 1;
 }
 
 static async Task WriteAngleAnalysisErrorAsync(AfterGoalAngleAnalysisOptions options, Exception exception, CancellationToken cancellationToken)
@@ -558,8 +600,32 @@ static async Task<int> RunImportFlashscore(string[] args)
 
 static string DefaultAfterGoalEventsOutputPath(LeagueProfile? profile, string league, int tournamentId)
 {
+    if (profile is not null)
+        return LeagueProfileStore.ResolveProfileArtifactPath(profile, profile.Artifacts.AfterGoalEventsFile);
+
     string folderName = FileNameSanitizer.Slugify(Coalesce(profile?.Key, league, tournamentId > 0 ? $"tournament-{tournamentId}" : "unknown-league"));
-    return Path.Combine(@"C:\football_data\models", folderName, "after-goal-events.csv");
+    return Path.Combine(@"C:\Temp\football_data\models", folderName, "after-goal-events.csv");
+}
+
+static void ValidateProfileLeagueKeys(LeagueProfile? profile, IEnumerable<string> inputLeagueKeys)
+{
+    if (profile is null || !profile.Safety.FailOnLeagueKeyMismatch)
+        return;
+
+    List<string> keys = inputLeagueKeys
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x)
+        .ToList();
+    if (keys.Count == 0)
+        return;
+
+    string expected = profile.Key;
+    List<string> mismatches = keys
+        .Where(x => !x.Equals(expected, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+    if (mismatches.Count > 0)
+        throw new ArgumentException($"Profile leagueKey {expected} does not match input LeagueKey {string.Join(", ", mismatches)}.");
 }
 
 static string Coalesce(params string?[] values)
