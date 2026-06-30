@@ -15,6 +15,7 @@ public static class HelpPrinter
         Console.WriteLine("  import-flashscore-fixtures          Import saved Flashscore fixture calendars only.");
         Console.WriteLine("  build-after-goal-events             Build a strict after-goal event CSV from imported historical matches.");
         Console.WriteLine("  analyze-after-goal-angles           Analyze after-goal CSV into league/team angle reports.");
+        Console.WriteLine("  build-after-goal-team-profiles      Build stable team profile reports from after-goal angle reports.");
         Console.WriteLine("  validate-db                         Validate imported PostgreSQL data quality.");
         Console.WriteLine("  db-validate                         Alias for validate-db.");
         Console.WriteLine();
@@ -29,6 +30,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- import-flashscore-fixtures --profile superettan");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-after-goal-events --profile superettan --from-season 2023 --to-season 2025");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-after-goal-angles --input C:\\football_data\\models\\superettan\\after-goal-events.csv --output-dir C:\\football_data\\models\\superettan\\after-goal-angles");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-after-goal-team-profiles --angles-dir C:\\football_data\\models\\superettan\\after-goal-angles --output-dir C:\\football_data\\models\\superettan\\after-goal-profiles");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db --league \"Superettan\" --season-id 2026");
         Console.WriteLine();
         Console.WriteLine("Common arguments:");
@@ -41,6 +43,7 @@ public static class HelpPrinter
         Console.WriteLine("  --input / --output-dir            Input CSV and report directory for analyze-after-goal-angles.");
         Console.WriteLine("  --train-from-season / --train-to-season / --test-season");
         Console.WriteLine("                                    Optional train/test split for analyze-after-goal-angles.");
+        Console.WriteLine("  --angles-dir                      Input report directory for build-after-goal-team-profiles.");
         Console.WriteLine("  --tournament-id                   Tournament id override; deterministic profile fallback is used for fixtures.");
         Console.WriteLine("  --round / --rounds                Single round or comma-separated rounds.");
         Console.WriteLine("  --from-round / --to-round         Inclusive round range.");

@@ -30,6 +30,7 @@ try
         "import-flashscore-fixtures" => await RunImportFlashscoreFixtures(commandArgs),
         "build-after-goal-events" => await RunBuildAfterGoalEvents(commandArgs),
         "analyze-after-goal-angles" => await RunAnalyzeAfterGoalAngles(commandArgs),
+        "build-after-goal-team-profiles" => await RunBuildAfterGoalTeamProfiles(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
@@ -416,6 +417,68 @@ static void ValidateAllowedOptions(ParsedArgs parsed, string command, IReadOnlyC
 
 static string PrintableOption(string value)
     => string.IsNullOrWhiteSpace(value) ? "<none>" : value;
+
+static async Task<int> RunBuildAfterGoalTeamProfiles(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    ValidateAllowedOptions(parsed, "build-after-goal-team-profiles",
+    [
+        "angles-dir",
+        "output-dir",
+        "min-train-sample",
+        "min-test-sample",
+        "min-train-abs-residual",
+        "min-test-abs-residual",
+        "strong-test-abs-residual",
+        "require-test-confirmation"
+    ]);
+
+    string anglesDirectory = parsed.RequiredString("angles-dir");
+    string outputDirectory = parsed.String("output-dir", Path.Combine(Path.GetDirectoryName(Path.GetFullPath(anglesDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))) ?? Directory.GetCurrentDirectory(), "after-goal-profiles"));
+
+    var options = new AfterGoalTeamProfileOptions
+    {
+        AnglesDirectory = anglesDirectory,
+        OutputDirectory = outputDirectory,
+        MinTrainSample = parsed.Int("min-train-sample", 50),
+        MinTestSample = parsed.Int("min-test-sample", 15),
+        MinTrainAbsResidual = parsed.Double("min-train-abs-residual", 0.10),
+        MinTestAbsResidual = parsed.Double("min-test-abs-residual", 0.05),
+        StrongTestAbsResidual = parsed.Double("strong-test-abs-residual", 0.15),
+        RequireTestConfirmation = parsed.Bool("require-test-confirmation", true)
+    };
+
+    if (options.MinTrainSample <= 0)
+        throw new ArgumentException("Argument --min-train-sample must be positive.");
+    if (options.MinTestSample <= 0)
+        throw new ArgumentException("Argument --min-test-sample must be positive.");
+    if (options.MinTrainAbsResidual < 0 || options.MinTestAbsResidual < 0 || options.StrongTestAbsResidual < 0)
+        throw new ArgumentException("Residual thresholds must be zero or greater.");
+
+    var builder = new AfterGoalTeamProfileBuilder();
+    AfterGoalTeamProfileResult result = await builder.BuildAsync(options, CancellationToken.None);
+    await AfterGoalTeamProfileReportWriter.WriteAsync(options.OutputDirectory, options, result, CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("After-goal team profile build done.");
+    Console.WriteLine($"Angles directory: {Path.GetFullPath(options.AnglesDirectory)}");
+    Console.WriteLine($"Output directory: {Path.GetFullPath(options.OutputDirectory)}");
+    Console.WriteLine($"Source train seasons: {result.SourceTrainSeasons}");
+    Console.WriteLine($"Source test season: {result.SourceTestSeason}");
+    Console.WriteLine($"Teams analyzed: {result.TeamsAnalyzed}");
+    Console.WriteLine($"Usable scoring signals: {result.UsableScoringSignalsCount}");
+    Console.WriteLine($"Usable conceding signals: {result.UsableConcedingSignalsCount}");
+    Console.WriteLine($"Unstable signals: {result.UnstableSignalsCount}");
+    Console.WriteLine($"No-signal teams: {result.NoSignalCount}");
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings)
+            Console.WriteLine($"  - {warning}");
+    }
+
+    return 0;
+}
 
 static async Task WriteAngleAnalysisErrorAsync(AfterGoalAngleAnalysisOptions options, Exception exception, CancellationToken cancellationToken)
 {
