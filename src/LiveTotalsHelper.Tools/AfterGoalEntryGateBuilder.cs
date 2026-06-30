@@ -37,6 +37,8 @@ public sealed class AfterGoalEntryGateResult
     public List<string> Warnings { get; } = [];
     public int ActiveEntryRules => EntryRules.Count(x => x.EntryRuleStatus == "Active");
     public int WatchlistEntryRules => EntryRules.Count(x => x.EntryRuleStatus == "WatchlistOnly");
+    public int ConditionalWeakRules => EntryRules.Count(x => x.EntryRuleStatus == "ConditionalWeak");
+    public int WatchlistWeakRules => EntryRules.Count(x => x.EntryRuleStatus == "WatchlistWeak");
     public int TooThinRules => EntryRules.Count(x => x.EntryRuleStatus == "TooThin");
     public int NoUsableGateRules => EntryRules.Count(x => x.EntryRuleStatus == "NoUsableGates");
 }
@@ -92,6 +94,11 @@ public sealed class AfterGoalEntryRuleRow
     public string EntryRuleConfidence { get; set; } = string.Empty;
     public bool MarketGateRequired { get; set; } = true;
     public string ConflictPolicy { get; set; } = "NoBet";
+    public string CriticalDimensions { get; set; } = string.Empty;
+    public string MissingUsableDimensions { get; set; } = string.Empty;
+    public string WeakOnlyDimensions { get; set; } = string.Empty;
+    public string ActiveAllowedDimensions { get; set; } = string.Empty;
+    public string AvoidHeavyDimensions { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
 }
 
@@ -140,6 +147,14 @@ public sealed class AfterGoalEntryGateBuilder
         ("TotalGoalsAfterBand", ["1", "2", "3", "4", "5+"]),
         ("GameStateAfter", ["EqualAfter", "HomeLeadAfter", "AwayLeadAfter"]),
         ("Half", ["1H", "2H"])
+    ];
+
+    private static readonly string[] CriticalDimensions =
+    [
+        "MinuteBand",
+        "ScoreGapAfterBand",
+        "TotalGoalsAfterBand",
+        "GameStateAfter"
     ];
 
     public async Task<AfterGoalEntryGateResult> BuildAsync(AfterGoalEntryGateOptions options, CancellationToken cancellationToken)
@@ -223,6 +238,7 @@ public sealed class AfterGoalEntryGateBuilder
             result.EntryRules.Add(BuildEntryRule(signal, result.ContextGates.Where(x => IsSignalGate(x, signal)).ToList(), options));
         }
 
+        ValidateEntryRules(result.EntryRules);
         SortResult(result);
         return result;
     }
@@ -339,6 +355,10 @@ public sealed class AfterGoalEntryGateBuilder
 
     private static AfterGoalEntryRuleRow BuildEntryRule(AfterGoalEntrySignal signal, IReadOnlyList<AfterGoalContextGateRow> gates, AfterGoalEntryGateOptions options)
     {
+        List<EntryDimensionDiagnostic> diagnostics = CriticalDimensions
+            .Select(dimension => EntryDimensionDiagnostic.From(dimension, gates.Where(x => x.StateDimension == dimension)))
+            .ToList();
+
         var row = new AfterGoalEntryRuleRow
         {
             LeagueKey = signal.LeagueKey,
@@ -360,41 +380,88 @@ public sealed class AfterGoalEntryGateBuilder
             WeakAllowedGameStatesAfter = Buckets(gates, "GameStateAfter", "WeakAllowed"),
             AvoidGameStatesAfter = Buckets(gates, "GameStateAfter", "Avoid"),
             MarketGateRequired = options.MarketGateRequired,
-            ConflictPolicy = NormalizeConflictPolicy(options.ConflictPolicy)
+            ConflictPolicy = NormalizeConflictPolicy(options.ConflictPolicy),
+            CriticalDimensions = string.Join(";", CriticalDimensions),
+            MissingUsableDimensions = string.Join(";", diagnostics.Where(x => x.HasNoUsable).Select(x => x.Dimension)),
+            WeakOnlyDimensions = string.Join(";", diagnostics.Where(x => x.HasOnlyWeak).Select(x => x.Dimension)),
+            ActiveAllowedDimensions = string.Join(";", diagnostics.Where(x => x.HasAllowed).Select(x => x.Dimension)),
+            AvoidHeavyDimensions = string.Join(";", diagnostics.Where(x => x.IsAvoidHeavy).Select(x => x.Dimension))
         };
 
-        bool anyAllowed = gates.Any(x => x.GateStatus == "Allowed");
-        bool anyWeak = gates.Any(x => x.GateStatus == "WeakAllowed");
-        bool allThin = gates.All(x => x.GateStatus is "LowSample" or "NoData");
-        int allowedCount = gates.Count(x => x.GateStatus == "Allowed");
-        int avoidCount = gates.Count(x => x.GateStatus == "Avoid");
+        bool allCriticalAllowed = diagnostics.All(x => x.HasAllowed);
+        bool allCriticalUsable = diagnostics.All(x => x.HasUsable);
+        bool anyWeakOnly = diagnostics.Any(x => x.HasOnlyWeak);
+        bool mostlyThin = diagnostics.Count(x => x.IsMostlyThin) >= 3;
+        bool anyAvoidEvidence = diagnostics.Any(x => x.AvoidCount > 0 && !x.IsMostlyThin);
 
-        row.EntryRuleStatus = signal.SignalClass == "Strict" && anyAllowed
-            ? "Active"
-            : signal.SignalClass == "Watchlist" && (anyAllowed || anyWeak)
+        row.EntryRuleStatus = signal.SignalClass == "Strict"
+            ? allCriticalAllowed
+                ? "Active"
+                : allCriticalUsable
+                    ? "ConditionalWeak"
+                    : mostlyThin && !anyAvoidEvidence
+                        ? "TooThin"
+                        : "NoUsableGates"
+            : allCriticalAllowed
                 ? "WatchlistOnly"
-                : allThin
-                    ? "TooThin"
-                    : "NoUsableGates";
+                : allCriticalUsable
+                    ? "WatchlistWeak"
+                    : mostlyThin && !anyAvoidEvidence
+                        ? "TooThin"
+                        : "NoUsableGates";
 
+        int avoidHeavyCount = diagnostics.Count(x => x.IsAvoidHeavy);
         row.EntryRuleConfidence = row.EntryRuleStatus switch
         {
-            "Active" when allowedCount >= 4 && avoidCount <= 3 => "HIGH",
+            "Active" when avoidHeavyCount == 0 && signal.SignalClass == "Strict" => "HIGH",
             "Active" => "MEDIUM",
+            "ConditionalWeak" when signal.SignalClass == "Strict" && avoidHeavyCount == 0 => "MEDIUM",
+            "ConditionalWeak" => "LOW",
             "WatchlistOnly" => "LOW",
+            "WatchlistWeak" => "LOW",
             _ => "NONE"
         };
 
+        string missing = row.MissingUsableDimensions;
+        string weakOnly = row.WeakOnlyDimensions;
         row.Reason = row.EntryRuleStatus switch
         {
-            "Active" => $"Strict signal has {allowedCount} allowed state gates; market gate still required.",
-            "WatchlistOnly" => $"Watchlist signal has {allowedCount} allowed and {gates.Count(x => x.GateStatus == "WeakAllowed")} weak state gates; market gate still required.",
-            "TooThin" => "All state dimensions are low-sample or no-data.",
-            _ => "Signal exists but no usable state gates passed."
+            "Active" => "Active: all critical dimensions have allowed gates; market gate still required.",
+            "ConditionalWeak" => $"ConditionalWeak: all critical dimensions have usable gates, but {weakOnly} {(weakOnly.Contains(';') ? "are" : "is")} weak-only.",
+            "WatchlistOnly" => "WatchlistOnly: all critical dimensions have allowed gates; market gate still required.",
+            "WatchlistWeak" => $"WatchlistWeak: all critical dimensions have usable gates, but {weakOnly} {(weakOnly.Contains(';') ? "are" : "is")} weak-only.",
+            "TooThin" => "TooThin: missing usable gates because critical dimensions are mostly low-sample/no-data.",
+            _ when !string.IsNullOrWhiteSpace(missing) => $"NoUsableGates: missing usable gates for {missing}.",
+            _ => "NoUsableGates: signal exists but critical state coverage is unusable."
         };
 
         return row;
     }
+
+    private static void ValidateEntryRules(IReadOnlyList<AfterGoalEntryRuleRow> rows)
+    {
+        foreach (AfterGoalEntryRuleRow row in rows)
+        {
+            if (row.EntryRuleStatus == "Active" && CriticalDimensions.Any(dimension => !HasAllowedForDimension(row, dimension)))
+                throw new InvalidOperationException($"Invalid Active entry rule for {row.Team} {row.TriggerType}: at least one critical dimension has no allowed bucket.");
+            if (row.EntryRuleStatus == "WatchlistOnly" && CriticalDimensions.Any(dimension => !HasAllowedForDimension(row, dimension)))
+                throw new InvalidOperationException($"Invalid WatchlistOnly entry rule for {row.Team} {row.TriggerType}: at least one critical dimension has no allowed bucket.");
+            if (row.EntryRuleStatus == "ConditionalWeak" && !string.IsNullOrWhiteSpace(row.MissingUsableDimensions))
+                throw new InvalidOperationException($"Invalid ConditionalWeak entry rule for {row.Team} {row.TriggerType}: missing usable dimensions {row.MissingUsableDimensions}.");
+            if (row.EntryRuleStatus == "NoUsableGates" && string.IsNullOrWhiteSpace(row.MissingUsableDimensions))
+                throw new InvalidOperationException($"Invalid NoUsableGates entry rule for {row.Team} {row.TriggerType}: all critical dimensions are usable.");
+        }
+    }
+
+    private static bool HasAllowedForDimension(AfterGoalEntryRuleRow row, string dimension)
+        => dimension switch
+        {
+            "MinuteBand" => !string.IsNullOrWhiteSpace(row.AllowedMinuteBands),
+            "ScoreGapAfterBand" => !string.IsNullOrWhiteSpace(row.AllowedScoreGapAfterBands),
+            "TotalGoalsAfterBand" => !string.IsNullOrWhiteSpace(row.AllowedTotalGoalsAfterBands),
+            "GameStateAfter" => !string.IsNullOrWhiteSpace(row.AllowedGameStatesAfter),
+            _ => false
+        };
 
     private static IEnumerable<AfterGoalEventCsvRow> MatchingEvents(IEnumerable<AfterGoalEventCsvRow> rows, AfterGoalEntrySignal signal)
     {
@@ -747,9 +814,11 @@ public sealed class AfterGoalEntryGateBuilder
         => value switch
         {
             "Active" => 0,
-            "WatchlistOnly" => 1,
-            "TooThin" => 2,
-            "NoUsableGates" => 3,
+            "ConditionalWeak" => 1,
+            "WatchlistOnly" => 2,
+            "WatchlistWeak" => 3,
+            "TooThin" => 4,
+            "NoUsableGates" => 5,
             _ => 9
         };
 
@@ -796,6 +865,39 @@ public sealed class AfterGoalEntryGateBuilder
 
     private sealed record AfterGoalEntrySplit(List<string> TrainSeasons, string TestSeason);
     private sealed record ScoredEntryEvent(AfterGoalEventCsvRow Row, BaselineExpectation Baseline);
+
+    private sealed class EntryDimensionDiagnostic
+    {
+        public string Dimension { get; init; } = string.Empty;
+        public int AllowedCount { get; init; }
+        public int WeakAllowedCount { get; init; }
+        public int AvoidCount { get; init; }
+        public int LowSampleCount { get; init; }
+        public int NoDataCount { get; init; }
+        public int InconclusiveCount { get; init; }
+        public bool HasAllowed => AllowedCount > 0;
+        public bool HasWeakAllowed => WeakAllowedCount > 0;
+        public bool HasUsable => HasAllowed || HasWeakAllowed;
+        public bool HasOnlyWeak => !HasAllowed && HasWeakAllowed;
+        public bool HasNoUsable => !HasUsable;
+        public bool IsAvoidHeavy => AvoidCount > AllowedCount + WeakAllowedCount;
+        public bool IsMostlyThin => LowSampleCount + NoDataCount > AvoidCount + AllowedCount + WeakAllowedCount + InconclusiveCount;
+
+        public static EntryDimensionDiagnostic From(string dimension, IEnumerable<AfterGoalContextGateRow> gates)
+        {
+            List<AfterGoalContextGateRow> rows = gates.ToList();
+            return new EntryDimensionDiagnostic
+            {
+                Dimension = dimension,
+                AllowedCount = rows.Count(x => x.GateStatus == "Allowed"),
+                WeakAllowedCount = rows.Count(x => x.GateStatus == "WeakAllowed"),
+                AvoidCount = rows.Count(x => x.GateStatus == "Avoid"),
+                LowSampleCount = rows.Count(x => x.GateStatus == "LowSample"),
+                NoDataCount = rows.Count(x => x.GateStatus == "NoData"),
+                InconclusiveCount = rows.Count(x => x.GateStatus == "Inconclusive")
+            };
+        }
+    }
 }
 
 public static class AfterGoalEntryGateReportWriter
@@ -830,6 +932,8 @@ public static class AfterGoalEntryGateReportWriter
             TotalContextGateRows = result.ContextGates.Count,
             result.ActiveEntryRules,
             result.WatchlistEntryRules,
+            result.ConditionalWeakRules,
+            result.WatchlistWeakRules,
             result.TooThinRules,
             result.NoUsableGateRules,
             Warnings = result.Warnings,
@@ -901,6 +1005,11 @@ public static class AfterGoalEntryGateReportWriter
             "EntryRuleConfidence",
             "MarketGateRequired",
             "ConflictPolicy",
+            "CriticalDimensions",
+            "MissingUsableDimensions",
+            "WeakOnlyDimensions",
+            "ActiveAllowedDimensions",
+            "AvoidHeavyDimensions",
             "Reason"
         ];
 
@@ -961,6 +1070,11 @@ public static class AfterGoalEntryGateReportWriter
         yield return row.EntryRuleConfidence;
         yield return row.MarketGateRequired.ToString(CultureInfo.InvariantCulture).ToLowerInvariant();
         yield return row.ConflictPolicy;
+        yield return row.CriticalDimensions;
+        yield return row.MissingUsableDimensions;
+        yield return row.WeakOnlyDimensions;
+        yield return row.ActiveAllowedDimensions;
+        yield return row.AvoidHeavyDimensions;
         yield return row.Reason;
     }
 

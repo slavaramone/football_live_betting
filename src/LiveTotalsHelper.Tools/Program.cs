@@ -591,7 +591,9 @@ static async Task<int> RunBuildAfterGoalEntryGates(string[] args)
     Console.WriteLine($"Watchlist signals analyzed: {result.WatchlistSignalsAnalyzed}");
     Console.WriteLine($"Context gate rows: {result.ContextGates.Count}");
     Console.WriteLine($"Active rules: {result.ActiveEntryRules}");
+    Console.WriteLine($"Conditional weak rules: {result.ConditionalWeakRules}");
     Console.WriteLine($"Watchlist rules: {result.WatchlistEntryRules}");
+    Console.WriteLine($"Watchlist weak rules: {result.WatchlistWeakRules}");
     Console.WriteLine($"Too-thin rules: {result.TooThinRules}");
     Console.WriteLine($"No-usable-gate rules: {result.NoUsableGateRules}");
     Console.WriteLine("Generated files:");
