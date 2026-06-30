@@ -33,6 +33,7 @@ try
         "build-after-goal-team-profiles" => await RunBuildAfterGoalTeamProfiles(commandArgs),
         "build-after-goal-entry-gates" => await RunBuildAfterGoalEntryGates(commandArgs),
         "evaluate-after-goal-entry" => await RunEvaluateAfterGoalEntry(commandArgs),
+        "backtest-model-v4-after-goal" => await RunBacktestModelV4AfterGoal(commandArgs),
         "validate-profiles" => RunValidateProfiles(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
@@ -428,6 +429,12 @@ static void ValidateAllowedOptions(ParsedArgs parsed, string command, IReadOnlyC
 static string PrintableOption(string value)
     => string.IsNullOrWhiteSpace(value) ? "<none>" : value;
 
+static string PrintableNullable(double? value)
+    => value.HasValue ? value.Value.ToString("0.####", CultureInfo.InvariantCulture) : "<none>";
+
+static string PrintableNullablePct(double? value)
+    => value.HasValue ? value.Value.ToString("P2", CultureInfo.InvariantCulture) : "<none>";
+
 static async Task<int> RunBuildAfterGoalTeamProfiles(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
@@ -684,6 +691,99 @@ static async Task<int> RunEvaluateAfterGoalEntry(string[] args)
     Console.WriteLine(format == "json" ? json : AfterGoalEntryEvaluator.ToText(result));
     if (!string.IsNullOrWhiteSpace(outputPath))
         Console.WriteLine($"Evaluation JSON written: {Path.GetFullPath(outputPath)}");
+
+    return 0;
+}
+
+static async Task<int> RunBacktestModelV4AfterGoal(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    ValidateAllowedOptions(parsed, "backtest-model-v4-after-goal",
+    [
+        "profile",
+        "profiles-file",
+        "events",
+        "work-dir",
+        "output-dir",
+        "train-from-season",
+        "train-to-season",
+        "validation-season",
+        "test-season",
+        "include-watchlist",
+        "candidate-classes",
+        "min-sample",
+        "strong-sample",
+        "shrink-k",
+        "min-train-sample",
+        "min-test-sample",
+        "min-train-state-sample",
+        "min-test-state-sample",
+        "format",
+        "conflict-policy"
+    ]);
+
+    string modelRoot = profile is null
+        ? Path.Combine(@"C:\Temp\football_data\models", "model-v4")
+        : LeagueProfileStore.ResolveProfileArtifactPath(profile, string.Empty);
+    int validationDefault = profile?.Seasons.DefaultTrainTo > 0 ? profile.Seasons.DefaultTrainTo : 0;
+    int trainToDefault = validationDefault > 0 ? validationDefault - 1 : 0;
+
+    var options = new ModelV4AfterGoalBacktestOptions
+    {
+        EventsPath = parsed.String("events", profile is null ? string.Empty : LeagueProfileStore.ResolveProfileArtifactPath(profile, profile.Artifacts.AfterGoalEventsFile)),
+        WorkDirectory = parsed.String("work-dir", Path.Combine(modelRoot, "model-v4-backtest-work")),
+        OutputDirectory = parsed.String("output-dir", Path.Combine(modelRoot, "model-v4-backtest")),
+        TrainFromSeason = parsed.Int("train-from-season", profile?.Seasons.DefaultTrainFrom ?? 0),
+        TrainToSeason = parsed.Int("train-to-season", trainToDefault),
+        ValidationSeason = parsed.Int("validation-season", validationDefault),
+        TestSeason = parsed.Int("test-season", profile?.Seasons.DefaultTestSeason ?? 0),
+        ProfileLeagueKey = profile?.Key ?? string.Empty,
+        IncludeWatchlist = parsed.Bool("include-watchlist", profile?.AfterGoalEntryGates.IncludeWatchlist ?? true),
+        CandidateClasses = parsed.String("candidate-classes", "Candidate;WeakCandidate;Watchlist"),
+        MinSample = parsed.Int("min-sample", profile?.AfterGoalAngles.MinSample ?? 30),
+        StrongSample = parsed.Int("strong-sample", profile?.AfterGoalAngles.StrongSample ?? 80),
+        ShrinkK = parsed.Double("shrink-k", profile?.AfterGoalAngles.ShrinkK ?? 50),
+        MinTrainSample = parsed.Int("min-train-sample", profile?.AfterGoalTeamProfiles.MinTrainSample ?? 50),
+        MinTestSample = parsed.Int("min-test-sample", profile?.AfterGoalTeamProfiles.MinTestSample ?? 15),
+        MinTrainStateSample = parsed.Int("min-train-state-sample", profile?.AfterGoalEntryGates.MinTrainStateSample ?? 15),
+        MinTestStateSample = parsed.Int("min-test-state-sample", profile?.AfterGoalEntryGates.MinTestStateSample ?? 5),
+        ConflictPolicy = parsed.String("conflict-policy", profile?.AfterGoalEntryGates.ConflictPolicy ?? "NoBet"),
+        MarketGateRequired = profile?.AfterGoalEntryGates.MarketGateRequired ?? true,
+        Format = parsed.String("format", "csv")
+    };
+
+    if (string.IsNullOrWhiteSpace(options.EventsPath))
+        throw new ArgumentException("Provide --events or --profile.");
+
+    ModelV4AfterGoalBacktestResult result = await new ModelV4AfterGoalBacktestRunner().RunAsync(options, CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("Model V4 after-goal backtest done.");
+    Console.WriteLine($"League: {result.LeagueKey}");
+    Console.WriteLine($"Training seasons: {string.Join(", ", result.TrainingSeasons)}");
+    Console.WriteLine($"Validation season: {result.ValidationSeason}");
+    Console.WriteLine($"Test season: {result.TestSeason}");
+    Console.WriteLine($"Leakage check passed: {result.LeakageCheckPassed.ToString(CultureInfo.InvariantCulture).ToLowerInvariant()}");
+    Console.WriteLine($"Test events evaluated: {result.TestRows}");
+    Console.WriteLine($"Candidate: {result.StrictCandidateCount}");
+    Console.WriteLine($"WeakCandidate: {result.WeakCandidateCount}");
+    Console.WriteLine($"Watchlist: {result.WatchlistCount}");
+    Console.WriteLine($"Avoid: {result.AvoidCount}");
+    Console.WriteLine($"NoSignal: {result.NoSignalCount}");
+    Console.WriteLine($"Candidate hit rate: {PrintableNullablePct(result.CandidateDirectionHitRate)}");
+    Console.WriteLine($"Candidate avg directional residual: {PrintableNullable(result.CandidateAvgDirectionalResidual)}");
+    Console.WriteLine("Generated files:");
+    Console.WriteLine($"  {result.TestEventDecisionsFile}");
+    Console.WriteLine($"  {result.PerformanceSummaryFile}");
+    Console.WriteLine($"  {result.RulePerformanceFile}");
+    Console.WriteLine($"  {Path.Combine(result.OutputDir, "model-v4-backtest-summary.json")}");
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine("Warnings:");
+        foreach (string warning in result.Warnings.Distinct(StringComparer.OrdinalIgnoreCase))
+            Console.WriteLine($"  - {warning}");
+    }
 
     return 0;
 }
