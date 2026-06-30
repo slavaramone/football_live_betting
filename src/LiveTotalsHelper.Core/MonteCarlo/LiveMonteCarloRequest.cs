@@ -30,6 +30,8 @@ public sealed class LiveMonteCarloRequest
     public double? MarketBaselineMaxMultiplier { get; init; }
     public double? MarketBaselineOddsSensitivityGoals { get; init; }
 
+    public bool UseLiveStateCorrection { get; init; }
+
     public int SimulationCount { get; init; }
     public double StepMinutes { get; init; }
     public int? RandomSeed { get; init; }

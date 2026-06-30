@@ -26,6 +26,7 @@ public static class HelpPrinter
         Console.WriteLine("  simulate-live-total-v3              Run v3 competing-hazard single-fixture MC simulation with after-goal, goal-draw and pregame market-baseline factors.");
         Console.WriteLine("  evaluate-monte-carlo-model         Build historical live states in memory and write MC validation summary JSON; use --model-version v3 for competing hazards.");
         Console.WriteLine("  tune-market-baseline              Grid-search v3 pregame market-baseline low/high shrink settings.");
+        Console.WriteLine("  fit-live-state-correction         Fit profile-specific v3 live-state residual correction from an evaluation summary.");
         Console.WriteLine();
         Console.WriteLine("Profile file:");
         Console.WriteLine("  Default: config/league-profiles.json");
@@ -48,6 +49,8 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-monte-carlo-model --profile npl-victoria --seasons 2026 --sims 5000");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-monte-carlo-model --profile npl-victoria --model-version v3 --seasons 2026 --sims 5000");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- tune-market-baseline --profile npl-victoria --seasons 2026 --sims 1500 --low-shrink-grid 0.45,0.55,0.65,0.8 --high-shrink-grid 0.65,0.8,1.0");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- fit-live-state-correction --profile npl-queensland");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-monte-carlo-model --profile npl-queensland --model-version v3 --seasons 2026 --sims 5000 --use-live-state-correction true");
         Console.WriteLine();
         Console.WriteLine("Common arguments:");
         Console.WriteLine("  --profile                         Profile key/name from config/league-profiles.json.");
@@ -95,6 +98,9 @@ public static class HelpPrinter
         Console.WriteLine("  --low-shrink-grid / --high-shrink-grid  Comma-separated grids for tune-market-baseline.");
         Console.WriteLine("  --market-baseline-min-multiplier / --market-baseline-max-multiplier  Override profile marketBaseline clamp.");
         Console.WriteLine("  --market-baseline-odds-sensitivity  Override profile marketBaseline.oddsSensitivityGoals.");
+        Console.WriteLine("  --use-live-state-correction / --disable-live-state-correction  Enable/disable profile-specific v3 live-state correction.");
+        Console.WriteLine("  --live-state-correction            Optional v3 live-state correction JSON path override.");
+        Console.WriteLine("  --min-rows / --prior-rows / --shrink  Fit-live-state-correction regularization controls.");
         Console.WriteLine("  --lines                           Comma-separated lines for evaluate-monte-carlo-model. Default: profile targetLines.");
         Console.WriteLine("  --minutes                         Comma-separated historical state minutes for evaluation. Default: 45,50,55,60,65,70,75,80,85.");
         Console.WriteLine("  --assumed-odds                    Assumed flat odds for evaluation betting metrics. Default: 1.85.");

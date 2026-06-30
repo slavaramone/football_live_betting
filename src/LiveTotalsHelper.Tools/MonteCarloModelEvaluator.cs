@@ -19,6 +19,8 @@ public sealed class MonteCarloModelEvaluationOptions
     public string CurvesPath { get; init; } = string.Empty;
     public string SideModelPath { get; init; } = string.Empty;
     public string CompetingHazardCurvesPath { get; init; } = string.Empty;
+    public string LiveStateCorrectionPath { get; init; } = string.Empty;
+    public bool UseLiveStateCorrection { get; init; }
     public string OutputPath { get; init; } = "outputs/validation/monte-carlo-evaluation-summary.json";
     public int SimulationCount { get; init; } = 5_000;
     public double StepMinutes { get; init; } = 0.25;
@@ -59,6 +61,8 @@ public sealed class MonteCarloModelEvaluationSummary
     public string CompetingHazardCurvesPath { get; init; } = string.Empty;
     public IReadOnlyList<CompetingHazardAfterGoalFactor> AfterGoalFactors { get; init; } = [];
     public IReadOnlyList<CompetingHazardGoalDrawSuppressionFactor> GoalDrawSuppressionFactors { get; init; } = [];
+    public IReadOnlyList<LiveStateCorrectionFactor> LiveStateCorrectionFactors { get; init; } = [];
+    public string LiveStateCorrectionPath { get; init; } = string.Empty;
     public MonteCarloMarketBaselineMetrics MarketBaseline { get; init; } = new();
     public MonteCarloMarketBaselineOverrideSettings MarketBaselineOverrides { get; init; } = new();
     public int SimulationCount { get; init; }
@@ -220,6 +224,9 @@ public sealed class MonteCarloModelEvaluator
         StateWeibullCurveSet? curves = useV3 ? null : await ReadJsonAsync<StateWeibullCurveSet>(options.CurvesPath, cancellationToken);
         NextGoalSideModelSet? sideModel = useV3 ? null : await ReadJsonAsync<NextGoalSideModelSet>(options.SideModelPath, cancellationToken);
         CompetingHazardCurveSet? competingCurves = useV3 ? await ReadJsonAsync<CompetingHazardCurveSet>(options.CompetingHazardCurvesPath, cancellationToken) : null;
+        LiveStateCorrectionSet liveStateCorrection = useV3
+            ? await ReadLiveStateCorrectionAsync(options.UseLiveStateCorrection, options.LiveStateCorrectionPath, competingCurves?.League ?? options.League, cancellationToken)
+            : LiveStateCorrectionSet.Disabled;
 
         HistoricalLiveDataset dataset = await BuildHistoricalDatasetAsync(options, cancellationToken);
         EvaluationAccumulator overall = new();
@@ -282,7 +289,8 @@ public sealed class MonteCarloModelEvaluator
                 MarketBaselineHighTotalShrink = options.MarketBaselineHighTotalShrink,
                 MarketBaselineMinMultiplier = options.MarketBaselineMinMultiplier,
                 MarketBaselineMaxMultiplier = options.MarketBaselineMaxMultiplier,
-                MarketBaselineOddsSensitivityGoals = options.MarketBaselineOddsSensitivityGoals
+                MarketBaselineOddsSensitivityGoals = options.MarketBaselineOddsSensitivityGoals,
+                UseLiveStateCorrection = options.UseLiveStateCorrection
             };
 
             LiveMonteCarloSimulationResult simulation;
@@ -293,6 +301,7 @@ public sealed class MonteCarloModelEvaluator
                     {
                         Request = request,
                         Curves = competingCurves!,
+                        LiveStateCorrection = liveStateCorrection,
                         EffectiveEndMinute = options.EffectiveEndMinute,
                         TracePathCount = 0
                     })
@@ -362,7 +371,7 @@ public sealed class MonteCarloModelEvaluator
         {
             GeneratedUtc = DateTimeOffset.UtcNow,
             ModelVersion = useV3
-                ? ResolveCompetingModelVersion(competingCurves!)
+                ? ResolveCompetingModelVersion(competingCurves!, liveStateCorrection)
                 : "v2-total-hazard",
             League = options.League,
             Seasons = options.Seasons.ToList(),
@@ -371,8 +380,10 @@ public sealed class MonteCarloModelEvaluator
             CurvesPath = string.IsNullOrWhiteSpace(options.CurvesPath) ? string.Empty : Path.GetFullPath(options.CurvesPath),
             SideModelPath = string.IsNullOrWhiteSpace(options.SideModelPath) ? string.Empty : Path.GetFullPath(options.SideModelPath),
             CompetingHazardCurvesPath = string.IsNullOrWhiteSpace(options.CompetingHazardCurvesPath) ? string.Empty : Path.GetFullPath(options.CompetingHazardCurvesPath),
+            LiveStateCorrectionPath = string.IsNullOrWhiteSpace(options.LiveStateCorrectionPath) ? string.Empty : Path.GetFullPath(options.LiveStateCorrectionPath),
             AfterGoalFactors = useV3 ? competingCurves!.AfterGoalFactors : [],
             GoalDrawSuppressionFactors = useV3 ? competingCurves!.GoalDrawSuppressionFactors : [],
+            LiveStateCorrectionFactors = useV3 && liveStateCorrection.Settings.Enabled ? liveStateCorrection.Factors : [],
             MarketBaseline = useV3 ? marketBaselineAccumulator.ToMetrics() : new MonteCarloMarketBaselineMetrics(),
             MarketBaselineOverrides = new MonteCarloMarketBaselineOverrideSettings
             {
@@ -879,6 +890,22 @@ public sealed class MonteCarloModelEvaluator
         return true;
     }
 
+    private static async Task<LiveStateCorrectionSet> ReadLiveStateCorrectionAsync(
+        bool enabled,
+        string path,
+        string league,
+        CancellationToken cancellationToken)
+    {
+        if (!enabled)
+            return LiveStateCorrectionSet.Disabled;
+
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            return LiveStateCorrectionSet.EnabledWithoutFactors(league);
+
+        LiveStateCorrectionSet set = await ReadJsonAsync<LiveStateCorrectionSet>(path, cancellationToken);
+        return set.Settings.Enabled ? set : LiveStateCorrectionSet.Disabled;
+    }
+
     private static async Task<T> ReadJsonAsync<T>(string path, CancellationToken cancellationToken)
     {
         string json = await File.ReadAllTextAsync(path, cancellationToken);
@@ -900,12 +927,15 @@ public sealed class MonteCarloModelEvaluator
         return fullPath;
     }
 
-    private static string ResolveCompetingModelVersion(CompetingHazardCurveSet curves)
+    private static string ResolveCompetingModelVersion(CompetingHazardCurveSet curves, LiveStateCorrectionSet liveStateCorrection)
     {
         bool afterGoal = curves.AfterGoalSettings.Enabled && curves.AfterGoalFactors.Count > 0;
         bool goalDraw = curves.GoalDrawSuppressionSettings.Enabled && curves.GoalDrawSuppressionFactors.Count > 0;
         bool marketBaseline = curves.MarketBaselineSettings.Enabled;
+        bool stateCorrection = liveStateCorrection.Settings.Enabled && liveStateCorrection.Factors.Count > 0;
 
+        if (afterGoal && goalDraw && marketBaseline && stateCorrection)
+            return "v3-competing-hazard-after-goal-goal-draw-market-baseline-live-state-correction";
         if (afterGoal && goalDraw && marketBaseline)
             return "v3-competing-hazard-after-goal-goal-draw-market-baseline";
         if (afterGoal && goalDraw)
@@ -925,7 +955,8 @@ public sealed class MonteCarloModelEvaluator
            || modelVersion.Equals("v3-competing-hazard-after-goal", StringComparison.OrdinalIgnoreCase)
            || modelVersion.Equals("v3-competing-hazard-goal-draw", StringComparison.OrdinalIgnoreCase)
            || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw", StringComparison.OrdinalIgnoreCase)
-           || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw-market-baseline", StringComparison.OrdinalIgnoreCase);
+           || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw-market-baseline", StringComparison.OrdinalIgnoreCase)
+           || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw-market-baseline-live-state-correction", StringComparison.OrdinalIgnoreCase);
 
     private static double SafeDivide(double numerator, double denominator)
         => denominator <= 0 ? 0.0 : numerator / denominator;

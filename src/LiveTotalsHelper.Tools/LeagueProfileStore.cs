@@ -15,6 +15,7 @@ public sealed class LeagueProfilesConfig
     public StateWeibullCurveFitProfileSettings StateWeibullCurveFit { get; set; } = new();
     public NextGoalSideFitProfileSettings NextGoalSideFit { get; set; } = new();
     public MarketBaselineProfileSettings MarketBaseline { get; set; } = new();
+    public LiveStateCorrectionProfileSettings LiveStateCorrection { get; set; } = new();
     public List<LeagueProfile> Profiles { get; set; } = [];
 }
 
@@ -130,6 +131,59 @@ public sealed class MarketBaselineProfileSettings
     }
 }
 
+
+public sealed class LiveStateCorrectionProfileSettings
+{
+    public bool? Enabled { get; set; }
+    public string Path { get; set; } = string.Empty;
+    public int? MinRows { get; set; }
+    public double? PriorRows { get; set; }
+    public double? Shrink { get; set; }
+    public double? MinMultiplier { get; set; }
+    public double? MaxMultiplier { get; set; }
+
+    public LiveStateCorrectionProfileSettings WithDefaultsFrom(LiveStateCorrectionProfileSettings fallback)
+    {
+        return new LiveStateCorrectionProfileSettings
+        {
+            Enabled = Enabled ?? fallback.Enabled ?? false,
+            Path = !string.IsNullOrWhiteSpace(Path) ? Path : fallback.Path,
+            MinRows = PositiveIntOrFallback(MinRows, fallback.MinRows, 80),
+            PriorRows = NonNegativeOrFallback(PriorRows, fallback.PriorRows, 150.0),
+            Shrink = NonNegativeOrFallback(Shrink, fallback.Shrink, 0.8),
+            MinMultiplier = PositiveOrFallback(MinMultiplier, fallback.MinMultiplier, 0.75),
+            MaxMultiplier = PositiveOrFallback(MaxMultiplier, fallback.MaxMultiplier, 1.35)
+        };
+    }
+
+    private static int? PositiveIntOrFallback(int? value, int? fallback, int? defaultValue)
+    {
+        if (value.HasValue && value.Value > 0)
+            return value.Value;
+        if (fallback.HasValue && fallback.Value > 0)
+            return fallback.Value;
+        return defaultValue;
+    }
+
+    private static double? PositiveOrFallback(double? value, double? fallback, double? defaultValue)
+    {
+        if (value.HasValue && value.Value > 0)
+            return value.Value;
+        if (fallback.HasValue && fallback.Value > 0)
+            return fallback.Value;
+        return defaultValue;
+    }
+
+    private static double? NonNegativeOrFallback(double? value, double? fallback, double? defaultValue)
+    {
+        if (value.HasValue && value.Value >= 0)
+            return value.Value;
+        if (fallback.HasValue && fallback.Value >= 0)
+            return fallback.Value;
+        return defaultValue;
+    }
+}
+
 public sealed class LeagueProfile
 {
     public string Key { get; set; } = string.Empty;
@@ -167,12 +221,14 @@ public sealed class LeagueProfile
     public string LiveMonteCarloV3PathsOutputPath { get; set; } = string.Empty;
     public string LiveMonteCarloV3EvaluationSummaryPath { get; set; } = string.Empty;
     public string LiveMonteCarloV3MarketBaselineTuningPath { get; set; } = string.Empty;
+    public string LiveStateCorrectionPath { get; set; } = string.Empty;
 
     public List<string> StateWeibullTimeBuckets { get; set; } = [];
     public StateWeibullCurveFitProfileSettings StateWeibullCurveFit { get; set; } = new();
     public NextGoalSideFitProfileSettings NextGoalSideFit { get; set; } = new();
     public MonteCarloConfig MonteCarlo { get; set; } = new();
     public MarketBaselineProfileSettings MarketBaseline { get; set; } = new();
+    public LiveStateCorrectionProfileSettings LiveStateCorrection { get; set; } = new();
 
     public double EdgeThreshold { get; set; } = 0.05;
     public bool UseProbabilityMoveFilter { get; set; }
@@ -315,6 +371,7 @@ public sealed class LeagueProfileStore
             profile.StateWeibullCurveFit = profile.StateWeibullCurveFit.WithDefaultsFrom(config.StateWeibullCurveFit);
             profile.NextGoalSideFit = profile.NextGoalSideFit.WithDefaultsFrom(config.NextGoalSideFit);
             profile.MarketBaseline = profile.MarketBaseline.WithDefaultsFrom(config.MarketBaseline);
+            profile.LiveStateCorrection = profile.LiveStateCorrection.WithDefaultsFrom(config.LiveStateCorrection);
 
             string modelFolder = profile.ModelFolder;
             if (string.IsNullOrWhiteSpace(modelFolder) && !string.IsNullOrWhiteSpace(config.ModelRoot))
@@ -353,6 +410,11 @@ public sealed class LeagueProfileStore
         profile.LiveMonteCarloV3PathsOutputPath = ValueOrDefault(profile.LiveMonteCarloV3PathsOutputPath, reportFolder, $"{key}-live-total-mc-v3-paths.csv");
         profile.LiveMonteCarloV3EvaluationSummaryPath = ValueOrDefault(profile.LiveMonteCarloV3EvaluationSummaryPath, reportFolder, $"{key}-mc-v3-evaluation-summary.json");
         profile.LiveMonteCarloV3MarketBaselineTuningPath = ValueOrDefault(profile.LiveMonteCarloV3MarketBaselineTuningPath, reportFolder, $"{key}-mc-v3-market-baseline-tuning-summary.json");
+        if (string.IsNullOrWhiteSpace(profile.LiveStateCorrectionPath) && !string.IsNullOrWhiteSpace(profile.LiveStateCorrection.Path))
+            profile.LiveStateCorrectionPath = profile.LiveStateCorrection.Path;
+        profile.LiveStateCorrectionPath = ValueOrDefault(profile.LiveStateCorrectionPath, modelFolder, $"{key}-live-state-correction.json");
+        if (string.IsNullOrWhiteSpace(profile.LiveStateCorrection.Path))
+            profile.LiveStateCorrection.Path = profile.LiveStateCorrectionPath;
     }
 
     private static string ValueOrDefault(string value, string folder, string fileName)

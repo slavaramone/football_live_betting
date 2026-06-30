@@ -6,6 +6,7 @@ public sealed class LiveCompetingHazardMonteCarloSimulationOptions
 {
     public LiveMonteCarloRequest Request { get; init; } = new();
     public CompetingHazardCurveSet Curves { get; init; } = new();
+    public LiveStateCorrectionSet LiveStateCorrection { get; init; } = LiveStateCorrectionSet.Disabled;
     public double EffectiveEndMinute { get; init; }
     public int TracePathCount { get; init; }
 }
@@ -44,6 +45,8 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
             warnings.Add("After-goal hazard factors are enabled but the competing-hazard model contains no after-goal factor rows; neutral multiplier 1.0 used.");
         if (options.Curves.GoalDrawSuppressionSettings.Enabled && options.Curves.GoalDrawSuppressionFactors.Count == 0)
             warnings.Add("Goal-draw suppression is enabled but the competing-hazard model contains no goal-draw factor rows; neutral multiplier 1.0 used.");
+        if (request.UseLiveStateCorrection && options.LiveStateCorrection.Settings.Enabled && options.LiveStateCorrection.Factors.Count == 0)
+            warnings.Add("Live-state correction is enabled but the correction model contains no factors; neutral multiplier 1.0 used.");
 
         LiveMarketBaselineAdjustment marketBaseline = ResolveMarketBaselineAdjustment(options.Curves, request, effectiveEnd, warnings);
         if (!string.IsNullOrWhiteSpace(marketBaseline.Warning))
@@ -123,6 +126,20 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
                 homeExpectedGoalsInStep *= marketBaseline.Multiplier;
                 awayExpectedGoalsInStep *= marketBaseline.Multiplier;
 
+                LiveStateCorrectionAdjustment liveStateCorrection = ResolveLiveStateCorrection(
+                    options.LiveStateCorrection,
+                    request,
+                    homeGoals,
+                    awayGoals,
+                    minute,
+                    lastGoalMinute);
+
+                if (!string.IsNullOrWhiteSpace(liveStateCorrection.Warning))
+                    warnings.Add($"live_state_correction/{liveStateCorrection.FactorKey}: {liveStateCorrection.Warning}");
+
+                homeExpectedGoalsInStep *= liveStateCorrection.Multiplier;
+                awayExpectedGoalsInStep *= liveStateCorrection.Multiplier;
+
                 double expectedGoalsInStep = homeExpectedGoalsInStep + awayExpectedGoalsInStep;
                 double pGoal = 1.0 - Math.Exp(-expectedGoalsInStep);
 
@@ -175,7 +192,9 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
                             AfterGoalAwayMultiplier = afterGoal.AwayMultiplier,
                             GoalDrawFactorKey = goalDraw.FactorKey,
                             GoalDrawMultiplier = goalDraw.Multiplier,
-                            MarketBaselineMultiplier = marketBaseline.Multiplier
+                            MarketBaselineMultiplier = marketBaseline.Multiplier,
+                            LiveStateCorrectionFactorKey = liveStateCorrection.FactorKey,
+                            LiveStateCorrectionMultiplier = liveStateCorrection.Multiplier
                         });
                     }
 
@@ -220,7 +239,7 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
 
         return new LiveMonteCarloSimulationResult
         {
-            ModelVersion = ResolveModelVersion(options.Curves),
+            ModelVersion = ResolveModelVersion(options.Curves, request.UseLiveStateCorrection ? options.LiveStateCorrection : LiveStateCorrectionSet.Disabled),
             League = string.IsNullOrWhiteSpace(options.Curves.League) ? request.LeagueKey : options.Curves.League,
             StartMinute = request.CurrentMinute,
             EffectiveEndMinute = effectiveEnd,
@@ -261,7 +280,8 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
             OverEdge = request.OverOdds.HasValue && request.OverOdds.Value > 0 ? pOver - 1.0 / request.OverOdds.Value : null,
             UnderEdge = request.UnderOdds.HasValue && request.UnderOdds.Value > 0 ? pUnder - 1.0 / request.UnderOdds.Value : null,
             MarketBaseline = marketBaseline,
-            Explanation = BuildExplanation(request, pOver, pUnder, pPush, fairOver, fairUnder, neededGoalsForOver, options.Curves.AfterGoalSettings.Enabled && options.Curves.AfterGoalFactors.Count > 0, options.Curves.GoalDrawSuppressionSettings.Enabled && options.Curves.GoalDrawSuppressionFactors.Count > 0, marketBaseline),
+            LiveStateCorrection = InitialLiveStateCorrection(options.LiveStateCorrection, request),
+            Explanation = BuildExplanation(request, pOver, pUnder, pPush, fairOver, fairUnder, neededGoalsForOver, options.Curves.AfterGoalSettings.Enabled && options.Curves.AfterGoalFactors.Count > 0, options.Curves.GoalDrawSuppressionSettings.Enabled && options.Curves.GoalDrawSuppressionFactors.Count > 0, marketBaseline, options.LiveStateCorrection),
             Warnings = warnings.Take(50).ToList(),
             TraceEvents = traceEvents
         };
@@ -280,12 +300,15 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
         }
     }
 
-    private static string ResolveModelVersion(CompetingHazardCurveSet curves)
+    private static string ResolveModelVersion(CompetingHazardCurveSet curves, LiveStateCorrectionSet liveStateCorrection)
     {
         bool afterGoal = curves.AfterGoalSettings.Enabled && curves.AfterGoalFactors.Count > 0;
         bool goalDraw = curves.GoalDrawSuppressionSettings.Enabled && curves.GoalDrawSuppressionFactors.Count > 0;
         bool marketBaseline = curves.MarketBaselineSettings.Enabled;
+        bool stateCorrection = liveStateCorrection.Settings.Enabled && liveStateCorrection.Factors.Count > 0;
 
+        if (afterGoal && goalDraw && marketBaseline && stateCorrection)
+            return "v3-competing-hazard-after-goal-goal-draw-market-baseline-live-state-correction";
         if (afterGoal && goalDraw && marketBaseline)
             return "v3-competing-hazard-after-goal-goal-draw-market-baseline";
         if (afterGoal && goalDraw)
@@ -499,6 +522,109 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
         return new AfterGoalStepAdjustment(factor.Key, multiplier, multiplier, factor);
     }
 
+
+    private static LiveStateCorrectionAdjustment InitialLiveStateCorrection(
+        LiveStateCorrectionSet correctionSet,
+        LiveMonteCarloRequest request)
+    {
+        return ResolveLiveStateCorrection(
+            correctionSet,
+            request,
+            request.HomeGoals,
+            request.AwayGoals,
+            request.CurrentMinute,
+            request.LastGoalMinute);
+    }
+
+    private static LiveStateCorrectionAdjustment ResolveLiveStateCorrection(
+        LiveStateCorrectionSet correctionSet,
+        LiveMonteCarloRequest request,
+        int homeGoals,
+        int awayGoals,
+        double minute,
+        double? lastGoalMinute)
+    {
+        if (!request.UseLiveStateCorrection || !correctionSet.Settings.Enabled)
+            return LiveStateCorrectionAdjustment.Disabled;
+        if (correctionSet.Factors.Count == 0)
+            return LiveStateCorrectionAdjustment.Neutral("NoFactors", "Live-state correction model has no factors.");
+
+        string scoreBucket = StateWeibullScoreBucketer.ResolveScoreBucket(homeGoals, awayGoals);
+        int currentGoals = homeGoals + awayGoals;
+        double? minutesSinceLastGoal = lastGoalMinute.HasValue
+            ? Math.Max(0.0, minute - lastGoalMinute.Value)
+            : null;
+
+        LiveStateCorrectionFactor? factor = correctionSet.Factors
+            .Where(x => MatchesLiveStateFactor(x, scoreBucket, currentGoals, minute, minutesSinceLastGoal, request))
+            .OrderByDescending(x => x.Priority)
+            .ThenByDescending(x => x.Rows)
+            .FirstOrDefault();
+
+        if (factor is null)
+            return LiveStateCorrectionAdjustment.Neutral("NoMatch");
+
+        double minMultiplier = Math.Max(Epsilon, correctionSet.Settings.MinMultiplier);
+        double maxMultiplier = Math.Max(minMultiplier, correctionSet.Settings.MaxMultiplier);
+        double multiplier = Math.Clamp(ClampMultiplier(factor.Multiplier), minMultiplier, maxMultiplier);
+
+        return new LiveStateCorrectionAdjustment
+        {
+            Enabled = true,
+            Applied = Math.Abs(multiplier - 1.0) > 0.0001,
+            Status = "Applied",
+            FactorKey = factor.Key,
+            SourceSlice = factor.SourceSlice,
+            Multiplier = multiplier,
+            Warning = factor.Warning
+        };
+    }
+
+    private static bool MatchesLiveStateFactor(
+        LiveStateCorrectionFactor factor,
+        string scoreBucket,
+        int currentGoals,
+        double minute,
+        double? minutesSinceLastGoal,
+        LiveMonteCarloRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(factor.ScoreBucket) &&
+            !factor.ScoreBucket.Equals(scoreBucket, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (factor.MinMinute.HasValue && minute < factor.MinMinute.Value - Epsilon)
+            return false;
+        if (factor.MaxMinute.HasValue && minute > factor.MaxMinute.Value + Epsilon)
+            return false;
+        if (factor.MinCurrentGoals.HasValue && currentGoals < factor.MinCurrentGoals.Value)
+            return false;
+        if (factor.MaxCurrentGoals.HasValue && currentGoals > factor.MaxCurrentGoals.Value)
+            return false;
+        if (factor.MinMinutesSinceLastGoal.HasValue)
+        {
+            if (!minutesSinceLastGoal.HasValue || minutesSinceLastGoal.Value < factor.MinMinutesSinceLastGoal.Value - Epsilon)
+                return false;
+        }
+        if (factor.MaxMinutesSinceLastGoal.HasValue)
+        {
+            if (!minutesSinceLastGoal.HasValue || minutesSinceLastGoal.Value > factor.MaxMinutesSinceLastGoal.Value + Epsilon)
+                return false;
+        }
+        if (factor.Line.HasValue && Math.Abs(factor.Line.Value - request.Line) > 0.0001)
+            return false;
+        if (factor.MinPregameTotalLine.HasValue)
+        {
+            if (!request.PregameTotalLine.HasValue || request.PregameTotalLine.Value < factor.MinPregameTotalLine.Value - Epsilon)
+                return false;
+        }
+        if (factor.MaxPregameTotalLine.HasValue)
+        {
+            if (!request.PregameTotalLine.HasValue || request.PregameTotalLine.Value > factor.MaxPregameTotalLine.Value + Epsilon)
+                return false;
+        }
+
+        return true;
+    }
+
     private static CompetingHazardCurve? ResolveCurve(CompetingHazardCurveSet curveSet, string directionalBucket, double minute)
     {
         CompetingHazardCurve? active = curveSet.Curves
@@ -554,7 +680,8 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
         int neededGoalsForOver,
         bool afterGoalEnabled,
         bool goalDrawEnabled,
-        LiveMarketBaselineAdjustment marketBaseline)
+        LiveMarketBaselineAdjustment marketBaseline,
+        LiveStateCorrectionSet liveStateCorrection)
     {
         string overNeed = neededGoalsForOver <= 0
             ? "Over is already winning at the current score"
@@ -567,6 +694,8 @@ public sealed class LiveCompetingHazardMonteCarloSimulator
             features.Add("goal-draw suppression");
         if (marketBaseline.Applied)
             features.Add($"market baseline x{marketBaseline.Multiplier.ToString("0.###", CultureInfo.InvariantCulture)}");
+        if (request.UseLiveStateCorrection && liveStateCorrection.Settings.Enabled && liveStateCorrection.Factors.Count > 0)
+            features.Add("live-state correction");
 
         string suffix = features.Count > 0 ? " with " + string.Join(" and ", features) : string.Empty;
         return $"{overNeed}. MC v3 competing hazards{suffix} POver={FormatProbability(pOver)}, PUnder={FormatProbability(pUnder)}, PPush={FormatProbability(pPush)}. Fair Over odds={FormatOdds(fairOver)}, fair Under odds={FormatOdds(fairUnder)}.";

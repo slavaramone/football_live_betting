@@ -105,6 +105,8 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         double? firstP1 = null;
         double? firstP2 = null;
         double? firstP3Plus = null;
+        double? firstLiveStateCorrectionMultiplier = null;
+        string firstLiveStateCorrectionSource = "disabled";
 
         foreach (double line in targetLines.Distinct().OrderBy(x => x))
         {
@@ -134,21 +136,22 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
                 MarketBaselineMinMultiplier = profile.MarketBaseline.MinMultiplier,
                 MarketBaselineMaxMultiplier = profile.MarketBaseline.MaxMultiplier,
                 MarketBaselineOddsSensitivityGoals = profile.MarketBaseline.OddsSensitivityGoals,
+                UseLiveStateCorrection = profile.LiveStateCorrection.Enabled ?? false,
                 SimulationCount = profile.MonteCarlo.SimulationCount,
                 StepMinutes = profile.MonteCarlo.StepMinutes,
                 RandomSeed = profile.MonteCarlo.RandomSeed
             };
 
             EffectiveEndMinuteEstimate endEstimate = estimator.Estimate(request, profile.MonteCarlo);
-            var simulator = new LiveHazardMonteCarloSimulator();
+            var simulator = new LiveCompetingHazardMonteCarloSimulator();
             LiveMonteCarloSimulationResult simulation;
             try
             {
-                simulation = simulator.Run(new LiveMonteCarloSimulationOptions
+                simulation = simulator.Run(new LiveCompetingHazardMonteCarloSimulationOptions
                 {
                     Request = request,
-                    Curves = model.Curves,
-                    NextGoalSideModel = model.SideModel,
+                    Curves = model.CompetingCurves,
+                    LiveStateCorrection = model.LiveStateCorrection,
                     EffectiveEndMinute = endEstimate.EffectiveEndMinute,
                     TracePathCount = 0
                 });
@@ -172,6 +175,9 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             firstP1 ??= simulation.Distribution.P1;
             firstP2 ??= simulation.Distribution.P2;
             firstP3Plus ??= simulation.Distribution.P3Plus;
+            firstLiveStateCorrectionMultiplier ??= simulation.LiveStateCorrection.Multiplier;
+            if (firstLiveStateCorrectionSource.Equals("disabled", StringComparison.OrdinalIgnoreCase) && simulation.LiveStateCorrection.Enabled)
+                firstLiveStateCorrectionSource = string.IsNullOrWhiteSpace(simulation.LiveStateCorrection.FactorKey) ? simulation.LiveStateCorrection.Status : simulation.LiveStateCorrection.FactorKey;
 
             foreach (string warning in simulation.Warnings)
                 allWarnings.Add(warning);
@@ -197,11 +203,11 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             Status = anyBet ? "MC VALUE FOUND" : "MC PRICED",
             Warnings = warningText,
             ModelSummary = modelSummary,
-            DecisionRulesSummary = $"State-Weibull MC + next-goal-side model. Sims={profile.MonteCarlo.SimulationCount}, step={profile.MonteCarlo.StepMinutes:0.###}, min edge={GetMinimumEdge(profile):0.0%}. Curves: {Path.GetFileName(model.CurvesPath)}; side: {Path.GetFileName(model.SideModelPath)}.",
+            DecisionRulesSummary = $"V3 competing-hazard MC. Sims={profile.MonteCarlo.SimulationCount}, step={profile.MonteCarlo.StepMinutes:0.###}, min edge={GetMinimumEdge(profile):0.0%}. Curves: {Path.GetFileName(model.CompetingCurvesPath)}; live-state correction: {(model.LiveStateCorrection.Settings.Enabled ? Path.GetFileName(model.LiveStateCorrectionPath) : "disabled") }.",
             RemainingXg = firstRemainingXg ?? 0,
-            StateCorrectionFactor = 1,
-            StateCorrectionSource = "state-weibull-mc",
-            StateCorrectionSupported = true,
+            StateCorrectionFactor = firstLiveStateCorrectionMultiplier ?? 1,
+            StateCorrectionSource = firstLiveStateCorrectionSource,
+            StateCorrectionSupported = profile.LiveStateCorrection.Enabled ?? false,
             VolumeFactor = profile.MonteCarlo.SimulationCount,
             VolumeFactorSource = "MC simulations",
             Decisions = decisions
@@ -288,24 +294,33 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
         if (_modelCache.TryGetValue(key, out LoadedMonteCarloModel? cached))
             return cached;
 
-        if (string.IsNullOrWhiteSpace(profile.StateWeibullCurvesPath))
-            throw new InvalidOperationException($"StateWeibullCurvesPath is not configured for profile '{profile.Key}'.");
-        if (string.IsNullOrWhiteSpace(profile.NextGoalSideModelPath))
-            throw new InvalidOperationException($"NextGoalSideModelPath is not configured for profile '{profile.Key}'.");
+        if (string.IsNullOrWhiteSpace(profile.CompetingHazardCurvesPath))
+            throw new InvalidOperationException($"CompetingHazardCurvesPath is not configured for profile '{profile.Key}'.");
 
-        string curvesPath = LeagueProfileStore.ResolvePath(profile.StateWeibullCurvesPath);
-        string sidePath = LeagueProfileStore.ResolvePath(profile.NextGoalSideModelPath);
-        if (!File.Exists(curvesPath))
-            throw new FileNotFoundException($"State Weibull curves file was not found: {curvesPath}", curvesPath);
-        if (!File.Exists(sidePath))
-            throw new FileNotFoundException($"Next-goal-side model file was not found: {sidePath}", sidePath);
+        string competingPath = LeagueProfileStore.ResolvePath(profile.CompetingHazardCurvesPath);
+        if (!File.Exists(competingPath))
+            throw new FileNotFoundException($"Competing-hazard curves file was not found: {competingPath}", competingPath);
 
-        StateWeibullCurveSet curves = JsonSerializer.Deserialize<StateWeibullCurveSet>(File.ReadAllText(curvesPath), _jsonOptions)
-            ?? throw new InvalidOperationException($"Could not read state Weibull curves: {curvesPath}");
-        NextGoalSideModelSet sideModel = JsonSerializer.Deserialize<NextGoalSideModelSet>(File.ReadAllText(sidePath), _jsonOptions)
-            ?? throw new InvalidOperationException($"Could not read next-goal-side model: {sidePath}");
+        CompetingHazardCurveSet competingCurves = JsonSerializer.Deserialize<CompetingHazardCurveSet>(File.ReadAllText(competingPath), _jsonOptions)
+            ?? throw new InvalidOperationException($"Could not read competing-hazard curves: {competingPath}");
 
-        var loaded = new LoadedMonteCarloModel(curves, sideModel, curvesPath, sidePath);
+        LiveStateCorrectionSet liveStateCorrection = LiveStateCorrectionSet.Disabled;
+        string liveStateCorrectionPath = string.Empty;
+        if (profile.LiveStateCorrection.Enabled ?? false)
+        {
+            liveStateCorrectionPath = LeagueProfileStore.ResolvePath(profile.LiveStateCorrectionPath);
+            if (File.Exists(liveStateCorrectionPath))
+            {
+                liveStateCorrection = JsonSerializer.Deserialize<LiveStateCorrectionSet>(File.ReadAllText(liveStateCorrectionPath), _jsonOptions)
+                    ?? LiveStateCorrectionSet.EnabledWithoutFactors(profile.League);
+            }
+            else
+            {
+                liveStateCorrection = LiveStateCorrectionSet.EnabledWithoutFactors(profile.League);
+            }
+        }
+
+        var loaded = new LoadedMonteCarloModel(competingCurves, liveStateCorrection, competingPath, liveStateCorrectionPath);
         _modelCache[key] = loaded;
         return loaded;
     }
@@ -384,7 +399,11 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
             ? $" Market baseline: low shrink {FormatNullable(profile.MarketBaseline.LowTotalMultiplierShrink)}, high shrink {FormatNullable(profile.MarketBaseline.HighTotalMultiplierShrink)}."
             : " Market baseline disabled.";
 
-        return $"MC enabled.{marketBaseline} {baseNotes}";
+        string liveStateCorrection = profile.LiveStateCorrection.Enabled ?? false
+            ? $" Live-state correction enabled: {Path.GetFileName(profile.LiveStateCorrectionPath)}."
+            : " Live-state correction disabled.";
+
+        return $"MC enabled.{marketBaseline}{liveStateCorrection} {baseNotes}";
     }
 
     private static double GetMinimumEdge(LeagueProfile profile)
@@ -467,8 +486,8 @@ public sealed class LiveBettingSessionService : ILiveBettingSessionService
     }
 
     private sealed record LoadedMonteCarloModel(
-        StateWeibullCurveSet Curves,
-        NextGoalSideModelSet SideModel,
-        string CurvesPath,
-        string SideModelPath);
+        CompetingHazardCurveSet CompetingCurves,
+        LiveStateCorrectionSet LiveStateCorrection,
+        string CompetingCurvesPath,
+        string LiveStateCorrectionPath);
 }

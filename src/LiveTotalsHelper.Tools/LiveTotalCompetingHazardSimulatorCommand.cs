@@ -8,6 +8,8 @@ namespace LiveTotalsHelper.Tools;
 public sealed class LiveTotalCompetingHazardCommandOptions
 {
     public string CompetingHazardCurvesPath { get; init; } = "outputs/calibration/competing-hazard-curves.json";
+    public string LiveStateCorrectionPath { get; init; } = string.Empty;
+    public bool UseLiveStateCorrection { get; init; }
     public string OutputPath { get; init; } = "outputs/debug/live-total-mc-v3.json";
     public string PathsOutputPath { get; init; } = string.Empty;
     public string League { get; init; } = string.Empty;
@@ -69,6 +71,7 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             throw new ArgumentException("Step minutes must be positive.", nameof(options));
 
         CompetingHazardCurveSet curves = await ReadJsonAsync<CompetingHazardCurveSet>(options.CompetingHazardCurvesPath, cancellationToken);
+        LiveStateCorrectionSet liveStateCorrection = await ReadLiveStateCorrectionAsync(options.UseLiveStateCorrection, options.LiveStateCorrectionPath, curves.League, cancellationToken);
 
         var request = new LiveMonteCarloRequest
         {
@@ -94,6 +97,7 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             MarketBaselineMinMultiplier = options.MarketBaselineMinMultiplier,
             MarketBaselineMaxMultiplier = options.MarketBaselineMaxMultiplier,
             MarketBaselineOddsSensitivityGoals = options.MarketBaselineOddsSensitivityGoals,
+            UseLiveStateCorrection = options.UseLiveStateCorrection,
             SimulationCount = options.SimulationCount,
             StepMinutes = options.StepMinutes,
             RandomSeed = options.RandomSeed
@@ -108,6 +112,7 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
         {
             Request = request,
             Curves = curves,
+            LiveStateCorrection = liveStateCorrection,
             EffectiveEndMinute = effectiveEnd,
             TracePathCount = options.TracePathCount
         });
@@ -123,6 +128,22 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             OutputPath = outputPath,
             PathsOutputPath = pathsOutputPath
         };
+    }
+
+    private static async Task<LiveStateCorrectionSet> ReadLiveStateCorrectionAsync(
+        bool enabled,
+        string path,
+        string league,
+        CancellationToken cancellationToken)
+    {
+        if (!enabled)
+            return LiveStateCorrectionSet.Disabled;
+
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            return LiveStateCorrectionSet.EnabledWithoutFactors(league);
+
+        LiveStateCorrectionSet set = await ReadJsonAsync<LiveStateCorrectionSet>(path, cancellationToken);
+        return set.Settings.Enabled ? set : LiveStateCorrectionSet.Disabled;
     }
 
     private static async Task<T> ReadJsonAsync<T>(string path, CancellationToken cancellationToken)
@@ -157,7 +178,7 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             Directory.CreateDirectory(directory);
 
         var builder = new StringBuilder();
-        builder.AppendLine("simulation,goal_index,goal_minute,scorer,score_before,score_after,score_bucket_before,score_bucket_after,time_bucket,curve_status,curve_source,side_probability_source,p_home_next_goal,expected_goals_in_step,p_goal_in_step,after_goal_bucket,after_goal_home_multiplier,after_goal_away_multiplier,goal_draw_factor,goal_draw_multiplier,market_baseline_multiplier");
+        builder.AppendLine("simulation,goal_index,goal_minute,scorer,score_before,score_after,score_bucket_before,score_bucket_after,time_bucket,curve_status,curve_source,side_probability_source,p_home_next_goal,expected_goals_in_step,p_goal_in_step,after_goal_bucket,after_goal_home_multiplier,after_goal_away_multiplier,goal_draw_factor,goal_draw_multiplier,market_baseline_multiplier,live_state_correction_factor,live_state_correction_multiplier");
 
         foreach (LiveMonteCarloPathEvent item in events)
         {
@@ -181,7 +202,9 @@ public sealed class LiveTotalCompetingHazardSimulatorCommand
             builder.Append(Format(item.AfterGoalAwayMultiplier)); builder.Append(',');
             builder.Append(Csv(item.GoalDrawFactorKey)); builder.Append(',');
             builder.Append(Format(item.GoalDrawMultiplier)); builder.Append(',');
-            builder.Append(Format(item.MarketBaselineMultiplier));
+            builder.Append(Format(item.MarketBaselineMultiplier)); builder.Append(',');
+            builder.Append(Csv(item.LiveStateCorrectionFactorKey)); builder.Append(',');
+            builder.Append(Format(item.LiveStateCorrectionMultiplier));
             builder.AppendLine();
         }
 

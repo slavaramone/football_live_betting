@@ -46,6 +46,7 @@ try
         "backtest-monte-carlo-model" => await RunEvaluateMonteCarloModel(commandArgs),
         "tune-market-baseline" => await RunTuneMarketBaseline(commandArgs),
         "tune-pregame-market-baseline" => await RunTuneMarketBaseline(commandArgs),
+        "fit-live-state-correction" => await RunFitLiveStateCorrection(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
     };
 }
@@ -857,6 +858,8 @@ static async Task<int> RunSimulateLiveTotalV3(string[] args)
         MarketBaselineMinMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MinMultiplier, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
         MarketBaselineMaxMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MaxMultiplier, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
         MarketBaselineOddsSensitivityGoals = ResolveMarketBaselineDouble(parsed, profile, x => x.OddsSensitivityGoals, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
+        UseLiveStateCorrection = ResolveUseLiveStateCorrection(parsed, profile, true),
+        LiveStateCorrectionPath = GetPathArgument(parsed, profile?.LiveStateCorrectionPath, string.Empty, "live-state-correction", "live-state-correction-path", "state-correction", "state-correction-path"),
         SimulationCount = simulationCount,
         StepMinutes = stepMinutes,
         RandomSeed = seed,
@@ -878,6 +881,8 @@ static async Task<int> RunSimulateLiveTotalV3(string[] args)
     Console.WriteLine($"Expected remaining goals: {simulation.ExpectedRemainingGoals.ToString("0.####", CultureInfo.InvariantCulture)}");
     if (simulation.MarketBaseline.Applied)
         Console.WriteLine($"Market baseline: {simulation.MarketBaseline.Source}, expected total {FormatNullable(simulation.MarketBaseline.MarketExpectedTotalGoals)}, model base {simulation.MarketBaseline.ModelBaselineExpectedTotalGoals.ToString("0.###", CultureInfo.InvariantCulture)}, multiplier x{simulation.MarketBaseline.Multiplier.ToString("0.###", CultureInfo.InvariantCulture)}");
+    if (simulation.LiveStateCorrection.Applied)
+        Console.WriteLine($"Live-state correction: {simulation.LiveStateCorrection.FactorKey}, multiplier x{simulation.LiveStateCorrection.Multiplier.ToString("0.###", CultureInfo.InvariantCulture)}");
     if (simulation.ExpectedHomeRemainingGoals.HasValue || simulation.ExpectedAwayRemainingGoals.HasValue)
         Console.WriteLine($"Home/Away expected remaining: {FormatNullable(simulation.ExpectedHomeRemainingGoals)} / {FormatNullable(simulation.ExpectedAwayRemainingGoals)}");
     Console.WriteLine($"Distribution: P0={simulation.Distribution.P0.ToString("0.00%", CultureInfo.InvariantCulture)}, P1={simulation.Distribution.P1.ToString("0.00%", CultureInfo.InvariantCulture)}, P2={simulation.Distribution.P2.ToString("0.00%", CultureInfo.InvariantCulture)}, P3+={simulation.Distribution.P3Plus.ToString("0.00%", CultureInfo.InvariantCulture)}");
@@ -965,6 +970,8 @@ static async Task<int> RunEvaluateMonteCarloModel(string[] args)
         MarketBaselineMinMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MinMultiplier, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
         MarketBaselineMaxMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MaxMultiplier, "market-baseline-max-multiplier", "max-market-baseline-multiplier"),
         MarketBaselineOddsSensitivityGoals = ResolveMarketBaselineDouble(parsed, profile, x => x.OddsSensitivityGoals, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
+        UseLiveStateCorrection = ResolveUseLiveStateCorrection(parsed, profile, useV3),
+        LiveStateCorrectionPath = GetPathArgument(parsed, profile?.LiveStateCorrectionPath, string.Empty, "live-state-correction", "live-state-correction-path", "state-correction", "state-correction-path"),
         MaxStates = parsed.Int("max-states", 0),
         ProgressEvery = parsed.Int("progress-every", 100)
     };
@@ -991,7 +998,63 @@ static async Task<int> RunEvaluateMonteCarloModel(string[] args)
     Console.WriteLine($"Static MAE: {summary.StaticClockComparison.StaticMae.ToString("0.####", CultureInfo.InvariantCulture)}; MC minus static MAE: {summary.StaticClockComparison.McMaeMinusStaticMae.ToString("+0.####;-0.####;0", CultureInfo.InvariantCulture)}");
     if (summary.MarketBaseline.Enabled)
         Console.WriteLine($"Pregame market baseline: applied {summary.MarketBaseline.AppliedRows}/{summary.MarketBaseline.Rows}, avg multiplier x{summary.MarketBaseline.AverageAppliedMultiplier.ToString("0.###", CultureInfo.InvariantCulture)}");
+    if (summary.LiveStateCorrectionFactors.Count > 0)
+        Console.WriteLine($"Live-state correction factors loaded: {summary.LiveStateCorrectionFactors.Count}");
     Console.WriteLine($"Summary written: {result.OutputPath}");
+
+    return 0;
+}
+
+
+static async Task<int> RunFitLiveStateCorrection(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadProfileByKeyOrLeagueAsync(parsed);
+
+    string sourcePath = GetPathArgument(
+        parsed,
+        profile?.LiveMonteCarloV3EvaluationSummaryPath,
+        "outputs/validation/mc-v3-evaluation-summary.json",
+        "source", "source-summary", "evaluation-summary", "in", "input");
+    string outputPath = GetPathArgument(
+        parsed,
+        profile?.LiveStateCorrectionPath,
+        "outputs/calibration/live-state-correction.json",
+        "out", "output", "live-state-correction", "state-correction");
+    string summaryPath = parsed.String("summary-out", string.Empty);
+    if (string.IsNullOrWhiteSpace(summaryPath) && profile is not null)
+        summaryPath = Path.Combine(profile.ReportFolder, $"{profile.Key}-live-state-correction-summary.csv");
+
+    var options = new LiveStateCorrectionFitOptions
+    {
+        SourceEvaluationSummaryPath = sourcePath,
+        OutputPath = outputPath,
+        SummaryOutputPath = summaryPath,
+        MinRows = parsed.Int("min-rows", profile?.LiveStateCorrection.MinRows ?? 80),
+        PriorRows = parsed.Double("prior-rows", profile?.LiveStateCorrection.PriorRows ?? 150.0),
+        Shrink = parsed.Double("shrink", profile?.LiveStateCorrection.Shrink ?? 0.8),
+        MinMultiplier = parsed.Double("min-multiplier", profile?.LiveStateCorrection.MinMultiplier ?? 0.75),
+        MaxMultiplier = parsed.Double("max-multiplier", profile?.LiveStateCorrection.MaxMultiplier ?? 1.35),
+        MinAbsBias = parsed.Double("min-abs-bias", 0.03),
+        MinRawMultiplierDistance = parsed.Double("min-raw-multiplier-distance", 0.03),
+        IncludeLineFactors = parsed.Bool("include-line-factors", false),
+        IncludeMinuteFactors = parsed.Bool("include-minute-factors", false),
+        IncludePregameFactors = parsed.Bool("include-pregame-factors", true)
+    };
+
+    var fitter = new LiveStateCorrectionFitter(Console.Out);
+    LiveStateCorrectionFitResult result = await fitter.FitAsync(options, CancellationToken.None);
+
+    Console.WriteLine("Live-state correction fitted");
+    Console.WriteLine($"League: {result.Correction.League}");
+    Console.WriteLine($"Factors: {result.Correction.Factors.Count}");
+    Console.WriteLine($"Output written: {result.OutputPath}");
+    if (!string.IsNullOrWhiteSpace(result.SummaryOutputPath))
+        Console.WriteLine($"Summary written: {result.SummaryOutputPath}");
+    foreach (LiveStateCorrectionFactor factor in result.Correction.Factors.Take(12))
+    {
+        Console.WriteLine($"- {factor.Key}: rows={factor.Rows}, raw x{factor.RawMultiplier.ToString("0.###", CultureInfo.InvariantCulture)}, applied x{factor.Multiplier.ToString("0.###", CultureInfo.InvariantCulture)}, condition={factor.DescribeCondition()}");
+    }
 
     return 0;
 }
@@ -1062,6 +1125,8 @@ static async Task<int> RunTuneMarketBaseline(string[] args)
         MarketBaselineMinMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MinMultiplier, "market-baseline-min-multiplier", "min-market-baseline-multiplier"),
         MarketBaselineMaxMultiplier = ResolveMarketBaselineDouble(parsed, profile, x => x.MaxMultiplier, "market-baseline-max-multiplier"),
         MarketBaselineOddsSensitivityGoals = ResolveMarketBaselineDouble(parsed, profile, x => x.OddsSensitivityGoals, "market-baseline-odds-sensitivity", "odds-sensitivity-goals"),
+        UseLiveStateCorrection = parsed.Bool("use-live-state-correction", false),
+        LiveStateCorrectionPath = GetPathArgument(parsed, profile?.LiveStateCorrectionPath, string.Empty, "live-state-correction", "live-state-correction-path", "state-correction", "state-correction-path"),
         MaxStates = parsed.Int("max-states", 0),
         ProgressEvery = parsed.Int("progress-every", 0),
         SuppressSummaryWrite = true
@@ -1153,6 +1218,8 @@ static MonteCarloModelEvaluationOptions CloneForMarketBaselineTuning(
         CurvesPath = source.CurvesPath,
         SideModelPath = source.SideModelPath,
         CompetingHazardCurvesPath = source.CompetingHazardCurvesPath,
+        LiveStateCorrectionPath = source.LiveStateCorrectionPath,
+        UseLiveStateCorrection = source.UseLiveStateCorrection,
         OutputPath = source.OutputPath,
         SimulationCount = source.SimulationCount,
         StepMinutes = source.StepMinutes,
@@ -1552,7 +1619,8 @@ static bool IsV3ModelVersion(string modelVersion)
        || modelVersion.Equals("v3-competing-hazard-after-goal", StringComparison.OrdinalIgnoreCase)
        || modelVersion.Equals("v3-competing-hazard-goal-draw", StringComparison.OrdinalIgnoreCase)
        || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw", StringComparison.OrdinalIgnoreCase)
-       || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw-market-baseline", StringComparison.OrdinalIgnoreCase);
+       || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw-market-baseline", StringComparison.OrdinalIgnoreCase)
+       || modelVersion.Equals("v3-competing-hazard-after-goal-goal-draw-market-baseline-live-state-correction", StringComparison.OrdinalIgnoreCase);
 
 static IConfiguration BuildConfiguration()
 {
@@ -1871,6 +1939,17 @@ static void PrintWarningsAndFailures(IReadOnlyCollection<string> warnings, IRead
     }
 }
 
+
+static bool ResolveUseLiveStateCorrection(ParsedArgs parsed, LeagueProfile? profile, bool modelSupportsLiveStateCorrection)
+{
+    if (!modelSupportsLiveStateCorrection)
+        return false;
+    if (parsed.Bool("disable-live-state-correction", false))
+        return false;
+
+    bool defaultValue = profile?.LiveStateCorrection.Enabled ?? false;
+    return parsed.Bool("use-live-state-correction", defaultValue);
+}
 
 static bool ResolveUsePregameMarketBaseline(ParsedArgs parsed, LeagueProfile? profile, bool modelSupportsMarketBaseline)
 {

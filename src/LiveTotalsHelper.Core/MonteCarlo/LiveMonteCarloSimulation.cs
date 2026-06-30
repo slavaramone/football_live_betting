@@ -45,6 +45,7 @@ public sealed class LiveMonteCarloSimulationResult
     public double? UnderEdge { get; init; }
 
     public LiveMarketBaselineAdjustment MarketBaseline { get; init; } = LiveMarketBaselineAdjustment.Neutral("NotUsed");
+    public LiveStateCorrectionAdjustment LiveStateCorrection { get; init; } = LiveStateCorrectionAdjustment.Disabled;
 
     public string Explanation { get; init; } = string.Empty;
     public IReadOnlyList<string> Warnings { get; init; } = [];
@@ -85,6 +86,8 @@ public sealed class LiveMonteCarloPathEvent
     public string GoalDrawFactorKey { get; init; } = string.Empty;
     public double GoalDrawMultiplier { get; init; } = 1.0;
     public double MarketBaselineMultiplier { get; init; } = 1.0;
+    public string LiveStateCorrectionFactorKey { get; init; } = string.Empty;
+    public double LiveStateCorrectionMultiplier { get; init; } = 1.0;
 }
 
 

@@ -92,7 +92,7 @@
         4.5
       ],
       "riskLevel": "MC paper test",
-      "notes": "Primary state-Weibull Monte Carlo paper-test profile. Fitted on 2022-2025; current season 2026.",
+      "notes": "Primary state-Weibull Monte Carlo paper-test profile. Fitted on 2022-2025; current season 2026. Live-state correction disabled by profile; v3 market baseline is used without Queensland open-game uplift.",
       "marketBaseline": {
         "enabled": true,
         "oddsSensitivityGoals": 1.25,
@@ -103,6 +103,9 @@
         "maxMultiplier": 1.25,
         "minMarketExpectedTotalGoals": 1.0,
         "maxMarketExpectedTotalGoals": 6.0
+      },
+      "liveStateCorrection": {
+        "enabled": false
       }
     },
     {
@@ -129,18 +132,21 @@
         4.5
       ],
       "riskLevel": "Needs MC calibration",
-      "notes": "Profile shell ready for state-Weibull MC calibration. Monte Carlo disabled until curves and next-goal-side model are fitted.",
+      "notes": "Profile shell ready for state-Weibull MC calibration. Monte Carlo disabled until curves and next-goal-side model are fitted. Live-state correction disabled by profile; v3 market baseline is used without Queensland open-game uplift.",
       "marketBaseline": {
-          "enabled": true,
-          "oddsSensitivityGoals": 1.25,
-          "multiplierShrink": 0.7,
-          "lowTotalMultiplierShrink": 0.7,
-          "highTotalMultiplierShrink": 0.8,
-          "minMultiplier": 0.75,
-          "maxMultiplier": 1.25,
-          "minMarketExpectedTotalGoals": 1.0,
-          "maxMarketExpectedTotalGoals": 6.0
-        }
+        "enabled": true,
+        "oddsSensitivityGoals": 1.25,
+        "multiplierShrink": 0.7,
+        "lowTotalMultiplierShrink": 0.7,
+        "highTotalMultiplierShrink": 0.8,
+        "minMultiplier": 0.75,
+        "maxMultiplier": 1.25,
+        "minMarketExpectedTotalGoals": 1.0,
+        "maxMarketExpectedTotalGoals": 6.0
+      },
+      "liveStateCorrection": {
+        "enabled": false
+      }
     },
     {
       "key": "npl-queensland",
@@ -167,8 +173,25 @@
         3.5,
         4.5
       ],
-      "riskLevel": "Needs MC calibration",
-      "notes": "Profile shell ready for state-Weibull MC calibration. Monte Carlo disabled until curves and next-goal-side model are fitted."
+      "riskLevel": "MC paper test - live-state correction experimental",
+      "notes": "NPL Queensland is configured with profile-specific live-state correction because 2026 validation was too cold in open-game states. Fit correction after baseline v3 evaluation before using live signals.",
+      "liveStateCorrection": {
+        "enabled": true,
+        "minRows": 80,
+        "priorRows": 150.0,
+        "shrink": 0.8,
+        "minMultiplier": 0.75,
+        "maxMultiplier": 1.35
+      },
+      "marketBaseline": {
+        "enabled": true,
+        "oddsSensitivityGoals": 1.25,
+        "multiplierShrink": 0.65,
+        "minMultiplier": 0.75,
+        "maxMultiplier": 1.25,
+        "minMarketExpectedTotalGoals": 1.0,
+        "maxMarketExpectedTotalGoals": 6.0
+      }
     },
     {
       "key": "norwegian-1st-division",
