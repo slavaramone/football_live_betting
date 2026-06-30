@@ -32,6 +32,7 @@ try
         "analyze-after-goal-angles" => await RunAnalyzeAfterGoalAngles(commandArgs),
         "build-after-goal-team-profiles" => await RunBuildAfterGoalTeamProfiles(commandArgs),
         "build-after-goal-entry-gates" => await RunBuildAfterGoalEntryGates(commandArgs),
+        "evaluate-after-goal-entry" => await RunEvaluateAfterGoalEntry(commandArgs),
         "validate-profiles" => RunValidateProfiles(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
@@ -606,6 +607,83 @@ static async Task<int> RunBuildAfterGoalEntryGates(string[] args)
         foreach (string warning in result.Warnings)
             Console.WriteLine($"  - {warning}");
     }
+
+    return 0;
+}
+
+static async Task<int> RunEvaluateAfterGoalEntry(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+    ValidateAllowedOptions(parsed, "evaluate-after-goal-entry",
+    [
+        "profile",
+        "profiles-file",
+        "entry-rules",
+        "context-gates",
+        "summary",
+        "league-key",
+        "home-team",
+        "away-team",
+        "scoring-team",
+        "conceding-team",
+        "minute",
+        "score-after-home",
+        "score-after-away",
+        "output",
+        "format",
+        "conflict-policy"
+    ]);
+
+    string defaultGatesDirectory = profile is null
+        ? string.Empty
+        : LeagueProfileStore.ResolveProfileArtifactPath(profile, profile.Artifacts.AfterGoalEntryGatesDir);
+
+    string entryRulesPath = parsed.String("entry-rules", string.IsNullOrWhiteSpace(defaultGatesDirectory)
+        ? string.Empty
+        : Path.Combine(defaultGatesDirectory, "after-goal-entry-rules.csv"));
+    string contextGatesPath = parsed.String("context-gates", string.IsNullOrWhiteSpace(defaultGatesDirectory)
+        ? string.Empty
+        : Path.Combine(defaultGatesDirectory, "after-goal-profile-context-gates.csv"));
+    string summaryPath = parsed.String("summary", string.IsNullOrWhiteSpace(defaultGatesDirectory)
+        ? string.Empty
+        : Path.Combine(defaultGatesDirectory, "after-goal-entry-gates-summary.json"));
+
+    var options = new AfterGoalEntryEvaluationOptions
+    {
+        EntryRulesPath = entryRulesPath,
+        ContextGatesPath = contextGatesPath,
+        SummaryPath = summaryPath,
+        LeagueKey = parsed.String("league-key", profile?.Key ?? string.Empty),
+        HomeTeam = parsed.RequiredString("home-team"),
+        AwayTeam = parsed.RequiredString("away-team"),
+        ScoringTeam = parsed.RequiredString("scoring-team"),
+        ConcedingTeam = parsed.RequiredString("conceding-team"),
+        Minute = parsed.RequiredString("minute"),
+        ScoreAfterHome = parsed.RequiredInt("score-after-home"),
+        ScoreAfterAway = parsed.RequiredInt("score-after-away"),
+        ConflictPolicy = parsed.String("conflict-policy", profile?.AfterGoalEntryGates.ConflictPolicy ?? string.Empty)
+    };
+
+    string format = parsed.String("format", "text").Trim().ToLowerInvariant();
+    if (format is not ("text" or "json"))
+        throw new ArgumentException("--format must be text or json.");
+
+    var evaluator = new AfterGoalEntryEvaluator();
+    AfterGoalEntryEvaluationResult result = await evaluator.EvaluateAsync(options, CancellationToken.None);
+
+    string json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+    string outputPath = parsed.String("output", string.Empty);
+    if (!string.IsNullOrWhiteSpace(outputPath))
+    {
+        string fullOutputPath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory());
+        await File.WriteAllTextAsync(fullOutputPath, json, Encoding.UTF8, CancellationToken.None);
+    }
+
+    Console.WriteLine(format == "json" ? json : AfterGoalEntryEvaluator.ToText(result));
+    if (!string.IsNullOrWhiteSpace(outputPath))
+        Console.WriteLine($"Evaluation JSON written: {Path.GetFullPath(outputPath)}");
 
     return 0;
 }

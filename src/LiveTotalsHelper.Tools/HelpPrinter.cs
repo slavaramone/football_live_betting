@@ -17,6 +17,7 @@ public static class HelpPrinter
         Console.WriteLine("  analyze-after-goal-angles           Analyze after-goal CSV into league/team angle reports.");
         Console.WriteLine("  build-after-goal-team-profiles      Build stable team profile reports from after-goal angle reports.");
         Console.WriteLine("  build-after-goal-entry-gates        Build Model V4 state gate reports for after-goal signals.");
+        Console.WriteLine("  evaluate-after-goal-entry           Explain one live after-goal state against Model V4 entry gates.");
         Console.WriteLine("  validate-profiles                   Validate Model V4 league profile JSON.");
         Console.WriteLine("  validate-db                         Validate imported PostgreSQL data quality.");
         Console.WriteLine("  db-validate                         Alias for validate-db.");
@@ -34,6 +35,7 @@ public static class HelpPrinter
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- analyze-after-goal-angles --profile china-super-league");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-after-goal-team-profiles --profile china-super-league");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- build-after-goal-entry-gates --profile china-super-league");
+        Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- evaluate-after-goal-entry --profile china-super-league --home-team \"Beijing Guoan\" --away-team \"Shanghai Port\" --scoring-team \"Shanghai Port\" --conceding-team \"Beijing Guoan\" --minute 62 --score-after-home 1 --score-after-away 1");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-profiles");
         Console.WriteLine("  dotnet run --project src/LiveTotalsHelper.Tools -- validate-db --league \"Superettan\" --season-id 2026");
         Console.WriteLine();
@@ -49,6 +51,12 @@ public static class HelpPrinter
         Console.WriteLine("                                    Optional train/test split for analyze-after-goal-angles.");
         Console.WriteLine("  --angles-dir                      Input report directory for build-after-goal-team-profiles.");
         Console.WriteLine("  --profiles-dir                    Input profile report directory for build-after-goal-entry-gates.");
+        Console.WriteLine("  --entry-rules / --context-gates   Input Model V4 gate CSVs for evaluate-after-goal-entry.");
+        Console.WriteLine("  --home-team / --away-team         Match teams for evaluate-after-goal-entry.");
+        Console.WriteLine("  --scoring-team / --conceding-team Goal teams for evaluate-after-goal-entry.");
+        Console.WriteLine("  --minute                          Goal minute, for example 38, 45+2, or 90+4.");
+        Console.WriteLine("  --score-after-home / --score-after-away");
+        Console.WriteLine("                                    Score immediately after the goal.");
         Console.WriteLine("  --conflict-policy                 NoBet | PreferStrict | PreferScoring | PreferConceding. Default: NoBet.");
         Console.WriteLine("  --watchlist-enabled               Include marginal after-goal watchlist report. Default: true.");
         Console.WriteLine("  --tournament-id                   Tournament id override; deterministic profile fallback is used for fixtures.");
