@@ -28,6 +28,7 @@ try
         "download-sofascore" => await RunDownloadSofaScore(commandArgs),
         "import-flashscore" => await RunImportFlashscore(commandArgs),
         "import-flashscore-fixtures" => await RunImportFlashscoreFixtures(commandArgs),
+        "build-after-goal-events" => await RunBuildAfterGoalEvents(commandArgs),
         "validate-db" => await RunValidateDb(commandArgs),
         "db-validate" => await RunValidateDb(commandArgs),
         _ => HelpPrinter.UnknownCommand(command)
@@ -250,6 +251,71 @@ static async Task<int> RunValidateDb(string[] args)
     return 0;
 }
 
+static async Task<int> RunBuildAfterGoalEvents(string[] args)
+{
+    var parsed = ArgsParser.Parse(args);
+    LeagueProfile? profile = await LoadOptionalProfileAsync(parsed);
+
+    string league = parsed.String("league", profile?.League ?? string.Empty);
+    int tournamentId = parsed.Has("tournament-id")
+        ? parsed.RequiredInt("tournament-id")
+        : profile?.FlashscoreTournamentId ?? 0;
+
+    if (string.IsNullOrWhiteSpace(league) && tournamentId <= 0)
+        throw new ArgumentException("Provide --profile, --league, or --tournament-id.");
+
+    string outputPath = parsed.String("output", DefaultAfterGoalEventsOutputPath(profile, league, tournamentId));
+    string fullOutputPath = Path.GetFullPath(outputPath);
+    string outputDirectory = Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory();
+    string warningsPath = Path.Combine(outputDirectory, "after-goal-events-warnings.csv");
+
+    var options = new AfterGoalEventDatasetOptions
+    {
+        LeagueKey = profile?.Key ?? parsed.String("league-key", string.Empty),
+        LeagueName = league,
+        TournamentId = tournamentId,
+        Season = parsed.String("season", parsed.String("season-id", string.Empty)),
+        FromSeason = parsed.String("from-season", string.Empty),
+        ToSeason = parsed.String("to-season", string.Empty),
+        MinMinute = parsed.Has("min-minute") ? parsed.RequiredInt("min-minute") : null,
+        MaxMinute = parsed.Has("max-minute") ? parsed.RequiredInt("max-minute") : null
+    };
+
+    if (options.MinMinute.HasValue && options.MinMinute.Value < 0)
+        throw new ArgumentException("Argument --min-minute must be zero or greater.");
+    if (options.MaxMinute.HasValue && options.MaxMinute.Value < 0)
+        throw new ArgumentException("Argument --max-minute must be zero or greater.");
+    if (options.MinMinute.HasValue && options.MaxMinute.HasValue && options.MaxMinute.Value < options.MinMinute.Value)
+        throw new ArgumentException("Argument --max-minute must be greater than or equal to --min-minute.");
+
+    IConfiguration configuration = BuildConfiguration();
+    await using LiveTotalsDbContext dbContext = CreateDbContext(configuration);
+    var builder = new AfterGoalEventDatasetBuilder(dbContext);
+    AfterGoalEventBuildResult result = await builder.BuildAsync(options, CancellationToken.None);
+
+    await AfterGoalEventDatasetBuilder.WriteRowsCsvAsync(fullOutputPath, result.Rows, CancellationToken.None);
+    await AfterGoalEventDatasetBuilder.WriteWarningsCsvAsync(warningsPath, result.Warnings, CancellationToken.None);
+
+    Console.WriteLine();
+    Console.WriteLine("After-goal event dataset build done.");
+    Console.WriteLine($"Total matches scanned: {result.TotalMatchesScanned}");
+    Console.WriteLine($"Finished matches with final score: {result.FinishedMatchesWithFinalScore}");
+    Console.WriteLine($"Matches included: {result.MatchesIncluded}");
+    Console.WriteLine($"Matches skipped because no valid goals: {result.MatchesSkippedNoValidGoals}");
+    Console.WriteLine($"Matches skipped because reconstructed final score mismatched official final score: {result.MatchesSkippedFinalScoreMismatch}");
+    Console.WriteLine($"Goal rows written: {result.Rows.Count}");
+    Console.WriteLine($"Output path: {fullOutputPath}");
+    Console.WriteLine($"Warnings path: {Path.GetFullPath(warningsPath)}");
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine("Warnings by reason:");
+        foreach (var group in result.Warnings.GroupBy(x => x.Reason).OrderByDescending(x => x.Count()).ThenBy(x => x.Key))
+            Console.WriteLine($"  {group.Key}: {group.Count()}");
+    }
+
+    return 0;
+}
+
 static async Task<int> RunImportFlashscore(string[] args)
 {
     var parsed = ArgsParser.Parse(args);
@@ -273,6 +339,15 @@ static async Task<int> RunImportFlashscore(string[] args)
     PrintImportResult("Import done.", result, includeDetails: true);
     return result.Failures.Count == 0 ? 0 : 1;
 }
+
+static string DefaultAfterGoalEventsOutputPath(LeagueProfile? profile, string league, int tournamentId)
+{
+    string folderName = FileNameSanitizer.Slugify(Coalesce(profile?.Key, league, tournamentId > 0 ? $"tournament-{tournamentId}" : "unknown-league"));
+    return Path.Combine(@"C:\football_data\models", folderName, "after-goal-events.csv");
+}
+
+static string Coalesce(params string?[] values)
+    => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty;
 
 static async Task<int> RunImportFlashscoreFixtures(string[] args)
 {
